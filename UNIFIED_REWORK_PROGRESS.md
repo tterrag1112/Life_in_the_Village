@@ -5981,3 +5981,187 @@ the scan uses, and builds a `Best` with the existing `footprintAabb`/`chooseFaci
 helpers; the rotated-dims swap uses `mk.placed().rotation()` (90/270 → swap); the
 CITY factor is a one-line ternary change; the router/auditor/paver tie-ins were
 traced (above); no signature/codec/enum change.
+
+### 2026-06-03 — Layout Rework Stage 4b (residential districts + no-stray farms + market cap)
+
+Extends the footprint-driven district model (civic, fix-up #7 market) to
+RESIDENTIAL and RURAL: houses group into footprint-sized districts instead of
+scattering through the civic ring; farmhouses that can't reserve a viable field
+drop instead of going stray; and the market is capped to one so CITY stops
+aborting. Workshops (bakery/blacksmith/carpentry/stockpile) stay loose this pass
+by design (4c). Built on post-fix-up-#7.
+
+**What shipped:**
+
+*Piece 1 — market cap to 1 (the CITY fatal-overlap fix).* CITY rosters select
+MARKET=2; fix-up #7 bound BOTH halls to the same sub-district centre → fatal
+footprint overlap → spawn abort. `placeOne` now drops every MARKET past the
+first (non-required → village stays viable). One central market; multi-market
+districts deferred.
+
+*Piece 2 — residential districts.* After the civic core + market place
+(core-first, unchanged), `reserveResidentialDistricts` splits the selected
+HOUSEs into ⌈count/`RESIDENTIAL_BLOCK_CAP`(5)⌉ blocks and seats each on a ray fan
+center-out. Each block is one shared central yard void with up to CAP houses
+RINGING it — the SAME geometry as the civic plaza, reusing
+`sizeDistrictToMembers` (refactored to take a `Collection` so `CAP × HOUSE` sizes
+the ring perimeter). The gate AABB (`yardHalf + houseDepth + DISTRICT_GAP`) is
+both the HOUSE inclusion region (supersedes HOUSE's RURAL zone gate in
+`findBestCandidate`) and a rural/farm EXCLUSION. The yard void keeps houses off
+the centre (they ring it), is fed to the router as an obstacle (via `voids()`),
+and is discovered as park leftover by the existing `ParkCandidateFinder` scan
+(no new plumbing — same hook as civic). Districts seat past the civic core's
+reservations (may sit in the civic precinct's empty CORNERS, since residential
+isn't rural) so they stay compact where the footprint-sized core nearly fills
+the radius. The designed block (BSP plots + yard + well + fenced borders) is 4c.
+
+*Piece 3 — no stray farmhouses + field clearance.* A viable field is now
+REQUIRED for FARMHOUSE: if `reserveComplexParcel` can't reserve a field box
+(even shrunk to the minimum, clear of districts + low-slope),
+`placeOne` drops the farmhouse (`DropReason.NO_VIABLE_COMPLEX_PARCEL`, non-fatal)
+instead of shipping a fieldless stray — this also trims CITY's farm over-supply.
+The FARM parcel reservation now also avoids the districts (civic precinct +
+residential gates), which aren't full Reservations; since the post-spawn
+`FarmComplexPlanner` flood-fill is BOUNDED to the parcel, a district-clear parcel
+keeps the field off houses/plazas (kills the `SEED_NOT_ADMISSIBLE` strays).
+Farmhouses (rural, batch 2) are already excluded from every district gate and
+grow their parcel away from the anchor (outboard), so the field naturally lands
+beyond the inboard districts.
+
+*Piece 4 — HOUSE/FARMHOUSE routing.* No profession change. HOUSE → residential
+district gates (Piece 2 inclusion gate); FARMHOUSE → rural ring (batch 2, RURAL
+zone, now also excluded from the district gates). Falls out of pieces 2/3.
+
+**Surface area:** 0 new files + 3 edits + 0 deletions (1 enum value added).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer3/DropReason.java` — `NO_VIABLE_COMPLEX_PARCEL`.
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` — market cap; required-farm
+  gate; `reserveResidentialDistricts` + `seatDistrictAlongRay` + AABB helpers;
+  `sizeDistrictToMembers` → `Collection`; HOUSE inclusion + rural exclusion in
+  `findBestCandidate`; FARM parcel avoids districts; State `residentialGates`/
+  `residentialYards` (+ `voids()`).
+
+**Tie-In Audit:**
+- *Touched surface:* `DropReason` (+1 value); `PhasedPlanner` (market cap, farm
+  gate, residential districts, HOUSE routing — all internal `State`/private); no
+  public type signature, codec, or `PhasedPlanner.Result` field changed
+  (residential is transient planning state).
+- *Upstream feeders:* `sortedSelection` (HOUSE count drives district count +
+  sizing; MARKET count → cap); `FootprintProvider` seam (HOUSE footprint sizes
+  the ring); `civicPrecinct` (residential seats beyond the civic reservations).
+- *Downstream callers:* `DropReason` is rendered as `.reason().name()` only
+  (`DroppedBuilding`, `LayoutCommand`, `PlaceCommand`, `LayoutDumpSerializer`) —
+  **NO exhaustive switch** anywhere (grep confirmed), so the new value needs no
+  arm updates; every consumer string-renders it. `ParkCandidateFinder.find`
+  (adapter) — unchanged call; discovers the new yard voids as leftover open
+  space automatically. `FarmComplexPlanner` — unchanged signature; the existing
+  `parcelBoundary` bound + `excludedPolygons` already constrain the field; the
+  district-clear parcel is what keeps it off districts. `BlockServingRouter` —
+  `voids()` now also returns residential yards; the router already treats voids
+  as obstacles (skirts them) and relocates building terminals out of obstacles,
+  so houses ringing a yard get perimeter road access (civic-plaza precedent).
+- *Sibling systems:* `OverlapAuditor` — more reserved voids, but houses ring
+  them (overlapsAnyReservation keeps footprints off the yard) so no building×void
+  overlap; building×building unaffected. `ViabilityValidator` — dropping
+  FARMHOUSE/MARKET is non-fatal (`profile.required()` false for both; only
+  TOWN_HALL is required), so `state.viable` is untouched by the new drops.
+  `LayoutDumpSerializer` — renders the new drop reason by name (fine). Both spawn
+  paths (`/litv spawn` + normal) run the same `PhasedPlanner.run`.
+- *Exhaustive switches:* none over `DropReason` (string-render only). No new
+  `NucleusKind` (residential is a footprint district, not a zone band — the old
+  `RESIDENTIAL` zone-band idea stays dropped; `Inclination.RESIDENTIAL` is an
+  unrelated settlement-type value, untouched).
+- *Caller-helper opportunity:* the district-AABB sizing/seating/gating now
+  recurs (civic, market, residential). If a 4th district type lands (workshops,
+  4c), a shared `DistrictReservation` helper is worth extracting — flagged, not
+  built (only 3 sites, each with different geometry: ring vs concentric vs ring).
+
+**Simplification Sweep** (touches `Village/Planning/`):
+- `sizeDistrictToMembers` — Active (civic + residential callers); refactored
+  `EnumSet`→`Collection` (multiplicity), not duplicated.
+- `Reservation`/`Aabb`/`squareAt`/`toAabb`/`squareCentreOf` — Active, reused for
+  residential (no parallel machinery).
+- `ParkCandidateFinder` — Active; reused via the existing leftover-scan (no new
+  hook).
+- New private helpers (`reserveResidentialDistricts`, `seatDistrictAlongRay`,
+  `insideAabb`/`insideAny`/`aabbsOverlapXZ`/`aabbOverlapsAny`/`aabbOverlapsPoly`/
+  `overlapsAnyDistrict`) — small, single-purpose; no orphans (each ≥1 caller,
+  grep-verified). No `NucleusKind.RESIDENTIAL` / band-weight stub was added (the
+  dropped zone-band idea stays dropped). No dead residential scaffold found.
+
+**Deviations from prompt:**
+- **Houses RING a shared yard (not "rows/ring is fine" → I chose the ring).**
+  The prompt allowed either; the ring reuses the civic-plaza geometry +
+  `sizeDistrictToMembers` exactly (the prompt's stated reuse), and the yard IS
+  the "small shared open margin → 4c yard/well." Rows would have needed an
+  area-based sizer (the perimeter sizer under-sizes for area-fill).
+- **Districts may sit in the civic precinct's empty corners**, not strictly
+  "beyond the precinct." At TOWN the footprint-sized civic precinct's corner
+  distance ≈ the village radius, so "beyond the precinct corner" pushed blocks
+  off the map. Seating past the civic *reservations* (not the precinct bounding
+  box) keeps them compact. Residential isn't rural, so the precinct doesn't
+  exclude it — consistent.
+- **Field-avoids-reservations via the parcel, not an extra exclusion list to
+  `FarmComplexPlanner`.** The flood-fill is already bounded to the parcel; making
+  the parcel district-clear is sufficient and avoids plumbing the district
+  polygons through `Result` → adapter. If residual `SEED_NOT_ADMISSIBLE` persists
+  at TOWN, passing the district polygons as `excludedPolygons` is the next lever
+  (flagged).
+- **Market cap drop reason = `NO_VIABLE_CANDIDATE`** (with an explicit "cap 1"
+  detail) rather than a new `DropReason` — the extra market isn't a parcel/field
+  failure, and a bespoke "capped" reason wasn't worth an enum value.
+- **HOUSE district capacity is soft** (the gate band holds ≈ CAP via
+  overlap-packing + scorer overflow to the next district), not a hard per-house
+  assignment — matches the "simple arrangement this pass" instruction.
+
+**Out-of-scope but flagged:**
+- The designed residential block (BSP plots, shared yard, well, fenced borders,
+  reusing the farm-complex subdivider) → **4c**.
+- Districting the workshops (bakery/blacksmith/carpentry/stockpile) → **4c**
+  (known districts-by-default debt; bakery likely → residential/civic).
+- Multi-market districts (main + satellites) → deferred feature.
+- Heavier planning-time arable check for farms → later if strays persist.
+- Shared `DistrictReservation` helper if a 4th district type lands → 4c.
+- CITY tuning beyond not-aborting (cluster balance, drop counts) → TOWN is this
+  pass's focus.
+- Residential districts can seat a bit far out where the core is large (the
+  ray-scan pushes them past the civic reservations); if TOWN testing shows a
+  disconnected cluster, tighten `gateHalf` / the seating ray → tuning.
+
+**Cumulative pending verification:** the rework spawns + is compact (#3); CITY
+compacts (#5); footprint-driven civic district paves + frames, core-first
+(Stage 4 redesign); market is a bound footprint-sized sub-district with stalls +
+CITY extent ~85 (#7); and now houses group into residential districts, stray
+farmhouses drop, and the market is capped to 1. None of fix-ups #5–#7 / the
+Stage 4 redesign / Stage 4b has been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. Spawn **TOWN AGRICULTURAL** (recent seed). Confirm: HOUSEs cluster into a
+   residential district (log `residential district seated: …`) instead of
+   scattering through the civic ring; the district's yard is left open (becomes a
+   park); farms place BEYOND the residential gate (no farm-field overlapping a
+   district); no stray fieldless farmhouses (log `dropped FARMHOUSE:
+   NO_VIABLE_COMPLEX_PARCEL` for any that can't get a field — they drop, not
+   place); civic plaza + market still place/pave with stalls; roads route cleanly
+   between districts; clean spawn + NPC nav.
+3. Spawn **CITY AGRICULTURAL**, seed `-7816748743281653012` (the one that
+   aborted). Confirm it **no longer aborts** (log `dropped extra MARKET: cap 1`,
+   one MARKET placed); residential clusters seat; farm drop count is sensible
+   (no-stray trims over-supply); residual `SEED_NOT_ADMISSIBLE` rate is low.
+4. A couple of other TOWN seeds: confirm residential sizing scales with HOUSE
+   count (1 district at TOWN HOUSE≈3, ~3 at CITY HOUSE≈14) and TOWN/HAMLET civic
+   + market are unchanged.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `DropReason` has no
+exhaustive switch (string-render only, grep-verified) so the new value is safe;
+`sizeDistrictToMembers` `Collection` refactor keeps the civic `EnumSet` caller
+valid; the residential gate/exclusion reuses the same AABB-overlap helpers as the
+civic precinct; the HOUSE inclusion gate slots into the existing
+`findBestCandidate` gate chain (supersedes the zone gate, like the civic ring);
+the required-farm gate reuses `reserveComplexParcel`'s existing null return; the
+new yard voids flow through the existing `voids()` → router + `ParkCandidateFinder`
+hooks; no signature/codec change; all new private helpers grep-verified to have
+callers.

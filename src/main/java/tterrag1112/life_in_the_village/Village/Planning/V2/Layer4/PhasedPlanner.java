@@ -235,8 +235,13 @@ public final class PhasedPlanner {
                 if (placeOne(state, type, foundation)) perBatchCounts[batch]++;
             }
             // Core-first: once the civic core is placed, derive the precinct
-            // AABB and fence it off from the rural nucleus (placed next).
-            if (batch == 3) addCivicPrecinct(state);
+            // AABB, then reserve the residential districts in the ring beyond
+            // it. Both fence the rural nucleus (placed next) off, so farms go
+            // beyond residential; HOUSE (batch 5) then fills the districts.
+            if (batch == 3) {
+                addCivicPrecinct(state);
+                reserveResidentialDistricts(state, sortedSelection);
+            }
         }
         LOGGER.info("placement: {} primary, {} rural, {} civic, {} resource,"
                 + " {} houses, {} decorative; drops {}",
@@ -308,6 +313,23 @@ public final class PhasedPlanner {
             state.dropped.add(new DroppedBuilding(type, DropReason.NOT_SELECTED,
                     "no PlacementProfile authored"));
             return false;
+        }
+
+        // Stage 4b — single central market (cap 1). CITY rosters select
+        // MARKET=2; the fix-up-#7 binding would bind BOTH halls to the same
+        // sub-district centre → fatal footprint overlap → spawn aborts. Drop
+        // every MARKET past the first (MARKET isn't required, so the village
+        // stays viable; multi-market districts are a deferred feature).
+        if (type == BuildingType.MARKET) {
+            for (PlacedBuilding pb : state.placed) {
+                if (pb.type() == BuildingType.MARKET) {
+                    state.dropped.add(new DroppedBuilding(type,
+                            DropReason.NO_VIABLE_CANDIDATE,
+                            "single central market — extra MARKET dropped (cap 1)"));
+                    LOGGER.info("dropped extra MARKET: cap 1 (one central market)");
+                    return false;
+                }
+            }
         }
 
         // Dependency check.
@@ -404,6 +426,22 @@ public final class PhasedPlanner {
         ComplexParcel cp = reserveComplexParcel(state, type, best);
         Parcel parcel = cp != null ? cp.parcel() : null;
         Aabb parcelAabb = cp != null ? cp.aabb() : null;
+
+        // Stage 4b — required-farm gate (no stray farmhouses). A FARMHOUSE is
+        // its homestead-with-fields; if no viable field parcel could be
+        // reserved (even shrunk to the minimum box, clear of districts/other
+        // reservations + low-slope), DROP the farmhouse rather than shipping a
+        // fieldless stray. Non-fatal (FARMHOUSE isn't required); also trims
+        // CITY's farm over-supply. Every SHIPPED farm now has a bounded
+        // parcel, so the post-spawn FarmComplexPlanner flood-fill stays inside
+        // a district-clear box (kills the SEED_NOT_ADMISSIBLE strays).
+        if (type == BuildingType.FARMHOUSE && cp == null) {
+            state.dropped.add(new DroppedBuilding(type,
+                    DropReason.NO_VIABLE_COMPLEX_PARCEL,
+                    "no viable farm-field parcel (clear of districts/terrain)"));
+            LOGGER.info("dropped FARMHOUSE: NO_VIABLE_COMPLEX_PARCEL (no field box fits)");
+            return false;
+        }
 
         // Materialise the placement.
         PlacedBuilding pb = new PlacedBuilding(type, best.pos, best.footprint,
@@ -523,10 +561,20 @@ public final class PhasedPlanner {
 
         // Layout Rework Stage 4 redesign — rural exclusion. Rural-nucleus
         // types (batch 2 — typically FARMHOUSE) place AFTER the civic core
-        // (core-first reorder); the civic precinct (void ∪ core ∪ market) is
-        // off-limits to them so farmhouses don't intrude on the district.
+        // (core-first reorder); the civic precinct is off-limits to them so
+        // farmhouses don't intrude. Stage 4b — the residential district gates
+        // are also off-limits to rural, so farms place BEYOND residential.
         final boolean ruralType = getBatch(state.ctx, type) == 2;
         final Polygon.AABB precinct = state.civicPrecinct;
+
+        // Stage 4b — HOUSE inclusion. When residential districts exist, HOUSE
+        // is gated INTO them (cell must lie in some district gate AABB),
+        // superseding its RURAL zone gate. overlapsAnyReservation keeps the
+        // house off the central yard void, so houses RING the yard; once a
+        // district's ring fills, the scorer's best admissible cell moves to
+        // the next district (capacity ≈ CAP/district, total ≥ houseCount).
+        final boolean houseGated = type == BuildingType.HOUSE
+                && !state.residentialGates.isEmpty();
 
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
@@ -538,15 +586,24 @@ public final class PhasedPlanner {
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
 
                 // Rural exclusion: keep the rural nucleus out of the civic
-                // precinct (core-first reorder reserves it before batch 2).
-                if (ruralType && precinct != null
-                        && pos.getX() >= precinct.minX() && pos.getX() <= precinct.maxX()
-                        && pos.getZ() >= precinct.minZ() && pos.getZ() <= precinct.maxZ()) {
+                // precinct AND the residential district gates (Stage 4b) so
+                // farms place beyond every district.
+                if (ruralType
+                        && ((precinct != null
+                                && insideAabb(pos.getX(), pos.getZ(), precinct))
+                            || insideAny(pos.getX(), pos.getZ(), state.residentialGates))) {
                     rejZone++;
                     continue;
                 }
 
-                if (squareCentre != null) {
+                if (houseGated) {
+                    // HOUSE inclusion gate (supersedes the RURAL zone gate):
+                    // the cell must lie inside a residential district gate.
+                    if (!insideAny(pos.getX(), pos.getZ(), state.residentialGates)) {
+                        rejZone++;
+                        continue;
+                    }
+                } else if (squareCentre != null) {
                     // Square-ring gate (supersedes zone + binding): centre
                     // must lie within the placement disc around the square.
                     long ddx = pos.getX() - squareCentre.getX();
@@ -1543,7 +1600,10 @@ public final class PhasedPlanner {
      * tiers (where the radius, not the footprints, is the binding limit).
      */
     private static Sized sizeDistrictToMembers(State state,
-                                               EnumSet<BuildingType> members) {
+                                               java.util.Collection<BuildingType> members) {
+        // Stage 4b — a Collection (not a Set) so multiplicity counts: the
+        // residential block passes RESIDENTIAL_BLOCK_CAP copies of HOUSE so the
+        // ring perimeter is sized for that many homes around the shared yard.
         double perim = 0;
         int maxWidth = 0;
         int maxDepth = 0;
@@ -1742,6 +1802,154 @@ public final class PhasedPlanner {
         LOGGER.info("civic precinct: ({},{})..({},{})", minX, minZ, maxX, maxZ);
     }
 
+    // =========================================================================
+    // Stage 4b — residential districts (footprint-sized HOUSE blocks)
+    // =========================================================================
+
+    /** Houses per residential district (the block holds up to this many homes
+     *  ringing one shared yard). Start small; 4c's designed block (BSP plots +
+     *  yard + well + borders) replaces the simple ring arrangement. */
+    private static final int RESIDENTIAL_BLOCK_CAP = 5;
+    /** Clearance (blocks) between a residential district and the civic
+     *  precinct / other districts when seating it center-out. */
+    private static final int DISTRICT_GAP = 4;
+
+    /**
+     * Stage 4b — reserve the residential districts BEFORE the rural nucleus
+     * places, so houses group into footprint-sized blocks instead of
+     * scattering through the civic ring, and farms place beyond them.
+     *
+     * <p>Each district is one shared central yard void with up to
+     * {@link #RESIDENTIAL_BLOCK_CAP} houses RINGING it — the same geometry as
+     * the civic plaza (reusing {@link #sizeDistrictToMembers}, which now takes
+     * a multiset so {@code CAP × HOUSE} sizes the ring). The yard void keeps
+     * houses off the centre (they ring it) and is the leftover
+     * {@link ParkCandidateFinder} turns into a green. The district's gate AABB
+     * is both the HOUSE placement region (inclusion) and a rural/farm
+     * EXCLUSION (so farms go beyond). Districts are seated center-out on a ray
+     * fan, scanning outward until the gate clears the civic core's
+     * reservations — they may sit in the civic precinct's empty CORNERS
+     * (residential isn't rural, so the precinct doesn't exclude them), which
+     * keeps them compact at tiers where the footprint-sized core nearly fills
+     * the radius. The designed block (BSP plots, yard, well, fenced borders)
+     * is 4c — not built here.
+     */
+    private static void reserveResidentialDistricts(State state,
+                                                    List<BuildingType> selection) {
+        int houseCount = 0;
+        for (BuildingType t : selection) if (t == BuildingType.HOUSE) houseCount++;
+        if (houseCount == 0) {
+            LOGGER.info("residential districts: none (no HOUSE selected)");
+            return;
+        }
+        int n = (houseCount + RESIDENTIAL_BLOCK_CAP - 1) / RESIDENTIAL_BLOCK_CAP;
+
+        // Size one block from the houses it holds: up to CAP homes ring a
+        // central yard (perimeter model — reuse the footprint sizer). The gate
+        // band is one house-depth past the yard (a single ring of homes).
+        int blockHouses = Math.min(RESIDENTIAL_BLOCK_CAP, houseCount);
+        List<BuildingType> members = new ArrayList<>(blockHouses);
+        for (int k = 0; k < blockHouses; k++) members.add(BuildingType.HOUSE);
+        int yardHalf = sizeDistrictToMembers(state, members).half();
+        int houseDepth = defaultFootprint(state, BuildingType.HOUSE).length();
+        int gateHalf = yardHalf + houseDepth + DISTRICT_GAP;
+
+        BlockPos anchor = state.ctx.anchor();
+        // Start close to the core (the reservation-overlap scan pushes each
+        // district out past the civic buildings); scan to the grid edge.
+        int innerR = gateHalf + DISTRICT_GAP;
+        int outerR = Math.max(innerR, state.fmap.radius() - gateHalf);
+
+        int reserved = 0;
+        for (int k = 0; k < n; k++) {
+            // Fan the districts around the anchor; offset so the first doesn't
+            // collide with the market satellite on the perpendicular axis.
+            double angle = (2 * Math.PI * k) / n + Math.PI / 4.0;
+            Polygon.AABB gate = seatDistrictAlongRay(
+                    state, anchor, angle, innerR, outerR, yardHalf, gateHalf);
+            if (gate != null) reserved++;
+        }
+        LOGGER.info("residential districts: {} requested / {} reserved"
+                + " (houses={}, yardHalf={}, gateHalf={})",
+                n, reserved, houseCount, yardHalf, gateHalf);
+    }
+
+    /** Seats one residential district by scanning outward along {@code angle}
+     *  from {@code innerR} for a buildable centre whose gate AABB clears every
+     *  prior reservation (civic + market voids, placed footprints) and other
+     *  districts. The civic PRECINCT is intentionally NOT a barrier — a
+     *  residential block may sit in its empty corners (residential isn't
+     *  rural). On success reserves the central yard void + records the gate,
+     *  and returns it; returns null if no admissible spot exists on the ray. */
+    private static Polygon.AABB seatDistrictAlongRay(State state, BlockPos anchor,
+            double angle, int innerR, int outerR, int yardHalf, int gateHalf) {
+        double cos = Math.cos(angle), sin = Math.sin(angle);
+        for (int r = innerR; r <= outerR; r += 4) {
+            int cx = anchor.getX() + (int) Math.round(cos * r);
+            int cz = anchor.getZ() + (int) Math.round(sin * r);
+            if (!state.fmap.inBounds(cx, cz)) continue;
+            Cell c = state.fmap.cellAt(cx, cz);
+            BlockCategory cat = c.category();
+            if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                    || c.localSlope() > MAX_SLOPE) continue;
+            Polygon.AABB gate = squareAt(cx, cz, gateHalf);
+            if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) continue;
+            if (aabbOverlapsAny(gate, state.residentialGates)) continue;
+            // Reserve the central yard void (houses ring it; → park leftover;
+            // → router obstacle via voids()). Record the gate for HOUSE
+            // inclusion + rural/farm exclusion.
+            Polygon.AABB yard = squareAt(cx, cz, yardHalf);
+            state.reservations.add(new Reservation(toAabb(yard), toAabb(yard), null));
+            state.residentialYards.add(yard);
+            state.residentialGates.add(gate);
+            LOGGER.info("residential district seated: centre=({},{}) yardHalf={} gateHalf={} r={}",
+                    cx, cz, yardHalf, gateHalf, r);
+            return gate;
+        }
+        return null;
+    }
+
+    /** XZ overlap of two {@link Polygon.AABB}s. */
+    private static boolean aabbsOverlapXZ(Polygon.AABB a, Polygon.AABB b) {
+        return a.minX() <= b.maxX() && a.maxX() >= b.minX()
+                && a.minZ() <= b.maxZ() && a.maxZ() >= b.minZ();
+    }
+
+    /** True iff {@code box} overlaps any AABB in {@code others}. */
+    private static boolean aabbOverlapsAny(Polygon.AABB box, List<Polygon.AABB> others) {
+        for (Polygon.AABB o : others) if (aabbsOverlapXZ(box, o)) return true;
+        return false;
+    }
+
+    /** True iff {@code (x,z)} lies inside {@code a} (inclusive). */
+    private static boolean insideAabb(int x, int z, Polygon.AABB a) {
+        return x >= a.minX() && x <= a.maxX() && z >= a.minZ() && z <= a.maxZ();
+    }
+
+    /** True iff {@code (x,z)} lies inside any AABB in {@code regions}. */
+    private static boolean insideAny(int x, int z, List<Polygon.AABB> regions) {
+        for (Polygon.AABB a : regions) if (insideAabb(x, z, a)) return true;
+        return false;
+    }
+
+    /** True iff the parcel {@code box} overlaps any district (civic precinct
+     *  or a residential gate) — neither is a full {@link Reservation}, so
+     *  parcel reservation checks them separately. */
+    private static boolean overlapsAnyDistrict(State state, Aabb box) {
+        if (state.civicPrecinct != null && aabbOverlapsPoly(box, state.civicPrecinct)) {
+            return true;
+        }
+        for (Polygon.AABB g : state.residentialGates) {
+            if (aabbOverlapsPoly(box, g)) return true;
+        }
+        return false;
+    }
+
+    private static boolean aabbOverlapsPoly(Aabb a, Polygon.AABB b) {
+        return a.minX() <= b.maxX() && a.maxX() >= b.minX()
+                && a.minZ() <= b.maxZ() && a.maxZ() >= b.minZ();
+    }
+
     private static Polygon.AABB squareAt(int cx, int cz, int half) {
         return new Polygon.AABB(cx - half, cz - half, cx + half, cz + half);
     }
@@ -1795,6 +2003,12 @@ public final class PhasedPlanner {
             int hd = (int) Math.round(minDepth + (fullDepth - minDepth) * t);
             Aabb box = budgetBox(best.pos, best.footprintAabb, grow, hp, hd);
             if (aabbOverlapsAnyReservation(box, state.reservations)) continue;
+            // Stage 4b — the FARM field parcel must also clear the districts
+            // (civic precinct + residential gates), which aren't full
+            // Reservations. The post-spawn FarmComplexPlanner bounds the
+            // flood-fill to this parcel, so a district-clear parcel keeps the
+            // field off houses/plazas (kills SEED_NOT_ADMISSIBLE strays).
+            if (kind == Parcel.Kind.FARM && overlapsAnyDistrict(state, box)) continue;
             // Stage 3c — no corridor check: roads don't exist at
             // placement (roads-last). The router routes around reserved
             // parcels' buildings; the building footprint reservation
@@ -2018,12 +2232,21 @@ public final class PhasedPlanner {
          *  market), derived once the civic core places (core-first reorder).
          *  Off-limits to the rural nucleus that places next; null until then. */
         Polygon.AABB civicPrecinct;
+        /** Stage 4b — residential districts. {@code residentialGates} are the
+         *  HOUSE placement regions (also rural/farm EXCLUSIONs, mirroring the
+         *  civic precinct); {@code residentialYards} are the small central
+         *  yard voids the houses ring (reserved so houses stay off them; fed
+         *  to the router as obstacles; discovered as park leftover by
+         *  ParkCandidateFinder). Reserved after the civic core, before rural. */
+        final List<Polygon.AABB> residentialGates = new ArrayList<>();
+        final List<Polygon.AABB> residentialYards = new ArrayList<>();
 
         /** The reserved square voids, for the router's obstacle mask. */
         List<Polygon.AABB> voids() {
-            List<Polygon.AABB> out = new ArrayList<>(2);
+            List<Polygon.AABB> out = new ArrayList<>(2 + residentialYards.size());
             if (civicSquare != null) out.add(civicSquare);
             if (marketSquare != null) out.add(marketSquare);
+            out.addAll(residentialYards);
             return out;
         }
 

@@ -25,5 +25,11 @@ public enum DropReason {
     ISOLATED_AFTER_REASSESS,
     /** Layer 5 TerrainAdapter: terrain under the building's footprint
      *  is too steep to level or platform within the V1 thresholds. */
-    TERRAIN_UNADAPTABLE
+    TERRAIN_UNADAPTABLE,
+    /** Stage 4b — a FARMHOUSE could not reserve a viable farm-field
+     *  parcel at planning time (no clear, low-slope box fits past the
+     *  districts/other reservations). Non-fatal: FARMHOUSE isn't
+     *  {@code required}, so the village stays viable with fewer farms —
+     *  the gate exists so a fieldless farmhouse never ships (no strays). */
+    NO_VIABLE_COMPLEX_PARCEL
 }
