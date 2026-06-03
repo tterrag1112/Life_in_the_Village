@@ -750,13 +750,20 @@ public final class V2VillageSpawnerAdapter {
         // MIN_PLAZA_HALF, so this is belt-and-suspenders.)
         List<tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion>
                 plazas = new ArrayList<>();
+        // Plaza fix-up — floorY is the WALKING/air level, NOT the ground-block
+        // Y. anchor.getY() is the ground solid block (buildings place at
+        // centre.getY()+1 to sit ON it — see toPivot), and PlazaPaver paves at
+        // floorY-1 (= the ground block) so players walk on floorY. Passing the
+        // raw anchor.getY() buried the pavement one block under the grass AND
+        // sank every decoration; +1 puts floorY at the surface for both.
+        int plazaFloorY = anchor.getY() + 1;
         if (nonDegenerate(civicSquare)) {
-            plazas.add(squarePlaza(civicSquare, anchor.getY(),
+            plazas.add(squarePlaza(civicSquare, plazaFloorY,
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
                             .PlazaPurpose.CIVIC));
         }
         if (nonDegenerate(marketSquare)) {
-            plazas.add(squarePlaza(marketSquare, anchor.getY(),
+            plazas.add(squarePlaza(marketSquare, plazaFloorY,
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
                             .PlazaPurpose.MARKET));
         }

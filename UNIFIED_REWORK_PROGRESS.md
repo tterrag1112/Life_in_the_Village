@@ -6737,3 +6737,105 @@ all flora blocks (SHORT_GRASS/POPPY/CORNFLOWER/AZURE_BLUET/OXEYE_DAISY/DANDELION
 `contains(poly,x,z)` exist; `PlazaPiece.Kind` switch is exhaustive + sole consumer;
 `placeCivicWell` deletion verified (no remaining refs); no codec/signature/enum
 break.
+
+### 2026-06-03 — Plaza cleanup fix-up (floor-Y off-by-one: paving + decoration height)
+
+Three in-world bugs from `CivicPlazaComplex`, two sharing one root.
+
+**Root cause (confirmed — the floor-Y-off-by-one hypothesis was right):** the
+plaza `floorY` was set to the raw `anchor.getY()`, which is the GROUND SOLID-BLOCK
+Y — buildings place at `centre.getY() + 1` ("sits on the ground rather than
+replacing it", `V2VillageSpawnerAdapter.toPivot` line ~879). But `PlazaPaver` (and
+the plaza decorations) treat `floorY` as the WALKING/air level: it paves at
+`paveY = floorY - 1` so players walk on `floorY`. With `floorY = anchor.getY()`,
+the pavement landed at `anchor.getY()-1` — **one block under the grass surface**
+(so the civic plaza read as grass, symptom 2) — and every decoration stamped at
+`floorY` sat **one block sunk** (symptom 1). One fix resolves both.
+
+**What shipped:**
+- **`floorY = anchor.getY() + 1`** for both CIVIC + MARKET `squarePlaza` calls in
+  `buildRealizedLayout` (single source). Now `PlazaPaver` paves at
+  `floorY-1 = anchor.getY()` (the ground block → replaced with the road palette,
+  players walk on `floorY = anchor.getY()+1`), matching the building `+1`
+  convention (no 1-block lip). The fountain NBT, gardens, hedge, and the fountain
+  `GatheringPoint` all derive their Y from `region.floorY()`, so the +1 flows
+  through — decorations now sit ON the surface, not sunk (symptom 1), and the
+  plaza is visibly paved (symptom 2).
+- **Garden grass-under-flowers (symptom 3) was ALREADY in the shipped code** —
+  `PlazaPieceRenderer.renderGarden` sets `GRASS_BLOCK` at `floorY-1` before
+  stamping the flower/hedge at `floorY` (lines confirmed). The flowers "not
+  sticking" was a CONSEQUENCE of the floor-Y bug (the grass + flower were placed
+  one block low, at/under the surrounding surface); with `floorY` corrected, the
+  flower sits on a fresh grass patch at the proper surface height. No code change
+  needed for #3 beyond the Y fix (reported — the prompt's mount predates the
+  grass-under code).
+
+**Surface area:** 1 edit (1 line of behaviour) + 0 new files + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (`plazaFloorY =
+  anchor.getY() + 1` for the CIVIC + MARKET `squarePlaza` calls).
+
+**Tie-In Audit:**
+- *Touched surface:* the CIVIC + MARKET `PlazaRegion.floorY` (one value, set in
+  `buildRealizedLayout`).
+- *Downstream callers of `floorY`:* `PlazaPaver.pave` (paves `floorY-1`, walks
+  `floorY`) — now correct (in scope). `CivicPlazaComplex`/`PlazaPieceRenderer`
+  (fountain stamp Y, garden soil/plant Y, fountain `GatheringPoint` Y) — all
+  derive from `region.floorY()`, so corrected for free (in scope). NPC nav to the
+  fountain gathering point — now at the walking level (better; read-only consumer).
+- *Sibling systems:* **MARKET plaza — UNAFFECTED/improved.** The market complex pad
+  renders at its OWN `padY = mk.placed().centre().getY()` (line 530, independent of
+  the plaza `floorY`), so raising the market `PlazaRegion.floorY` does not touch the
+  `MarketComplexRenderer` pad/stalls; it only lifts `PlazaPaver`'s market pass from
+  buried→surface (the pad render dominated visually before, so no regression — the
+  market "paved fine" because of its own pad). No 1-block lip: `paveY =
+  anchor.getY()` = the building ground-block level; walking `= anchor.getY()+1` =
+  the building floor level — they match. `PlazaRegion` codec persists `floorY`, but
+  this is spawn-time (new spawns get the fix; existing villages already rendered).
+- *Exhaustive switches:* none.
+- *Caller-helper opportunity:* none.
+
+**Simplification Sweep:** N/A — a one-line correction; the +1 is applied in ONE
+place (the shared `plazaFloorY`), so there's no inconsistent-offset debt.
+
+**Deviations from prompt:**
+- **Symptom 3 needed no new code** — the grass-under-flower was already shipped in
+  `renderGarden`; the prompt's mount predates it. Reported rather than duplicated.
+- **Fixed the MARKET plaza `floorY` too** (not just civic). The prompt said "don't
+  touch the market unless its Y is implicated" — it IS (same `anchor.getY()`
+  source), but it was visually masked by the market's own pad render. Correcting
+  both keeps one floor-Y source and is regression-free (the pad render is
+  independent). 
+
+**Out-of-scope but flagged:**
+- Re-enabling rural / flipping `DISTRICT_ONLY_MODE` off → not until residential
+  districts are polished (later residential pass).
+- Staged plaza pieces (well/stall/noticeboard/bench) → later.
+- Residential block design (BSP yard/well/borders → 4c) → the gate to un-flipping
+  district-only.
+
+**Cumulative pending verification:** the rework spawns; civic + market + residential
+districts reserve; village roads render unified; the civic plaza has a designed
+fountain + gardens; and now the plaza paves + decorates at the correct height. None
+of #5–#7 / Stage 4 redesign / 4b / the market+resi & roads fix-ups / plaza
+decoration / this Y fix-up has been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. With `DISTRICT_ONLY_MODE` on, spawn **TOWN AGRICULTURAL**: the civic plaza is
+   PAVED (cobbles / road palette), NOT grass; the fountain + gardens + hedge sit ON
+   the surface (not sunk one block); garden flowers persist on small grass patches;
+   no 1-block lip between the plaza and adjacent roads/buildings.
+3. Spawn **CITY AGRICULTURAL**: same; the MARKET plaza + stalls are unchanged (no
+   regression); no abort.
+4. A seed or two: confirm decoration height is consistent and the plaza floor is
+   flush with the surrounding road/building grade.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the change is one
+derived value (`plazaFloorY = anchor.getY() + 1`) feeding the existing `squarePlaza`
+calls; verified buildings use `centre.getY()+1` (so `anchor.getY()` is the ground
+block) and `PlazaPaver` paves `floorY-1`/walks `floorY` (so `floorY` must be the
+air level); verified the MARKET pad uses an independent `padY` (no regression);
+`renderGarden` already grass-beds each plant; no signature/codec/enum change.
