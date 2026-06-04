@@ -117,6 +117,33 @@ public final class V2VillageSpawnerAdapter {
             String villageName,
             tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclinationOverride,
             tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier tierOverride) {
+        return spawn(level, origin, villageType, villageName,
+                inclinationOverride, tierOverride, null);
+    }
+
+    /**
+     * District-tooling seam — overload that accepts a FORCED selection
+     * (building type → count), bypassing {@link BuildingSelector} +
+     * {@link ReconciliationEngine} so a caller can drive the REAL spawn
+     * pipeline (planner → placer → downstream render) with an exact roster.
+     * Used by {@code /litv district} to render a residential district at a
+     * chosen house count. Pass {@code null} for the production path —
+     * behaviour is then byte-identical to before this seam (the only change is
+     * the {@code if (selectionOverride != null)} branch around selection).
+     *
+     * <p>The override trusts the caller's types are NBT-available (no
+     * availability/trade reconciliation runs); the DISTRICT_ONLY filter in
+     * {@code PhasedPlanner.run} still applies, and dependency topo-sort still
+     * runs over the forced list.
+     */
+    public static Optional<Village> spawn(
+            ServerLevel level,
+            BlockPos origin,
+            String villageType,
+            String villageName,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclinationOverride,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier tierOverride,
+            Map<BuildingType, Integer> selectionOverride) {
         long t0 = System.currentTimeMillis();
         VillageSavedData data = VillageSavedData.get(level);
 
@@ -161,22 +188,37 @@ public final class V2VillageSpawnerAdapter {
             return Optional.empty();
         }
 
-        InclinationProfile profile =
-                InclinationProfile.forInclination(siteCtx.inclination());
-        BuildingSelector.SelectionResult sel =
-                BuildingSelector.select(siteCtx, fmap, profile);
-        ReconciliationEngine.ReconciliationResult recon =
-                ReconciliationEngine.reconcile(sel.selected(), siteCtx.tier(),
-                        culture.id(), StructureAvailabilityRegistry.INSTANCE);
-        List<BuildingType> sorted =
-                DependencyResolver.topoSort(recon.finalSelection(), seed);
-        List<UnavailableBuilding> unavailable = sel.unavailable();
-        // B2.8 — surface trade-fulfilled types so PhasedPlanner can
-        // skip DEPENDENCY_MISSING drops for buildings whose supply
-        // chain runs over trade routes (BLACKSMITH<-MINE,
-        // BAKERY<-MILLER, etc.).
+        // Selection — production path runs BuildingSelector + reconcile; the
+        // district-tooling override forces an exact roster (sel/recon stay null,
+        // which tryAutoDump tolerates — see the UNVIABLE abort above).
+        BuildingSelector.SelectionResult sel;
+        ReconciliationEngine.ReconciliationResult recon;
+        List<BuildingType> sorted;
+        List<UnavailableBuilding> unavailable;
+        // B2.8 — trade-fulfilled types so PhasedPlanner skips DEPENDENCY_MISSING
+        // for buildings whose supply chain runs over trade routes.
         java.util.Set<BuildingType> tradeFulfilled = new java.util.HashSet<>();
-        for (var tf : recon.tradeFulfilled()) tradeFulfilled.add(tf.requiringType());
+        if (selectionOverride != null && !selectionOverride.isEmpty()) {
+            sel = null;
+            recon = null;
+            List<BuildingType> forced = new ArrayList<>();
+            for (var e : selectionOverride.entrySet()) {
+                for (int i = 0; i < Math.max(0, e.getValue()); i++) forced.add(e.getKey());
+            }
+            sorted = DependencyResolver.topoSort(forced, seed);
+            unavailable = List.of();
+            LOGGER.info("V2: selection OVERRIDE ({}) — BuildingSelector + reconcile bypassed",
+                    selectionOverride);
+        } else {
+            InclinationProfile profile =
+                    InclinationProfile.forInclination(siteCtx.inclination());
+            sel = BuildingSelector.select(siteCtx, fmap, profile);
+            recon = ReconciliationEngine.reconcile(sel.selected(), siteCtx.tier(),
+                    culture.id(), StructureAvailabilityRegistry.INSTANCE);
+            sorted = DependencyResolver.topoSort(recon.finalSelection(), seed);
+            unavailable = sel.unavailable();
+            for (var tf : recon.tradeFulfilled()) tradeFulfilled.add(tf.requiringType());
+        }
 
         PhasedPlanner.Result phased =
                 PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level, tradeFulfilled);

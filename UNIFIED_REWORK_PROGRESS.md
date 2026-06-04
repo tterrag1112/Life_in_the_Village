@@ -6839,3 +6839,139 @@ calls; verified buildings use `centre.getY()+1` (so `anchor.getY()` is the groun
 block) and `PlazaPaver` paves `floorY-1`/walks `floorY` (so `floorY` must be the
 air level); verified the MARKET pad uses an independent `padY` (no regression);
 `renderGarden` already grass-beds each plant; no signature/codec/enum change.
+
+### 2026-06-03 — Dev tooling: /litv district command + spawn selection-override seam
+
+A `/litv district residential <count> [variant]` command that places one
+residential district at the player by driving the REAL spawn pipeline, so the
+residential variants + their tiling can be iterated by eye without a full
+village. Per the accepted disposition (no clean standalone unit exists), the
+seam is a selection override on `V2VillageSpawnerAdapter.spawn`, not an
+extraction. (Seam choice per user direction.)
+
+**What shipped:**
+- **Selection-override seam on `spawn`.** New 7-arg overload
+  `spawn(..., @Nullable Map<BuildingType,Integer> selectionOverride)`. When
+  non-null it bypasses `BuildingSelector.select` + `ReconciliationEngine` and
+  feeds the forced roster straight into `PhasedPlanner.run` (expanded count →
+  list, then the existing `DependencyResolver.topoSort`); `sel`/`recon` stay
+  null (which `tryAutoDump` already tolerates — the UNVIABLE abort passes
+  nulls). When null, the path is byte-identical to before (the only change is
+  the `if (selectionOverride != null)` branch around selection). The prior 6-arg
+  `spawn` now delegates with `null`. Reuses the ENTIRE real render pipeline
+  (planner → `BuildingPlacer` → `runDownstream`), so what the command shows ==
+  what spawns — one implementation, no planner copy.
+- **`/litv district residential <count> [variant]`** (op-only, permission 2):
+  spawns a real minimal village at the player with override
+  `{TOWN_HALL:1, HOUSE:<count>}`, `Inclination.AGRICULTURAL`,
+  `ViabilityTier.CITY` (generous extent so blocks tile). TOWN_HALL gives a
+  stable civic anchor/precinct + visual reference; HOUSE×count drives the
+  residential load → tiling as count grows. `DISTRICT_ONLY_MODE` keeps rural +
+  loose off; its viability relax lets the 2-distinct spawn proceed. Echoes the
+  forced roster + result to chat (per-block tiling is in the server log:
+  `residential districts: N requested / N reserved`).
+- Registered in `ModModEvents.onRegisterCommands`.
+
+**Surface area:** 1 new file + 2 edits + 0 deletions.
+
+**Files added:**
+- `.../Commands/DistrictCommand.java`
+**Files modified:**
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (7-arg `spawn`
+  override + selection branch; 6-arg delegates).
+- `.../Events/ModModEvents.java` (register `DistrictCommand`).
+
+**Disposition finding (accepted, per user direction):** the residential
+placement is intrinsic to `PhasedPlanner.run` (placeOne/findBestCandidate need
+the full SiteContext/zone/fmap/variant/scoring) and rendering needs the whole
+`spawn` pipeline (Village creation + BuildingPlacer + runDownstream), which
+derived its own roster with no override. There is no small unit to extract; the
+correct, additive seam is a forced selection on `spawn`. Implemented that.
+
+**Tie-In Audit:**
+- *Touched surface:* `V2VillageSpawnerAdapter.spawn` (+1 overload, +1 internal
+  branch); new `DistrictCommand`; `ModModEvents` registration.
+- *Downstream callers of `spawn`:* `SpawnCommand` (6-arg) + the 4-arg
+  convenience → both delegate to the 7-arg with `null` ⇒ **UNAFFECTED**
+  (byte-identical production path; verified the else-branch reproduces the
+  original select/reconcile/topoSort/unavailable/tradeFulfilled exactly).
+  `tryAutoDump` reads `sel`/`recon` — already null-tolerant (the UNVIABLE +
+  proximity aborts pass nulls), so the override's null `sel`/`recon` are safe.
+- *Sibling systems:* `PhasedPlanner.run` receives the forced `sorted` in the
+  same shape as the reconciled selection; the `DISTRICT_ONLY_MODE` filter still
+  applies (TOWN_HALL + HOUSE are both in `DISTRICT_TYPES`, kept). NBT-`unavailable`
+  handling is skipped on the override path (forced types are known-available) —
+  flagged. Both spawn entry points honour the seam.
+- *Exhaustive switches:* none (the variant arg is a parsed string, not an enum;
+  no new enum — deferred to the variant work per "new enum only when a concrete
+  consumer needs it").
+- *Caller-helper opportunity:* the `selectionOverride` IS the reusable seam
+  (forced-composition spawns for any future district/debug test).
+
+**Simplification Sweep** (touches `Village/Planning/`):
+- `V2VillageSpawnerAdapter` — +1 overload + 1 branch; the 6-arg delegates (no
+  duplication). One spawn implementation, one selection path with a guard.
+- `DistrictCommand` (new) — thin; reuses the real `spawn`, no planner/render
+  copy. Registered alongside the other `/litv` commands.
+- No orphans created; no copy of planner internals (the whole point of the
+  seam). Net: +1 command + 1 reusable override param.
+
+**Deviations from prompt:**
+- **Seam, not extraction** — the original prompt imagined a small standalone
+  unit; the disposition (accepted) showed that's not viable, so a forced-roster
+  override on `spawn` is the correct shape. (Per user direction.)
+- **Variant arg is parsed + echoed but not threaded** into the placement — there
+  is no residential variant enum/consumer yet (4c), so threading a no-op param
+  through the production pipeline would be dead code (violates "new enum/param
+  only when a concrete consumer needs it"). The CLI arg path exists now; the
+  internal dispatch lands with the variants.
+- **No cleanup sub-command** — re-running near a prior test village trips the
+  `spawn` proximity check; documented (move away / remove the test village)
+  rather than adding a removal affordance this pass. Flagged.
+- **TOWN_HALL kept in the roster** (not pure-HOUSE) — gives a stable civic
+  anchor + precinct for the residential blocks to seat beyond, and a visual
+  reference. Pure-HOUSE (empty-civic-precinct) left as a later option.
+
+**Out-of-scope but flagged:**
+- Residential internal-layout variants (street-row / courtyard / grid / cluster
+  / green / homestead tofts) → the next prompts; this command is their harness.
+- Threading `[variant]` into the placement (+ the variant enum) → with the
+  variant work.
+- A district-test cleanup/remove sub-command → later nicety (proximity check
+  documented for now).
+- Pure-HOUSE override (drop TOWN_HALL) → later option if the empty-civic case
+  places cleanly.
+- NBT-availability filtering on the override path → not needed for the
+  known-available forced types; add if a future override forces optional types.
+
+**Cumulative pending verification:** the rework spawns; civic + market +
+residential districts reserve; roads render unified; the civic plaza is designed
++ paves at the right height; and now there's a `/litv district` harness driving
+the real pipeline. None of #5–#7 / Stage 4 redesign / 4b / the market+resi &
+roads fix-ups / plaza decoration / the plaza Y fix / this command has been
+smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 4` → a real minimal village at the player: a town
+   hall + ONE residential block (houses + internal path + plaza), matching what
+   spawns in a village. Chat echoes the forced roster + placed count.
+3. `/litv district residential 16` → the residential load TILES into several
+   blocks (log: `residential districts: 4 requested / N reserved`, one
+   `residential district seated:` per block).
+4. `/litv district residential 8 <variant>` → accepted; echoes `variant=<x>
+   (no-op until variants land)` and places the current (grid) arrangement.
+5. Normal `/litv spawn` (no override) → residential placement + everything else
+   **unchanged** vs before the seam (null override = byte-identical path).
+6. Re-run #2 in the same spot → proximity-check empty result (expected); move
+   ~150 blocks and retry.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: the 7-arg `spawn`
+overload's else-branch reproduces the original selection block verbatim (null
+override ⇒ byte-identical; `sel`/`recon` declared method-scoped, assigned in
+both branches, definite-assignment-safe); `tryAutoDump` already accepts null
+`sel`/`recon`; `DistrictCommand` mirrors `PlaceCommand`'s `src.getPlayerOrException()`
+/ `src.getLevel()` / `sendSuccess` conventions and the 7-arg `spawn` signature;
+registered in `ModModEvents` beside `PlaceCommand`; `DISTRICT_TYPES` keeps
+TOWN_HALL + HOUSE; no codec/enum/exhaustive-switch change.
