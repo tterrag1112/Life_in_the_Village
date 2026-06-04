@@ -132,6 +132,24 @@ public final class BlockServingRouter {
                                     List<tterrag1112.life_in_the_village.Utilities
                                             .Geometry.Polygon.AABB> voids,
                                     List<BlockPos> districtNodes) {
+        return route(placed, gateways, fmap, anchor, voids, districtNodes, List.of());
+    }
+
+    /**
+     * Layout Rework — overload taking {@code noBranchBlocks}: residential
+     * COURTYARD block AABBs whose houses are served by a DELIBERATE ring path,
+     * not the emergent MST. Buildings inside these blocks get no per-building
+     * terminal (so the router stops laying patchy per-house branches there); the
+     * block still connects through its district node. Civic / market / street-row
+     * routing is unchanged (empty list → identical to the old path).
+     */
+    public static NetworkSpec route(List<PlacedBuilding> placed, Gateways gateways,
+                                    V2FeatureMap fmap, BlockPos anchor,
+                                    List<tterrag1112.life_in_the_village.Utilities
+                                            .Geometry.Polygon.AABB> voids,
+                                    List<BlockPos> districtNodes,
+                                    List<tterrag1112.life_in_the_village.Utilities
+                                            .Geometry.Polygon.AABB> noBranchBlocks) {
         int g = fmap.gridSize();
         // Stage 3 fix-up + Stage 4a — placed building footprints AND reserved
         // plaza voids are obstacles for routing: roads thread BETWEEN buildings
@@ -139,7 +157,7 @@ public final class BlockServingRouter {
         // across a footprint (OverlapAuditor) or a designed plaza.
         boolean[][] obstacle = obstacleMask(placed, voids, fmap, g);
         List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g,
-                obstacle, districtNodes);
+                obstacle, districtNodes, noBranchBlocks);
 
         List<NetworkNode> nodes = new ArrayList<>(terms.size());
         for (Terminal t : terms) {
@@ -194,7 +212,10 @@ public final class BlockServingRouter {
                                                  Gateways gateways, V2FeatureMap fmap,
                                                  BlockPos anchor, int g,
                                                  boolean[][] obstacle,
-                                                 List<BlockPos> districtNodes) {
+                                                 List<BlockPos> districtNodes,
+                                                 List<tterrag1112.life_in_the_village
+                                                         .Utilities.Geometry.Polygon.AABB>
+                                                         noBranchBlocks) {
         List<Terminal> terms = new ArrayList<>();
         Set<Long> usedCells = new HashSet<>();
 
@@ -237,11 +258,27 @@ public final class BlockServingRouter {
         // plaza instead of entering it.
         int bi = 0;
         for (PlacedBuilding pb : placed) {
+            // Layout Rework — a COURTYARD house is served by its block's
+            // deliberate ring path, not a per-building branch: skip its terminal
+            // so the router stops branching into the courtyard.
+            if (insideNoBranch(pb.centre(), noBranchBlocks)) continue;
             int[] cell = frontCell(pb, anchor, fmap, obstacle);
             addTerminal(terms, usedCells,
                     "bldg:" + pb.type().name() + ":" + bi++, NodeKind.JUNCTION, cell, g);
         }
         return terms;
+    }
+
+    /** True if {@code p} lies inside any no-branch (courtyard) block AABB. */
+    private static boolean insideNoBranch(BlockPos p,
+            List<tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB> blocks) {
+        for (var b : blocks) {
+            if (p.getX() >= b.minX() && p.getX() <= b.maxX()
+                    && p.getZ() >= b.minZ() && p.getZ() <= b.maxZ()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void addTerminal(List<Terminal> terms, Set<Long> usedCells,

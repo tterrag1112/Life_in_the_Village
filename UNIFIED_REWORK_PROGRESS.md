@@ -7386,3 +7386,129 @@ verified `renderFountain` NBT branch factored out (same `loadTemplate`/place/fal
 `new Result(...)` breaks; `materializeHouse`'s footprint AABB feeds both the border
 skip-set and `truncateAtFootprints`, which guarantees no internal path crosses a house;
 `CourtyardDecor` uses the public `Polygon.AABB` (planner `Aabb` is private).
+
+### 2026-06-03 — Courtyard refinement: enclose border + road-aware gaps + deliberate circulation + well floor-Y
+
+Four refinements from in-world testing of the courtyard decoration (screenshot
+reviewed).
+
+**What shipped:**
+1. **Border outside the house ring.** The courtyard houses are now inset an extra
+   `COURTYARD_BORDER_CLEARANCE` (3) into the block, so the perimeter border (painted
+   at the block boundary) wraps OUTSIDE the houses with clearance instead of the
+   houses clipping it. **Per disposition I did NOT grow the reserved footprint** — the
+   border already sits at the (reserved, tiled) block boundary; pushing the houses
+   inward achieves "fence outside the houses" with **zero tiling/reservation blast
+   radius** (vs. growing every block's AABB, which ripples into seating + the annulus
+   scan). The yard shrinks ~3 blocks — negligible at CAP≤4. Houses still face the yard;
+   the well stays centred.
+2. **Road-aware border gaps (ported from the farm complex).** The border now consults
+   a **path-cell skip-set** rasterized from the courtyard's footpath centerlines (same
+   packed-XZ `Set<Long>` mechanic `FarmComplexRenderer` uses), gapping wherever a path
+   crosses the perimeter. **Deleted the hardcoded single entry-gate gap** (`GATE_HALF`
+   + the `entryGate` field) — the gap now falls out of the actual paths. House-footprint
+   skip retained.
+3. **Deliberate courtyard circulation (stop the emergent branching).** Two parts:
+   (a) `BlockServingRouter.route` gains a `noBranchBlocks` overload — buildings inside a
+   courtyard block get **no per-building MST terminal**, so the router stops laying
+   patchy per-house branches there (the block still connects via its district node);
+   (b) the courtyard arrangement now emits a **deliberate ring path fronting the houses**
+   (a closed loop just inside the house fronts) **+ the entry**, rendered through the
+   existing `realizePaths`/FOOTPATH seam. Houses are **phased so a gap faces the entry
+   bearing**, so the entry threads between two houses to the well.
+4. **Well floor-Y `+1`.** The courtyard well stamped one block low — the same off-by-one
+   the plaza fix corrected. The yard-centre Y now gets `+1` (cell floor → walk level),
+   matching the civic fountain. Single-line.
+
+**Surface area:** 0 new files + 6 edits + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/BlockServingRouter.java` (`noBranchBlocks` route
+  overload + per-building terminal skip).
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (pass courtyard blocks to the
+  router; well `+1`; collect snapped lanes → `CourtyardDecor.pathLines`; don't truncate
+  the closed ring).
+- `.../Village/Planning/V2/Layer4/ResidentialArranger.java` (border clearance inset;
+  deliberate ring; gap-aligned house phasing; `perimeterFracNearest`).
+- `.../Village/Planning/V2/Layer4/CourtyardDecor.java` (`entryGate` → `pathLines`).
+- `.../Village/Decoration/Residential/CourtyardBorderPainter.java` (path-cell skip-set;
+  removed hardcoded gate gap).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (pass `pathLines` to the painter).
+
+**Tie-In Audit:**
+- *Touched surface:* `BlockServingRouter.route` (+1 overload, +`buildTerminals` param);
+  courtyard arrangement (inset + ring + phasing); `CourtyardDecor` field swap;
+  `CourtyardBorderPainter.paint` signature; well Y.
+- *Downstream callers:* `route` — 5/6-arg overloads delegate to the new 7-arg (chain
+  verified); `LayoutDumpSerializer`'s 5-arg call is unaffected (empty no-branch list);
+  `buildTerminals` has one caller (the 7-arg). `CourtyardDecor`/`paint` — single
+  builder (`placeArrangedBlock`) + single reader (adapter), both updated.
+- *Sibling systems:* `OverlapAuditor` — the router lays FEWER roads in courtyards (no
+  per-house branches) and the deliberate ring/entry are footpaths, not buildings, so no
+  new building overlap; the border now sits clear of houses (no border×house). NPC nav —
+  the ring fronts every door + the entry reaches the well, all walkable FOOTPATH; the
+  courtyard still connects to the network via its district node. STREET_ROW untouched
+  (`noBranchBlocks` only holds courtyard blocks — `yardCentre != null`); its houses keep
+  their router terminals + lane. Production `/litv spawn` auto-select courtyard blocks
+  get all four (logic is in `placeArrangedBlock`/the router call, not the command).
+  `DISTRICT_ONLY_MODE` + command unaffected.
+- *Exhaustive switches:* none new — reused the farm `BorderStyleId` registry dispatch +
+  `RoadShape.RoadTier.FOOTPATH`. The `arrange` switch still covers all 7 variants.
+
+**Simplification Sweep:**
+- **Reused the farm path-skip mechanic** (packed-XZ `Set<Long>`) rather than a second
+  border-gap path, and **deleted** the bespoke single-gate gap (`GATE_HALF`/`entryGate`).
+  Reused `BlockServingRouter` (one new param, no parallel router) + `realizePaths` for
+  the ring. Net: zero new files, one bespoke gap removed; the painter grew a small
+  rasterizer (the reused farm shape). Net-flat/negative.
+
+**Deviations from prompt:**
+- **Border margin via house-inset, NOT a grown reserved footprint** (item 1). The prompt
+  offered both and asked which is cleaner before committing: the inset achieves "border
+  outside houses" with no tiling ripple (the border is already at the reserved boundary),
+  so growing every block AABB — which ripples into seating/annulus + would need
+  variant-aware sizing (sizing is pre-loop, variant is per-block) — was avoided. Flagged:
+  if Garrett specifically wants the yard size preserved (houses not moved), the footprint
+  bump is the alternative; this pass kept the blast radius at zero.
+- **Deliberate circulation = ring + entry** (no separate well spur): the entry already
+  runs to the well centre, so a ring (fronting doors) + entry reads as courtyard
+  circulation. Gap-phasing aims the entry through a house gap; truncation remains the
+  safety net if a gap doesn't align.
+- **Well Y = cell floor `+1`** resolved at plan time from the feature map (consistent
+  with how houses/lanes snap), matching the plaza `+1` convention. If it still reads off
+  in-world it's a one-line offset.
+
+**Out-of-scope but flagged:**
+- STREET_ROW typed tofts + homestead wiring (+ long-side edge-node stitch) → next.
+- CLUSTER / GREEN / GRID / TERRACE / HILLSIDE variants → later.
+- Growing the courtyard reserved footprint (if yard-size preservation is wanted) →
+  flagged alternative to item 1.
+- `renderFountain` → `stampWell` consolidation (from the prior pass) → still pending.
+- Residential-only command toggle / flipping `DISTRICT_ONLY_MODE` off → not here.
+
+**Cumulative pending verification:** rework spawns; districts; roads unified; plaza
+designed + height-correct; `/litv district`; residential arrangement; street-row lane;
+courtyard well + borders + entry; and now the courtyard refinements (enclosed border +
+road-aware gaps + deliberate circulation + well floor-Y). None smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 6 courtyard` → fence/hedge **fully encloses** the block
+   OUTSIDE the houses (no clipping); it **opens where the entry/roads cross**; the
+   in-courtyard paths read as a **deliberate ring + entry** (not emergent branches); the
+   **well sits on the surface** (not one block low).
+3. `/litv district residential 16` (auto) → courtyard pieces show enclosed border +
+   road-aware gaps + ring + surface well; street-row pieces unchanged; pieces still tile
+   without overlap.
+4. Normal `/litv spawn` → auto-select courtyard blocks get all four; no regressions
+   (no district-tiling overlap, NPC nav intact, main street unaffected, street-row
+   still routes per-house).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net
+— HTTP 403). Static review substituted: the `route` overload chain (5→6→7-arg) +
+single `buildTerminals` caller verified; the courtyard-block filter only removes houses
+inside `yardCentre`-bearing blocks (street-row/civic/market untouched); `CourtyardDecor`
+field swap propagated to its one builder + one reader; the painter's path-skip uses the
+farm's packed-XZ convention; the ring is excluded from truncation (closed-loop guard) so
+the loop survives; well `+1` is the plaza off-by-one fix; no new enum/codec/exhaustive
+switch.

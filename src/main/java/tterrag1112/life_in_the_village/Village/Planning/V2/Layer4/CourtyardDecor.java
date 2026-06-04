@@ -15,13 +15,15 @@ import java.util.List;
  *   <li>{@code block} — the block AABB whose perimeter is enclosed by borders.</li>
  *   <li>{@code houseFootprints} — placed house AABBs, so border columns skip any
  *       perimeter cell a house sits on.</li>
- *   <li>{@code entryGate} — boundary point the entry path crosses; borders leave
- *       a gap there.</li>
+ *   <li>{@code pathLines} — the courtyard's rendered footpath centerlines (entry
+ *       + ring, surface-snapped); borders gap automatically wherever one crosses
+ *       the perimeter (the road-aware skip-set, ported from the farm complex).</li>
  *   <li>{@code seed} — picks the (seed-varied) border style + RNG.</li>
  * </ul>
  * The well reuses the plaza centerpiece stamp; the borders reuse the farm border
- * generators — no new painters (see the adapter render).
+ * generators + path-skip mechanic — no new painters (see the adapter render).
  */
 public record CourtyardDecor(BlockPos wellCentre, Polygon.AABB block,
-                             List<Polygon.AABB> houseFootprints, BlockPos entryGate,
+                             List<Polygon.AABB> houseFootprints,
+                             List<List<BlockPos>> pathLines,
                              long seed) {}

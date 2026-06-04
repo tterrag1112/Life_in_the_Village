@@ -314,9 +314,14 @@ public final class PhasedPlanner {
         // road network to serve them + the gateways, and wrap it as the
         // skeleton. NetworkPlanner's network stays on the SiteContext for
         // bindings/batches; only its road GEOMETRY is superseded here.
+        // Courtyard blocks suppress the emergent per-house branching: their
+        // houses are served by the deliberate ring path, so the router skips
+        // their terminals (they still connect through the district node).
+        List<Polygon.AABB> courtyardBlocks = state.courtyardDecor.stream()
+                .map(CourtyardDecor::block).toList();
         NetworkSpec routed = BlockServingRouter.route(
                 state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids(),
-                districtConnectionNodes(state));
+                districtConnectionNodes(state), courtyardBlocks);
         state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
                 ctx.anchor(), SPINE_WIDTH);
         LOGGER.info("routed network: {} nodes, {} edges → {} road segments",
@@ -2024,23 +2029,33 @@ public final class PhasedPlanner {
         // placed footprints (so the courtyard entry never crosses a house — a
         // no-op for the street-row lane, which runs the open central gap), snap
         // to the surface (floor-Y) and tag the FOOTPATH tier.
+        List<List<BlockPos>> blockLanes = new ArrayList<>();
         for (List<BlockPos> lane : arr.lanes()) {
-            List<BlockPos> trimmed = truncateAtFootprints(lane, footprints);
+            // A closed loop (the courtyard ring) is placed deliberately inside
+            // the house fronts — don't truncate it (that would break the loop);
+            // only open paths (entry/lane) clip at the house ring.
+            boolean closed = lane.size() > 2
+                    && lane.get(0).equals(lane.get(lane.size() - 1));
+            List<BlockPos> trimmed = closed
+                    ? lane : truncateAtFootprints(lane, footprints);
             List<BlockPos> snapped = snapPathToSurface(state, trimmed);
             if (snapped.size() >= 2) {
                 state.internalLanes.add(new InternalPath(snapped,
                         RoadShape.RoadTier.FOOTPATH));
+                blockLanes.add(snapped);
             }
         }
-        // COURTYARD decoration (well + border enclosure) carried to render.
+        // COURTYARD decoration (well + border enclosure) carried to render. The
+        // well sits on the surface (floor-Y +1, matching the civic plaza
+        // fountain); the borders gap wherever a path crosses (blockLanes).
         if (arr.yardCentre() != null) {
             BlockPos yard = arr.yardCentre();
-            int yy = state.fmap.inBounds(yard.getX(), yard.getZ())
+            int floorY = (state.fmap.inBounds(yard.getX(), yard.getZ())
                     ? state.fmap.cellAt(yard.getX(), yard.getZ()).elevationY()
-                    : yard.getY();
+                    : yard.getY()) + 1;
             state.courtyardDecor.add(new CourtyardDecor(
-                    new BlockPos(yard.getX(), yy, yard.getZ()), gate,
-                    List.copyOf(footprints), edgeNode, seed));
+                    new BlockPos(yard.getX(), floorY, yard.getZ()), gate,
+                    List.copyOf(footprints), List.copyOf(blockLanes), seed));
         }
         LOGGER.info("residential block #{} variant={} houses={}/{} lanes={} yard={} centre=({},{})",
                 blockIndex, variant, placed, houses, arr.lanes().size(),

@@ -526,7 +526,7 @@ public final class V2VillageSpawnerAdapter {
                                         .GatheringPointKind.FOUNTAIN, 6));
                 tterrag1112.life_in_the_village.Village.Decoration.Residential
                         .CourtyardBorderPainter.paint(level, cd.block(),
-                                cd.houseFootprints(), cd.entryGate(), cd.seed(), culture.id());
+                                cd.houseFootprints(), cd.pathLines(), cd.seed(), culture.id());
             } catch (Exception e) {
                 LOGGER.warn("V2: courtyard decoration failed: {}", e.getMessage());
             }

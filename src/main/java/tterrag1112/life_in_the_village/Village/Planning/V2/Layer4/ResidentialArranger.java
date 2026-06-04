@@ -39,6 +39,9 @@ public final class ResidentialArranger {
 
     /** Half-width (blocks) of the central lane STREET_ROW houses front. */
     private static final int LANE_HALF = 2;
+    /** Clearance (blocks) between the courtyard house ring and the perimeter
+     *  border, so the fence/hedge wraps OUTSIDE the houses. */
+    private static final int COURTYARD_BORDER_CLEARANCE = 3;
     /** Aspect ratio at/above which a block is "elongated" → STREET_ROW. */
     private static final double ELONGATED_ASPECT = 1.5;
 
@@ -149,28 +152,67 @@ public final class ResidentialArranger {
         int cx = (block.minX() + block.maxX()) / 2;
         int cz = (block.minZ() + block.maxZ()) / 2;
         BlockPos yard = new BlockPos(cx, 0, cz);
-        int inset = houseDepth / 2 + 1;
+        // Inset the house ring well inside the block boundary so the perimeter
+        // border (painted at the boundary) wraps OUTSIDE the houses with
+        // clearance, instead of the houses clipping it.
+        int inset = houseDepth / 2 + 1 + COURTYARD_BORDER_CLEARANCE;
         int ix0 = block.minX() + inset, ix1 = block.maxX() - inset;
         int iz0 = block.minZ() + inset, iz1 = block.maxZ() - inset;
-        // Entry path: straight from the edge node in to the yard centre. The
-        // planner truncates it at the house ring (so it never crosses a house)
-        // and renders it at FOOTPATH tier through realizePaths, like the lanes.
-        List<List<BlockPos>> lanes = List.of(List.of(edgeNode, yard));
+        // Entry path: straight from the edge node in to the yard centre, plus a
+        // ring fronting the houses (deliberate circulation, not emergent
+        // branches). The planner truncates + snaps + renders these at FOOTPATH.
+        List<List<BlockPos>> lanes = new ArrayList<>();
+        lanes.add(List.of(edgeNode, yard));
         if (ix1 <= ix0 || iz1 <= iz0) {
             // Block too small to ring — fall back to a single centred-ish house.
             List<HousePlacement> one = new ArrayList<>();
             one.add(new HousePlacement(new BlockPos(cx, 0, iz0), yard));
-            return new Arrangement(one, lanes, yard);
+            return new Arrangement(one, List.copyOf(lanes), yard);
         }
-        // Walk the inset-rectangle perimeter, placing houses evenly; each faces
-        // the block centre (inward).
         long perim = 2L * (ix1 - ix0) + 2L * (iz1 - iz0);
+        // Phase the houses so a GAP (not a house) faces the entry bearing, so the
+        // entry path threads between two houses to reach the yard.
+        double fracEntry = perimeterFracNearest(edgeNode, ix0, ix1, iz0, iz1);
         List<HousePlacement> out = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            long t = perim * i / count;
+            double f = fracEntry + (i + 0.5) / count;
+            f -= Math.floor(f);
+            long t = (long) (perim * f);
             out.add(new HousePlacement(perimeterPoint(ix0, ix1, iz0, iz1, t), yard));
         }
-        return new Arrangement(out, lanes, yard);
+        // Ring path just inside the house fronts (houses face inward), as a
+        // closed loop — the courtyard's deliberate circulation.
+        int rIn = houseDepth / 2 + 2;
+        int rx0 = ix0 + rIn, rx1 = ix1 - rIn, rz0 = iz0 + rIn, rz1 = iz1 - rIn;
+        if (rx1 > rx0 && rz1 > rz0) {
+            lanes.add(List.of(
+                    new BlockPos(rx0, 0, rz0), new BlockPos(rx1, 0, rz0),
+                    new BlockPos(rx1, 0, rz1), new BlockPos(rx0, 0, rz1),
+                    new BlockPos(rx0, 0, rz0)));
+        }
+        return new Arrangement(out, List.copyOf(lanes), yard);
+    }
+
+    /** Normalised arc-length (0..1) of the inset-rectangle perimeter point
+     *  nearest {@code p}, matching {@link #perimeterPoint}'s walk order
+     *  (top → right → bottom → left). Used to phase houses so a gap faces the
+     *  entry bearing. */
+    private static double perimeterFracNearest(BlockPos p, int x0, int x1,
+                                               int z0, int z1) {
+        int ex = clamp(p.getX(), x0, x1);
+        int ez = clamp(p.getZ(), z0, z1);
+        long w = x1 - x0, h = z1 - z0;
+        long perim = 2 * w + 2 * h;
+        if (perim == 0) return 0;
+        long dTop = Math.abs(p.getZ() - z0), dBot = Math.abs(p.getZ() - z1);
+        long dLeft = Math.abs(p.getX() - x0), dRight = Math.abs(p.getX() - x1);
+        long m = Math.min(Math.min(dTop, dBot), Math.min(dLeft, dRight));
+        double arc;
+        if (m == dTop) arc = ex - x0;
+        else if (m == dRight) arc = w + (ez - z0);
+        else if (m == dBot) arc = w + h + (x1 - ex);
+        else arc = 2 * w + h + (z1 - ez);
+        return arc / (double) perim;
     }
 
     /** Point at arc-length {@code t} (0..perim) clockwise around the rectangle
