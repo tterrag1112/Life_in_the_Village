@@ -360,7 +360,8 @@ public final class PhasedPlanner {
                 java.util.Map.copyOf(state.nucleusContexts),
                 java.util.Set.copyOf(state.droppedBindings),
                 state.civicSquare, state.marketSquare,
-                List.copyOf(state.internalLanes));
+                List.copyOf(state.internalLanes),
+                List.copyOf(state.courtyardDecor));
     }
 
     // =========================================================================
@@ -2014,22 +2015,74 @@ public final class PhasedPlanner {
         ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
                 gate, houses, cellPitch, houseDepth, edgeNode, variant);
         int placed = 0;
+        List<Polygon.AABB> footprints = new ArrayList<>(arr.houses().size());
         for (ResidentialArranger.HousePlacement p : arr.houses()) {
-            if (materializeHouse(state, p.centre(), p.faceTarget())) placed++;
+            Polygon.AABB fp = materializeHouse(state, p.centre(), p.faceTarget());
+            if (fp != null) { placed++; footprints.add(fp); }
         }
-        // Carry the variant's internal lanes to the render pass: snap to the
-        // surface (floor-Y) and tag the FOOTPATH tier.
+        // Carry the variant's internal lanes to the render pass: truncate at the
+        // placed footprints (so the courtyard entry never crosses a house — a
+        // no-op for the street-row lane, which runs the open central gap), snap
+        // to the surface (floor-Y) and tag the FOOTPATH tier.
         for (List<BlockPos> lane : arr.lanes()) {
-            List<BlockPos> snapped = snapPathToSurface(state, lane);
+            List<BlockPos> trimmed = truncateAtFootprints(lane, footprints);
+            List<BlockPos> snapped = snapPathToSurface(state, trimmed);
             if (snapped.size() >= 2) {
                 state.internalLanes.add(new InternalPath(snapped,
                         RoadShape.RoadTier.FOOTPATH));
             }
         }
-        LOGGER.info("residential block #{} variant={} houses={}/{} lanes={} centre=({},{})",
+        // COURTYARD decoration (well + border enclosure) carried to render.
+        if (arr.yardCentre() != null) {
+            BlockPos yard = arr.yardCentre();
+            int yy = state.fmap.inBounds(yard.getX(), yard.getZ())
+                    ? state.fmap.cellAt(yard.getX(), yard.getZ()).elevationY()
+                    : yard.getY();
+            state.courtyardDecor.add(new CourtyardDecor(
+                    new BlockPos(yard.getX(), yy, yard.getZ()), gate,
+                    List.copyOf(footprints), edgeNode, seed));
+        }
+        LOGGER.info("residential block #{} variant={} houses={}/{} lanes={} yard={} centre=({},{})",
                 blockIndex, variant, placed, houses, arr.lanes().size(),
-                (gate.minX() + gate.maxX()) / 2, (gate.minZ() + gate.maxZ()) / 2);
+                arr.yardCentre() != null, (gate.minX() + gate.maxX()) / 2,
+                (gate.minZ() + gate.maxZ()) / 2);
         return placed;
+    }
+
+    /** Truncates a raw (y=0) centerline before the first point that enters any
+     *  footprint AABB, so an internal path never crosses a house. Returns the
+     *  clear prefix (the edge-node end is preserved; the inner end is clipped at
+     *  the house ring). A no-op when no segment hits a footprint. */
+    private static List<BlockPos> truncateAtFootprints(List<BlockPos> pts,
+                                                       List<Polygon.AABB> fps) {
+        if (fps.isEmpty() || pts.size() < 2) return pts;
+        List<BlockPos> kept = new ArrayList<>();
+        kept.add(pts.get(0));
+        for (int i = 1; i < pts.size(); i++) {
+            BlockPos a = pts.get(i - 1), b = pts.get(i);
+            int steps = (int) Math.ceil(Math.sqrt(a.distSqr(b)));
+            BlockPos prev = a;
+            for (int s = 1; s <= Math.max(1, steps); s++) {
+                int x = a.getX() + (b.getX() - a.getX()) * s / Math.max(1, steps);
+                int z = a.getZ() + (b.getZ() - a.getZ()) * s / Math.max(1, steps);
+                if (insideAnyFootprint(x, z, fps)) {
+                    if (!prev.equals(kept.get(kept.size() - 1))) kept.add(prev);
+                    return kept;
+                }
+                prev = new BlockPos(x, 0, z);
+            }
+            kept.add(b);
+        }
+        return kept;
+    }
+
+    private static boolean insideAnyFootprint(int x, int z, List<Polygon.AABB> fps) {
+        for (Polygon.AABB fp : fps) {
+            if (x >= fp.minX() && x <= fp.maxX() && z >= fp.minZ() && z <= fp.maxZ()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Snaps a raw (y=0) internal-path centerline to the cell surface so the
@@ -2051,19 +2104,20 @@ public final class PhasedPlanner {
      * Places a single arranged HOUSE at {@code centre0} (XZ; Y snapped to the
      * cell surface) facing {@code faceTarget}. Resolves the variant + footprint
      * through the same seam {@code findBestCandidate} uses; skips (returns
-     * false) on non-buildable terrain or a reservation collision. Frontage /
-     * facingRoad are filled later by the orientation pass, like every building.
+     * {@code null}) on non-buildable terrain or a reservation collision. Returns
+     * the placed footprint AABB (for border skip-tests). Frontage / facingRoad
+     * are filled later by the orientation pass, like every building.
      */
-    private static boolean materializeHouse(State state, BlockPos centre0,
-                                            BlockPos faceTarget) {
+    private static Polygon.AABB materializeHouse(State state, BlockPos centre0,
+                                                 BlockPos faceTarget) {
         int x = centre0.getX(), z = centre0.getZ();
-        if (!state.fmap.inBounds(x, z)) return false;
+        if (!state.fmap.inBounds(x, z)) return null;
         Cell cell = state.fmap.cellAt(x, z);
         BlockCategory cat = cell.category();
         if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
-                || cell.localSlope() > MAX_SLOPE) return false;
+                || cell.localSlope() > MAX_SLOPE) return null;
         PlacementProfile profile = PlacementDefaults.get(BuildingType.HOUSE);
-        if (profile == null) return false;
+        if (profile == null) return null;
 
         BlockPos centre = new BlockPos(x, cell.elevationY(), z);
         String variantId = state.variantResolver.pickVariantIdForV2(
@@ -2074,7 +2128,7 @@ public final class PhasedPlanner {
         Footprint fp = new Footprint(info.width(), info.length());
         Rotation rotation = chooseFacing(centre, faceTarget);
         Aabb fpAabb = footprintAabb(centre, fp, rotation);
-        if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) return false;
+        if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) return null;
 
         PlacedBuilding pb = new PlacedBuilding(BuildingType.HOUSE, centre, fp,
                 rotation, profile.priority(), variantId, null, null);
@@ -2082,7 +2136,8 @@ public final class PhasedPlanner {
         state.reservations.add(new Reservation(fpAabb, fpAabb, BuildingType.HOUSE));
         state.events.add(PhaseEvent.placed(BuildingType.HOUSE, false,
                 new ScoreBreakdown(1.0, 0.0, 0.0)));
-        return true;
+        return new Polygon.AABB(fpAabb.minX(), fpAabb.minZ(),
+                fpAabb.maxX(), fpAabb.maxZ());
     }
 
     /** Number of bearings swept when seating a residential block. */
@@ -2484,8 +2539,11 @@ public final class PhasedPlanner {
          *  (null → auto-select per block). */
         ResidentialVariant forcedResidentialVariant;
         /** Internal-path lanes emitted by residential variants (street-row lane
-         *  now; courtyard entry path later) — rendered at FOOTPATH tier. */
+         *  + courtyard entry path) — rendered at FOOTPATH tier. */
         final List<InternalPath> internalLanes = new ArrayList<>();
+        /** COURTYARD decoration (well + border enclosure) — rendered by the
+         *  adapter via the plaza well stamp + farm border generators. */
+        final List<CourtyardDecor> courtyardDecor = new ArrayList<>();
 
         /** The reserved square voids, for the router's obstacle mask. */
         List<Polygon.AABB> voids() {
@@ -2537,7 +2595,10 @@ public final class PhasedPlanner {
                          /* Layout Rework — residential variant internal lanes
                           * (footpath tier); the adapter renders these through
                           * VillageRoadRealizer.realizePaths. */
-                         List<InternalPath> internalLanes) {
+                         List<InternalPath> internalLanes,
+                         /* Layout Rework — COURTYARD decoration (well + borders);
+                          * the adapter stamps the well + paints borders. */
+                         List<CourtyardDecor> courtyardDecor) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
@@ -2560,7 +2621,7 @@ public final class PhasedPlanner {
                       java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
                       java.util.Set<BuildingType> droppedBindings) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    null, null, List.of());
+                    null, null, List.of(), List.of());
         }
 
         /** Pre-Layout-Rework 7-arg constructor (no internal lanes). */
@@ -2570,7 +2631,18 @@ public final class PhasedPlanner {
                       java.util.Set<BuildingType> droppedBindings,
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, List.of());
+                    civicSquare, marketSquare, List.of(), List.of());
+        }
+
+        /** Pre-courtyard-decor 8-arg constructor (lanes but no courtyard decor). */
+        public Result(PlacementResult placement, RoadNetwork network,
+                      List<PhaseEvent> events,
+                      java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
+                      java.util.Set<BuildingType> droppedBindings,
+                      Polygon.AABB civicSquare, Polygon.AABB marketSquare,
+                      List<InternalPath> internalLanes) {
+            this(placement, network, events, nucleusContexts, droppedBindings,
+                    civicSquare, marketSquare, internalLanes, List.of());
         }
     }
 

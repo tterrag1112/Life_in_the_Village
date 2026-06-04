@@ -34,7 +34,8 @@ public final class ResidentialArranger {
      * follow-up, so it returns no lanes yet.
      */
     public record Arrangement(List<HousePlacement> houses,
-                              List<List<BlockPos>> lanes) {}
+                              List<List<BlockPos>> lanes,
+                              BlockPos yardCentre) {}
 
     /** Half-width (blocks) of the central lane STREET_ROW houses front. */
     private static final int LANE_HALF = 2;
@@ -69,10 +70,10 @@ public final class ResidentialArranger {
     public static Arrangement arrange(Polygon.AABB block, int houseCount,
                                       int cellPitch, int houseDepth,
                                       BlockPos edgeNode, ResidentialVariant variant) {
-        if (houseCount <= 0) return new Arrangement(List.of(), List.of());
+        if (houseCount <= 0) return new Arrangement(List.of(), List.of(), null);
         return switch (variant) {
             case STREET_ROW -> streetRow(block, houseCount, cellPitch, houseDepth, edgeNode);
-            case COURTYARD -> courtyard(block, houseCount, houseDepth);
+            case COURTYARD -> courtyard(block, houseCount, houseDepth, edgeNode);
             // Reserved → fall back (not silent): arrange as a street row for now.
             case CLUSTER, GREEN, GRID_BLOCKS, TERRACE, HILLSIDE ->
                     streetRow(block, houseCount, cellPitch, houseDepth, edgeNode);
@@ -122,7 +123,7 @@ public final class ResidentialArranger {
         List<BlockPos> lane = aligned
                 ? List.of(edgeNode, near, far)
                 : List.of(near, far);
-        return new Arrangement(houses, List.of(lane));
+        return new Arrangement(houses, List.of(lane), null);
     }
 
     /** Places {@code m} houses spaced along the long axis at the given across
@@ -144,32 +145,32 @@ public final class ResidentialArranger {
     // =========================================================================
 
     private static Arrangement courtyard(Polygon.AABB block, int count,
-                                         int houseDepth) {
+                                         int houseDepth, BlockPos edgeNode) {
         int cx = (block.minX() + block.maxX()) / 2;
         int cz = (block.minZ() + block.maxZ()) / 2;
+        BlockPos yard = new BlockPos(cx, 0, cz);
         int inset = houseDepth / 2 + 1;
         int ix0 = block.minX() + inset, ix1 = block.maxX() - inset;
         int iz0 = block.minZ() + inset, iz1 = block.maxZ() - inset;
+        // Entry path: straight from the edge node in to the yard centre. The
+        // planner truncates it at the house ring (so it never crosses a house)
+        // and renders it at FOOTPATH tier through realizePaths, like the lanes.
+        List<List<BlockPos>> lanes = List.of(List.of(edgeNode, yard));
         if (ix1 <= ix0 || iz1 <= iz0) {
-            // Block too small to ring — fall back to a single centred-ish row.
+            // Block too small to ring — fall back to a single centred-ish house.
             List<HousePlacement> one = new ArrayList<>();
-            one.add(new HousePlacement(new BlockPos(cx, 0, iz0),
-                    new BlockPos(cx, 0, cz)));
-            // COURTYARD entry path is a staged follow-up → no lane this pass.
-            return new Arrangement(one, List.of());
+            one.add(new HousePlacement(new BlockPos(cx, 0, iz0), yard));
+            return new Arrangement(one, lanes, yard);
         }
         // Walk the inset-rectangle perimeter, placing houses evenly; each faces
         // the block centre (inward).
         long perim = 2L * (ix1 - ix0) + 2L * (iz1 - iz0);
-        BlockPos centre = new BlockPos(cx, 0, cz);
         List<HousePlacement> out = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
             long t = perim * i / count;
-            out.add(new HousePlacement(perimeterPoint(ix0, ix1, iz0, iz1, t), centre));
+            out.add(new HousePlacement(perimeterPoint(ix0, ix1, iz0, iz1, t), yard));
         }
-        // COURTYARD well + borders + entry path are a staged follow-up that
-        // reuses this internal-path infra → no lane this pass.
-        return new Arrangement(out, List.of());
+        return new Arrangement(out, lanes, yard);
     }
 
     /** Point at arc-length {@code t} (0..perim) clockwise around the rectangle

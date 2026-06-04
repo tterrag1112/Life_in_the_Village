@@ -511,6 +511,27 @@ public final class V2VillageSpawnerAdapter {
             LOGGER.warn("V2: VillageRoadRealizer failed: {}", e.getMessage());
         }
 
+        // Layout Rework — COURTYARD decoration: well centerpiece (reuses the
+        // plaza well stamp) + border enclosure (reuses the farm border
+        // generators). The entry path is already rendered above via realizePaths.
+        for (tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CourtyardDecor cd
+                : phased.courtyardDecor()) {
+            try {
+                tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPieceRenderer
+                        .stampWell(level, cd.wellCentre());
+                village.addGatheringPoint(
+                        new tterrag1112.life_in_the_village.Village.Decoration.TownSquare
+                                .GatheringPoint(java.util.UUID.randomUUID(), cd.wellCentre(),
+                                tterrag1112.life_in_the_village.Village.Decoration.TownSquare
+                                        .GatheringPointKind.FOUNTAIN, 6));
+                tterrag1112.life_in_the_village.Village.Decoration.Residential
+                        .CourtyardBorderPainter.paint(level, cd.block(),
+                                cd.houseFootprints(), cd.entryGate(), cd.seed(), culture.id());
+            } catch (Exception e) {
+                LOGGER.warn("V2: courtyard decoration failed: {}", e.getMessage());
+            }
+        }
+
         // Detour A — one FarmComplex per placed farmhouse. Runs
         // post-loop so each farmhouse's Building UUID exists.
         // Prompt B Stage A: park-polygon exclusion. The parks

@@ -7248,3 +7248,141 @@ exists; `snapPathToSurface` reuses `fmap.cellAt().elevationY()` (same accessor a
 `materializeHouse`); the lane geometry only ever traverses the open across=0 gap +
 open short ends, so it cannot overlap a house footprint; `arrange`'s single caller was
 updated.
+
+### 2026-06-03 — Courtyard decoration: well + borders + entry path (all reuse)
+
+The COURTYARD variant now reads as a courtyard: a **`well_hamlet` at the yard
+centre**, a **fenced/hedged border enclosure** around the block, and a **footpath
+entry** from the yard out to the district edge node. Pure reuse — the plaza well
+stamp, the farm border generators, and the `realizePaths` lane seam — the only new
+code is the courtyard's decoration geometry + its carry to render. (Staged
+follow-up to the variant framework + street-row lane.)
+
+**What shipped:**
+- **Well (yard centre):** new public `PlazaPieceRenderer.stampWell(level, centre)` —
+  factored out of `renderFountain`, it loads + places `well_hamlet.nbt` (with the
+  same procedural fallback). The adapter stamps it at the surface-snapped yard
+  centre and registers a `FOUNTAIN` `GatheringPoint`. No re-implementation.
+- **Borders:** new `CourtyardBorderPainter` (Decoration/Residential) walks the block
+  perimeter and drives the **farm border generators** via `BorderGeneratorRegistry`
+  (HEDGE / STONE_WALL / POST_AND_RAIL / DRYSTONE, seed-varied) + the shared
+  `AbstractBorderGenerator.resolveGroundY` snapshot + per-column `paintColumnAt`. It
+  **skips the entry gate** and **any perimeter cell a house footprint occupies**. Not
+  a new border painter — it reuses the generators + registry.
+- **Entry path:** the courtyard arrangement emits a straight `edgeNode → yardCentre`
+  centerline as a normal **lane**, so it renders through the existing `realizePaths`
+  (FOOTPATH tier) — the same seam street-row uses. The planner **truncates it at the
+  house ring** (`truncateAtFootprints`) so it never crosses a house — this also does
+  the clean yard→edge-node stitch the street-row lane deferred.
+- **Carry seam:** `CourtyardDecor` (new, Layer4) — `(wellCentre, block,
+  houseFootprints, entryGate, seed)` — carried on `Result.courtyardDecor` (9th
+  component, sibling to `internalLanes`); the adapter renders well + borders after
+  `realize`/`realizePaths`. `ResidentialArranger.Arrangement` gained a nullable
+  `yardCentre` (set for courtyard); `materializeHouse` now returns the placed
+  footprint AABB so the border skip-set + truncation have the house rects.
+
+**Surface area:** 2 new files + 4 edits + 0 deletions.
+
+**Files added:**
+- `.../Village/Planning/V2/Layer4/CourtyardDecor.java`
+- `.../Village/Decoration/Residential/CourtyardBorderPainter.java`
+**Files modified:**
+- `.../Village/Decoration/Plaza/PlazaPieceRenderer.java` (public `stampWell`).
+- `.../Village/Planning/V2/Layer4/ResidentialArranger.java` (`Arrangement.yardCentre`;
+  courtyard entry path; edge-node param).
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`materializeHouse` → footprint;
+  footprint capture; `truncateAtFootprints`; `CourtyardDecor` build; `Result` 9th
+  component + back-compat 8-arg ctor; state field).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (courtyard render: well +
+  gathering point + borders).
+
+**Tie-In Audit:**
+- *Touched surface:* new `CourtyardDecor` + `CourtyardBorderPainter`; public
+  `PlazaPieceRenderer.stampWell`; `ResidentialArranger.Arrangement` (+`yardCentre`);
+  `materializeHouse` return type; `PhasedPlanner.Result` (+1 component); adapter render.
+- *Downstream callers:* `Arrangement` — only `placeArrangedBlock` (updated).
+  `materializeHouse` — only `placeArrangedBlock` (updated to use the returned AABB).
+  `Result` — canonical now 9-arg; **new back-compat 8-arg ctor** added (the 5-arg /
+  7-arg / 8-arg all chain through), so every prior `new Result(...)` compiles; the
+  unrelated `Result` records elsewhere are untouched. `stampWell` is additive
+  (`renderFountain` unchanged — it still inlines its own copy; not refactored to call
+  `stampWell` to keep that path byte-identical). `BorderGeneratorRegistry`/generators/
+  `resolveGroundY` reused read-only (the registry self-populates via its `static`
+  block). `realizePaths` unchanged (entry path is just another `InternalPath`).
+- *Sibling systems:* `OverlapAuditor` — the well sits in the open yard centre; borders
+  skip house-occupied perimeter cells; the entry path is truncated before any house —
+  so no overlap with the ring houses. NPC nav — the entry + yard are walkable
+  (footpath + open yard); the FOUNTAIN gathering point integrates with the social
+  layer exactly like the civic plaza. Street-row (lanes) + production auto-select
+  courtyard blocks both get their decoration (it's in `placeArrangedBlock`, not the
+  command). `DISTRICT_ONLY_MODE` + `/litv district` unaffected.
+- *Exhaustive switches:* the `BorderStyleId` dispatch is the farms' existing registry
+  map (no switch to extend); no new enum. `arrange` switch still covers all 7
+  `ResidentialVariant` values.
+
+**Simplification Sweep** (touches `Village/Planning/` + `Village/Decoration/`):
+- **No new well / border / path painters** — reuses the plaza `stampWell` (factored
+  from `renderFountain`), the farm `BorderGenerator`s + registry, and `realizePaths`.
+  `CourtyardBorderPainter` is a thin perimeter-walk driver over the existing
+  generators; `CourtyardDecor` is a carry record. Net: 2 small new files, zero
+  duplicated rendering logic.
+- `stampWell` extraction also means `renderFountain` *could* later delegate to it
+  (flagged, not done — kept byte-identical this pass).
+
+**Deviations from prompt:**
+- **`renderFountain` left intact** (not refactored to call the new `stampWell`) so the
+  civic-plaza path stays byte-for-byte; `stampWell` is a parallel public entry sharing
+  the same `loadTemplate`/fallback. Flagged for a trivial future consolidation.
+- **Well Y = cell floor (`elevationY()`)** — the same surface convention houses use,
+  resolved at plan time from the feature map (not a render-time world heightmap read).
+  Matches the floor-Y convention; if it reads sunk/floating in-world it's a one-line
+  offset. (The plaza uses `anchor.getY()+1` because it paves; the courtyard yard is
+  unpaved, so the cell floor is the right datum.)
+- **Entry path is truncated, not gated through a guaranteed ring gap.** The straight
+  yard→node centerline is clipped at the first house it would enter (per the prompt's
+  "clipping if it would cross a house"). When it passes through a gap between ring
+  houses it reaches the yard; when a ring house blocks the radial it stops at the ring
+  (reads as the courtyard entrance). A guaranteed-gap-aligned entry is deferred.
+- **Border style picked from the block seed** (uniform over the 4 ids), not via
+  `BorderStyleAssigner` — that assigner is plot-graph-oriented (shared edges between
+  farm plots), overkill for a single rectangular block. Reuses the generators +
+  registry + `BorderStyleId`, just not the farm's per-edge tiebreak.
+
+**Out-of-scope but flagged:**
+- STREET_ROW typed `ResidentialPlot`/`Kind` tofts + garden render (+ homestead wiring)
+  + the long-side edge-node stitch → next.
+- CLUSTER / GREEN / GRID / TERRACE / HILLSIDE variants → later.
+- `renderFountain` → `stampWell` consolidation; guaranteed-gap courtyard entry →
+  follow-ups.
+- Residential-only command toggle / flipping `DISTRICT_ONLY_MODE` off → not here.
+
+**Cumulative pending verification:** rework spawns; districts reserve; roads unified;
+plaza designed + height-correct; `/litv district` harness; residential variant
+arrangement; street-row lane + internal-path infra; and now courtyard well + borders +
+entry. None of #5–#7 / Stage-4 redesign / 4b / market+resi, roads, plaza fix-ups /
+plaza decoration / district command / variant framework / lane pass / this courtyard
+decoration has been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 6 courtyard` → houses ring a yard with a `well_hamlet`
+   **centred on the surface**, **fenced/hedged borders** enclosing the block (gapped at
+   the entry + where houses sit), and a **footpath entry** from the yard toward the
+   edge node. Per-block log shows `yard=true`.
+3. `/litv district residential 16` (auto) → street-row pieces keep their lanes;
+   courtyard pieces now have well + borders + entry — a clear visual mix.
+4. Normal `/litv spawn` → auto-selected courtyard residential blocks get the
+   decoration; no regressions (no well/border×house overlap, entry doesn't cross a
+   house, NPC nav intact).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `stampWell` is the
+verified `renderFountain` NBT branch factored out (same `loadTemplate`/place/fallback);
+`CourtyardBorderPainter` drives the verified `BorderGenerator.paintColumnAt` +
+`resolveGroundY` (public static) via the self-populating `BorderGeneratorRegistry`
+(`HedgeBorder` fallback has an implicit no-arg ctor); `Village.addGatheringPoint` +
+`GatheringPoint(UUID,BlockPos,Kind,int)` + `GatheringPointKind.FOUNTAIN` confirmed; the
+`Result` 9th component is gated by a new back-compat 8-arg ctor so no existing
+`new Result(...)` breaks; `materializeHouse`'s footprint AABB feeds both the border
+skip-set and `truncateAtFootprints`, which guarantees no internal path crosses a house;
+`CourtyardDecor` uses the public `Polygon.AABB` (planner `Aabb` is private).

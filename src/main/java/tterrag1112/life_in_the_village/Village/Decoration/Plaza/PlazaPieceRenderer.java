@@ -65,6 +65,30 @@ public final class PlazaPieceRenderer {
     // FOUNTAIN — stamp well_hamlet.nbt at the centre + register a gathering point
     // =========================================================================
 
+    /**
+     * Layout Rework — stamps the {@code well_hamlet} centerpiece at {@code centre}
+     * (surface floor-Y), reusing the SAME NBT load + place path as the civic plaza
+     * fountain (and its procedural fallback). The residential COURTYARD variant
+     * reuses this for its yard well instead of re-implementing the stamp. The
+     * caller registers any gathering point (this method only places blocks).
+     */
+    public static void stampWell(ServerLevel level, BlockPos centre) {
+        StructureTemplate template = loadTemplate(level, WELL_NBT);
+        if (template != null) {
+            Vec3i size = template.getSize();
+            BlockPos origin = new BlockPos(
+                    centre.getX() - size.getX() / 2,
+                    centre.getY(),
+                    centre.getZ() - size.getZ() / 2);
+            StructurePlaceSettings settings =
+                    new StructurePlaceSettings().setRotation(Rotation.NONE);
+            template.placeInWorld(level, origin, BlockPos.ZERO, settings,
+                    level.getRandom(), 2);
+        } else {
+            renderFallbackWell(level, centre);
+        }
+    }
+
     private static boolean renderFountain(ServerLevel level, Village village,
                                           PlazaPiece piece) {
         BlockPos centre = piece.pos();   // (cx, floorY, cz)
