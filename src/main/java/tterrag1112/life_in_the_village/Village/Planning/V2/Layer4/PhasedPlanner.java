@@ -129,6 +129,26 @@ public final class PhasedPlanner {
                              List<UnavailableBuilding> unavailable,
                              ServerLevel level,
                              Set<BuildingType> tradeFulfilledTypes) {
+        return run(ctx, fmap, sortedSelection, unavailable, level,
+                tradeFulfilledTypes, null);
+    }
+
+    /**
+     * Residential-variant tooling — overload carrying an optional FORCED
+     * residential variant (from {@code /litv district}); null → auto-select.
+     * Dev-only; production spawns pass null.
+     */
+    public static Result run(SiteContext ctx, V2FeatureMap fmap,
+                             List<BuildingType> sortedSelection,
+                             List<UnavailableBuilding> unavailable,
+                             ServerLevel level,
+                             Set<BuildingType> tradeFulfilledTypes,
+                             ResidentialVariant forcedResidentialVariant) {
+        return run(ctx, fmap, sortedSelection, unavailable,
+                new StructureSizeCache(level),
+                StructureAvailabilityRegistry.INSTANCE,
+                tradeFulfilledTypes, forcedResidentialVariant);
+    }
         // Live path: build the cache here so the warn-once state and
         // NBT-fallback semantics live where they always have. The
         // resulting StructureSizeCache implements FootprintProvider
@@ -159,12 +179,25 @@ public final class PhasedPlanner {
                              tterrag1112.life_in_the_village.Village.Planning.FootprintProvider footprints,
                              tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability,
                              Set<BuildingType> tradeFulfilledTypes) {
+        return run(ctx, fmap, sortedSelection, unavailable, footprints,
+                availability, tradeFulfilledTypes, null);
+    }
+
+    /** Headless overload + the forced residential variant (null → auto-select). */
+    public static Result run(SiteContext ctx, V2FeatureMap fmap,
+                             List<BuildingType> sortedSelection,
+                             List<UnavailableBuilding> unavailable,
+                             tterrag1112.life_in_the_village.Village.Planning.FootprintProvider footprints,
+                             tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability,
+                             Set<BuildingType> tradeFulfilledTypes,
+                             ResidentialVariant forcedResidentialVariant) {
         // Spine path is now planned by SiteAnalyzer (Layer 2) and
         // arrives on the SiteContext. Skeleton wraps it as a list of
         // SpineSegments (one per primitive in the path).
         State state = new State(ctx, fmap, footprints, availability);
         state.tradeFulfilledTypes = tradeFulfilledTypes != null
                 ? Set.copyOf(tradeFulfilledTypes) : Set.of();
+        state.forcedResidentialVariant = forcedResidentialVariant;
 
         // Stage 4b fix-up — temporary district-only dev mode. When on, filter
         // placement to district-member types only (civic core + market +
@@ -249,6 +282,13 @@ public final class PhasedPlanner {
         for (int batch : batchOrder) {
             for (BuildingType type : selection) {
                 if (getBatch(state.ctx, type) != batch) continue;
+                // Residential HOUSEs are placed EXPLICITLY by the variant
+                // arranger (in reserveResidentialDistricts, at the batch-3 hook
+                // below) when districts exist — skip the emergent batch-5 pass
+                // so they aren't double-placed.
+                if (type == BuildingType.HOUSE && !state.residentialGates.isEmpty()) {
+                    continue;
+                }
                 boolean foundation = (batch == 1 || batch == 2)
                         || foundationTypes.contains(type);
                 if (placeOne(state, type, foundation)) perBatchCounts[batch]++;
@@ -1924,6 +1964,8 @@ public final class PhasedPlanner {
         int outerR = Math.max(innerR, state.fmap.radius() - reach);
 
         int reserved = 0;
+        int remaining = houseCount;
+        int placedHouses = 0;
         for (int k = 0; k < n; k++) {
             // Each block prefers its fanned bearing but SWEEPS all directions
             // if that bearing is blocked, so every block seats as long as any
@@ -1931,11 +1973,87 @@ public final class PhasedPlanner {
             double startAngle = (2 * Math.PI * k) / n + Math.PI / 4.0;
             Polygon.AABB gate = seatDistrict(
                     state, anchor, startAngle, innerR, outerR, halfX, halfZ);
-            if (gate != null) reserved++;
+            if (gate == null) continue;
+            reserved++;
+            // Explicit per-variant arrangement — place this block's houses by
+            // the variant (street-row / courtyard), not the emergent scorer.
+            int forBlock = Math.min(RESIDENTIAL_BLOCK_CAP, remaining);
+            placedHouses += placeArrangedBlock(state, gate, forBlock,
+                    cellPitch, hf.length(), k);
+            remaining -= forBlock;
         }
-        LOGGER.info("residential districts: {} requested / {} reserved"
-                + " (houses={}, block={}x{} cols={} rows={})",
-                n, reserved, houseCount, 2 * halfX, 2 * halfZ, cols, rows);
+        LOGGER.info("residential districts: {} requested / {} reserved;"
+                + " {} houses placed (block={}x{} cols={} rows={})",
+                n, reserved, placedHouses, 2 * halfX, 2 * halfZ, cols, rows);
+    }
+
+    /**
+     * Layout Rework — arranges one residential block's houses by its variant
+     * (forced via {@code /litv district}, else auto-selected by shape + seed)
+     * and places them EXPLICITLY (position + facing), bypassing the emergent
+     * {@code findBestCandidate} scorer. Returns the count actually placed (an
+     * arranged house that collides a prior reservation or hits bad terrain is
+     * skipped). The decorative render (lane / tofts / well / borders) is a
+     * staged follow-up — this pass produces house positions + facings only.
+     */
+    private static int placeArrangedBlock(State state, Polygon.AABB gate,
+                                          int houses, int cellPitch,
+                                          int houseDepth, int blockIndex) {
+        if (houses <= 0) return 0;
+        long seed = state.ctx.seed()
+                ^ ((long) gate.minX() * 31L + gate.minZ())
+                ^ ((long) blockIndex << 20);
+        ResidentialVariant variant = state.forcedResidentialVariant != null
+                ? state.forcedResidentialVariant
+                : ResidentialArranger.autoSelect(gate, seed);
+        List<ResidentialArranger.HousePlacement> placements =
+                ResidentialArranger.arrange(gate, houses, cellPitch, houseDepth, variant);
+        int placed = 0;
+        for (ResidentialArranger.HousePlacement p : placements) {
+            if (materializeHouse(state, p.centre(), p.faceTarget())) placed++;
+        }
+        LOGGER.info("residential block #{} variant={} houses={}/{} centre=({},{})",
+                blockIndex, variant, placed, houses,
+                (gate.minX() + gate.maxX()) / 2, (gate.minZ() + gate.maxZ()) / 2);
+        return placed;
+    }
+
+    /**
+     * Places a single arranged HOUSE at {@code centre0} (XZ; Y snapped to the
+     * cell surface) facing {@code faceTarget}. Resolves the variant + footprint
+     * through the same seam {@code findBestCandidate} uses; skips (returns
+     * false) on non-buildable terrain or a reservation collision. Frontage /
+     * facingRoad are filled later by the orientation pass, like every building.
+     */
+    private static boolean materializeHouse(State state, BlockPos centre0,
+                                            BlockPos faceTarget) {
+        int x = centre0.getX(), z = centre0.getZ();
+        if (!state.fmap.inBounds(x, z)) return false;
+        Cell cell = state.fmap.cellAt(x, z);
+        BlockCategory cat = cell.category();
+        if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                || cell.localSlope() > MAX_SLOPE) return false;
+        PlacementProfile profile = PlacementDefaults.get(BuildingType.HOUSE);
+        if (profile == null) return false;
+
+        BlockPos centre = new BlockPos(x, cell.elevationY(), z);
+        String variantId = state.variantResolver.pickVariantIdForV2(
+                BuildingType.HOUSE, centre, state.ctx.anchor(), state.villageRadius,
+                state.culture, Style.RURAL, state.rng, state.availability);
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
+                Style.RURAL, BuildingType.HOUSE, variantId, LEVEL, Rotation.NONE);
+        Footprint fp = new Footprint(info.width(), info.length());
+        Rotation rotation = chooseFacing(centre, faceTarget);
+        Aabb fpAabb = footprintAabb(centre, fp, rotation);
+        if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) return false;
+
+        PlacedBuilding pb = new PlacedBuilding(BuildingType.HOUSE, centre, fp,
+                rotation, profile.priority(), variantId, null, null);
+        state.placed.add(pb);
+        state.reservations.add(new Reservation(fpAabb, fpAabb, BuildingType.HOUSE));
+        state.events.add(PhaseEvent.placed(BuildingType.HOUSE, false,
+                new ScoreBreakdown(1.0, 0.0, 0.0)));
+        return true;
     }
 
     /** Number of bearings swept when seating a residential block. */
@@ -2333,6 +2451,9 @@ public final class PhasedPlanner {
          *  interior); leftover open cells become a green via
          *  ParkCandidateFinder. Reserved after the civic core, before rural. */
         final List<Polygon.AABB> residentialGates = new ArrayList<>();
+        /** Residential-variant tooling — forced variant from /litv district
+         *  (null → auto-select per block). */
+        ResidentialVariant forcedResidentialVariant;
 
         /** The reserved square voids, for the router's obstacle mask. */
         List<Polygon.AABB> voids() {

@@ -144,6 +144,25 @@ public final class V2VillageSpawnerAdapter {
             tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclinationOverride,
             tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier tierOverride,
             Map<BuildingType, Integer> selectionOverride) {
+        return spawn(level, origin, villageType, villageName, inclinationOverride,
+                tierOverride, selectionOverride, null);
+    }
+
+    /**
+     * Residential-variant tooling — overload carrying an optional FORCED
+     * residential variant (from {@code /litv district}); threaded to
+     * {@link PhasedPlanner#run}. Null → auto-select (production passes null).
+     */
+    public static Optional<Village> spawn(
+            ServerLevel level,
+            BlockPos origin,
+            String villageType,
+            String villageName,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Inclination inclinationOverride,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier tierOverride,
+            Map<BuildingType, Integer> selectionOverride,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.ResidentialVariant
+                    forcedResidentialVariant) {
         long t0 = System.currentTimeMillis();
         VillageSavedData data = VillageSavedData.get(level);
 
@@ -221,7 +240,8 @@ public final class V2VillageSpawnerAdapter {
         }
 
         PhasedPlanner.Result phased =
-                PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level, tradeFulfilled);
+                PhasedPlanner.run(siteCtx, fmap, sorted, unavailable, level,
+                        tradeFulfilled, forcedResidentialVariant);
         PlacementResult placement = phased.placement();
         RoadNetwork roads = phased.network();
 

@@ -14,6 +14,7 @@ import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Inclination;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.ResidentialVariant;
 import tterrag1112.life_in_the_village.Village.Planning.V2.V2VillageSpawnerAdapter;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -73,15 +74,19 @@ public final class DistrictCommand {
         override.put(BuildingType.TOWN_HALL, 1);
         override.put(BuildingType.HOUSE, count);
 
+        // Parse the optional forced variant (unknown/absent → auto-select).
+        ResidentialVariant forced = ResidentialVariant.parse(variant);
+        String variantNote = variant == null ? "auto"
+                : (forced != null ? forced.name() : variant + " (unknown → auto)");
+
         send(src, "[litv-district] residential count=" + count
-                + (variant != null
-                        ? " variant=" + variant + " (no-op until variants land)" : "")
+                + " variant=" + variantNote
                 + " at " + origin.getX() + "," + origin.getZ()
                 + " — driving real spawn with forced roster " + override + " ...");
 
         Optional<Village> result = V2VillageSpawnerAdapter.spawn(
                 level, origin, "default", "district_test_" + level.getGameTime(),
-                Inclination.AGRICULTURAL, ViabilityTier.CITY, override);
+                Inclination.AGRICULTURAL, ViabilityTier.CITY, override, forced);
 
         if (result.isEmpty()) {
             send(src, "[litv-district] spawn returned empty (see log — e.g. proximity"

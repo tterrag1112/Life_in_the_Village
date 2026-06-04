@@ -6975,3 +6975,138 @@ both branches, definite-assignment-safe); `tryAutoDump` already accepts null
 / `src.getLevel()` / `sendSuccess` conventions and the 7-arg `spawn` signature;
 registered in `ModModEvents` beside `PlaceCommand`; `DISTRICT_TYPES` keeps
 TOWN_HALL + HOUSE; no codec/enum/exhaustive-switch change.
+
+### 2026-06-03 — Residential variant framework + STREET_ROW & COURTYARD (arrangement only)
+
+The residential variant framework + the first two variants, **explicit house
+arrangement only** (decorative render passes — lane / tofts / well / borders —
+deferred to staged follow-ups, per the accepted re-scope). Replaces the emergent
+scorer-packing of residential HOUSEs with per-variant explicit positions +
+facings; threads the `/litv district` `[variant]` arg through. (Scope per user
+direction.)
+
+**Disposition (accepted, per user direction):** there was no grid-fill to swap —
+residential HOUSEs placed emergently via `findBestCandidate` (scorer + overlap-
+packing, gated to the block AABB), no explicit positions/facings. STREET_ROW /
+COURTYARD therefore introduce EXPLICIT arrangement; the lane/tofts/well/borders
+render is staged next.
+
+**What shipped:**
+- **`ResidentialVariant`** (enum): STREET_ROW, COURTYARD + reserved CLUSTER /
+  GREEN / GRID_BLOCKS / TERRACE / HILLSIDE (not auto-selected; forced → fallback,
+  never silent). `parse()` for the command arg.
+- **`ResidentialArranger`** — `arrange(block, houseCount, cellPitch, houseDepth,
+  variant) → List<HousePlacement{centre, faceTarget}>` + `autoSelect(block, seed)`
+  (elongated → STREET_ROW; near-square → seed coin-flip for variety). STREET_ROW =
+  two rows fronting a central lane along the long axis (faces the lane); COURTYARD
+  = houses walked around an inset-rectangle perimeter, facing the block centre.
+- **Explicit placement** in `PhasedPlanner`: `reserveResidentialDistricts` now,
+  per seated block, dispatches to the variant and places its houses via the new
+  `placeArrangedBlock` → `materializeHouse` (resolves variant/footprint through
+  the same seam as `findBestCandidate`, rotation = `chooseFacing(centre,
+  faceTarget)`, skips on terrain/collision). The batch-5 emergent HOUSE pass is
+  SKIPPED when residential gates exist (houses are placed explicitly) — so only
+  residential HOUSE-in-a-block changed; `findBestCandidate` is otherwise untouched.
+- **Forced-variant channel**: `PhasedPlanner.run` + `V2VillageSpawnerAdapter.spawn`
+  gain an optional `ResidentialVariant` (null → auto-select; production passes
+  null); `DistrictCommand` parses `[variant]` and threads it through. So
+  `/litv district residential <n> <variant>` forces it.
+
+**Surface area:** 2 new files + 3 edits + 0 deletions.
+
+**Files added:**
+- `.../Village/Planning/V2/Layer4/ResidentialVariant.java`
+- `.../Village/Planning/V2/Layer4/ResidentialArranger.java`
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (run overloads + state
+  field; explicit arrange/place; batch-5 HOUSE skip).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (spawn forced-variant
+  overload → run).
+- `.../Commands/DistrictCommand.java` (parse + pass `[variant]`).
+
+**Tie-In Audit:**
+- *Touched surface:* `ResidentialVariant`/`ResidentialArranger` (new); residential
+  HOUSE placement (emergent → explicit); `PhasedPlanner.run` + `spawn` (+1 optional
+  forced-variant overload each); `DistrictCommand`.
+- *Downstream callers:* `PhasedPlanner.run` — every existing overload delegates to
+  the new 8-arg headless with `null` variant (5/6/7-arg chains verified, no
+  recursion; the live-6-arg now routes through the new live-7-arg which builds the
+  StructureSizeCache once). `spawn` — 4/6/7-arg all delegate to the new 8-arg with
+  `null`; `SpawnCommand` + the convenience overloads UNAFFECTED (null variant +
+  null selection = today's path). `DistrictCommand` → 8-arg spawn.
+- *Sibling systems:* `BlockServingRouter`/`OverlapAuditor` — explicit houses are
+  placed BEFORE routing with the same footprint reservation + overlap check as
+  emergent placement, so the router still terminals them and the auditor sees no
+  building×building overlap (sequential reservations; blocks seated clear of civic/
+  market). District edge node still feeds the router. NPC nav unchanged (reads the
+  routed graph). `DISTRICT_ONLY_MODE` + `/litv district` unaffected.
+- *Exhaustive switches:* `ResidentialArranger.arrange` switch covers all 7
+  `ResidentialVariant` values (reserved 5 → STREET_ROW fallback, not silent). No
+  other switch over the enum. No new `BuildingType`/`DropReason`/codec.
+
+**Simplification Sweep** (touches `Village/Planning/`):
+- The emergent batch-5 residential fill is now SKIPPED (not duplicated) when
+  districts exist — one residential placement path (explicit), with the emergent
+  path retained only as the no-districts fallback. `findBestCandidate` untouched
+  for everything else.
+- `ResidentialArranger`/`ResidentialVariant` (new) — Active (planner callers); the
+  arranger is the single arrangement implementation (no command/planner copy — it's
+  driven through the real `spawn`). No orphans; no parallel fill.
+
+**Deviations from prompt:**
+- **Arrangement only this pass** — the lane (footpath-tier `VillageRoadRealizer`),
+  typed `ResidentialPlot` tofts, COURTYARD `well_hamlet` + borders, and the
+  district-edge-node lane connection are DEFERRED to staged follow-ups (per the
+  accepted re-scope). The variants read from house positions + facings now (two
+  rows fronting a gap vs a hollow ring), enough to validate the framework +
+  auto-select via the command.
+- **House facing is set (chooseFacing → lane/yard) but the internal lane isn't
+  rendered yet** — the block still connects to the main road via the district
+  edge node + router; the lane the houses front lands with the render follow-up.
+  (Until then a house's router-frontage — toward the anchor — may differ from its
+  facing — toward the lane/yard; cosmetic until the lane renders.)
+- **The placement summary log's "{} houses" (perBatchCounts[5]) now reads 0** since
+  residential houses are placed explicitly, not in batch 5; the real count is in
+  the `residential districts: … N houses placed` + per-block `residential block #k
+  variant=…` lines. Cosmetic.
+- **No `ResidentialPlot`/`Kind` yet** — deferred with the toft render (the prompt
+  put tofts in the STREET_ROW *render*, which is staged); no dead enum added now.
+
+**Out-of-scope but flagged:**
+- STREET_ROW internal lane render (footpath tier) + district-edge-node connection
+  → next follow-up.
+- STREET_ROW typed `ResidentialPlot`/`Kind` toft back-plots + garden render (+ later
+  homestead behavior) → follow-up.
+- COURTYARD `well_hamlet` centerpiece + fenced/hedged borders + entry path → follow-up.
+- CLUSTER / GREEN / GRID_BLOCKS / TERRACE variants → later (slots reserved);
+  HILLSIDE → deferred (terrain).
+- Flipping `DISTRICT_ONLY_MODE` off / rural → not until variants + render read well.
+
+**Cumulative pending verification:** the rework spawns; districts reserve; roads
+unified; plaza designed + correct height; `/litv district` harness; and now
+residential blocks arrange by variant (street-row / courtyard, explicit). None of
+#5–#7 / Stage 4 redesign / 4b / the market+resi, roads, plaza fix-ups / plaza
+decoration / district command / this variant framework has been smoke-tested
+in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 6 street_row` → houses in TWO ROWS facing a central
+   gap (the future lane); per-block log `residential block #0 variant=STREET_ROW`.
+3. `/litv district residential 6 courtyard` → houses in a HOLLOW RING facing inward
+   (the future yard); log `variant=COURTYARD`.
+4. `/litv district residential 16` (no variant) → auto-select gives a MIX across
+   the tiled blocks (some street, some courtyard — seed-varied), not uniform.
+5. Normal `/litv spawn` → residential places via explicit arrangement (auto-select);
+   no overlaps, houses still routed/reachable; no regressions elsewhere.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `ResidentialArranger`
+is pure geometry over `Polygon.AABB` + `BlockPos`; `materializeHouse` reuses the
+verified `pickVariantIdForV2` / `sizes.get` / `chooseFacing` / `footprintAabb` /
+`overlapsAnyReservation` seam + the 8-arg `PlacedBuilding` + 3-arg `Reservation`
+ctors + `profile.priority()`; the run/spawn overload chains all delegate to the
+new variant-carrying overload with `null` (verified no recursion, single cache
+build); the batch-5 skip gates on `residentialGates`; the `arrange` switch is
+exhaustive; `ctx.seed()` (used for the per-block seed) is the same accessor the
+State rng uses; no codec/enum-arm/signature break on existing callers.
