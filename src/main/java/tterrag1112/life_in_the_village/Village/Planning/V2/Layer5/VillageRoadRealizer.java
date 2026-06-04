@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.InternalPath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.UnifiedRoadPlacer;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
@@ -76,6 +77,45 @@ public final class VillageRoadRealizer {
 
         LOGGER.info("VillageRoadRealizer: realized {} village edge(s) -> {} blocks"
                 + " (culture={})", edges, total, cultureId);
+        return total;
+    }
+
+    /**
+     * Internal-path render infra — realizes a list of explicit centerlines (e.g.
+     * residential variant lanes) through the SAME pipeline as {@link #realize}:
+     * {@link UnifiedRoadPlacer} + the village {@link CulturePalette} at each
+     * path's tier. This is NOT a parallel painter — it drives the unified placer
+     * from caller-supplied centerlines instead of routed network edges, the seam
+     * the street-row lane + (later) courtyard entry path render through. Returns
+     * total blocks placed.
+     */
+    public static int realizePaths(ServerLevel level, List<InternalPath> paths,
+                                   Culture culture) {
+        if (paths == null || paths.isEmpty()) return 0;
+
+        String cultureId = culture != null ? culture.id() : "default";
+        CulturePalette palette = PaletteRegistry.forCulture(cultureId);
+        PathMaterial base = PathMaterial.fromCulturePalette(palette);
+        SeasonTracker.Season season = SeasonTracker.currentSeason(level);
+        long worldSeed = level.getSeed();
+
+        int total = 0;
+        int painted = 0;
+        for (InternalPath path : paths) {
+            List<BlockPos> centerline = path.waypoints();
+            if (centerline == null || centerline.size() < 2) continue;
+            RoadShape.RoadTier tier = path.tier();
+            PathMaterial material = PathMaterial.applyOverlays(
+                    base, FRESH_MAINTENANCE, tier, season);
+            long seed = worldSeed ^ edgeSeed(centerline);
+            List<BlockPos> placed = UnifiedRoadPlacer.place(level, centerline,
+                    material, tier, seed, /*greatRoad*/ false, /*character*/ null,
+                    cultureId, palette);
+            total += placed.size();
+            painted++;
+        }
+        LOGGER.info("VillageRoadRealizer: realized {} internal path(s) -> {} blocks"
+                + " (culture={})", painted, total, cultureId);
         return total;
     }
 

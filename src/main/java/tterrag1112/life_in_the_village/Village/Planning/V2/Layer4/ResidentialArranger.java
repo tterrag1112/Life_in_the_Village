@@ -26,6 +26,16 @@ public final class ResidentialArranger {
     /** A planned house: its centre (y=0, planner snaps) + the point it faces. */
     public record HousePlacement(BlockPos centre, BlockPos faceTarget) {}
 
+    /**
+     * The full arrangement of one block: house placements + internal-path
+     * centerlines (raw waypoints, y=0 — the planner snaps to floor-Y and tags
+     * the road tier). Lanes connect to the block's edge node so the footpath
+     * flows out to the main street. COURTYARD's entry path is a staged
+     * follow-up, so it returns no lanes yet.
+     */
+    public record Arrangement(List<HousePlacement> houses,
+                              List<List<BlockPos>> lanes) {}
+
     /** Half-width (blocks) of the central lane STREET_ROW houses front. */
     private static final int LANE_HALF = 2;
     /** Aspect ratio at/above which a block is "elongated" → STREET_ROW. */
@@ -48,22 +58,24 @@ public final class ResidentialArranger {
     }
 
     /**
-     * Arranges {@code houseCount} houses in {@code block} per {@code variant}.
-     * {@code cellPitch} = house footprint max-dim + gap (spacing); {@code
-     * houseDepth} = footprint depth (used to inset rows/rings off the lane/edge).
+     * Arranges {@code houseCount} houses in {@code block} per {@code variant},
+     * returning house placements + internal-path centerlines. {@code cellPitch}
+     * = house footprint max-dim + gap (spacing); {@code houseDepth} = footprint
+     * depth (insets rows/rings off the lane/edge); {@code edgeNode} = the block's
+     * road-facing edge point, so the lane connects out to the main street.
      * Reserved variants (not yet built) fall back to STREET_ROW — never a silent
      * empty result.
      */
-    public static List<HousePlacement> arrange(Polygon.AABB block, int houseCount,
-                                               int cellPitch, int houseDepth,
-                                               ResidentialVariant variant) {
-        if (houseCount <= 0) return List.of();
+    public static Arrangement arrange(Polygon.AABB block, int houseCount,
+                                      int cellPitch, int houseDepth,
+                                      BlockPos edgeNode, ResidentialVariant variant) {
+        if (houseCount <= 0) return new Arrangement(List.of(), List.of());
         return switch (variant) {
-            case STREET_ROW -> streetRow(block, houseCount, cellPitch, houseDepth);
+            case STREET_ROW -> streetRow(block, houseCount, cellPitch, houseDepth, edgeNode);
             case COURTYARD -> courtyard(block, houseCount, houseDepth);
             // Reserved → fall back (not silent): arrange as a street row for now.
             case CLUSTER, GREEN, GRID_BLOCKS, TERRACE, HILLSIDE ->
-                    streetRow(block, houseCount, cellPitch, houseDepth);
+                    streetRow(block, houseCount, cellPitch, houseDepth, edgeNode);
         };
     }
 
@@ -71,8 +83,9 @@ public final class ResidentialArranger {
     // STREET_ROW — two rows fronting a central lane along the long axis
     // =========================================================================
 
-    private static List<HousePlacement> streetRow(Polygon.AABB block, int count,
-                                                  int cellPitch, int houseDepth) {
+    private static Arrangement streetRow(Polygon.AABB block, int count,
+                                         int cellPitch, int houseDepth,
+                                         BlockPos edgeNode) {
         int cx = (block.minX() + block.maxX()) / 2;
         int cz = (block.minZ() + block.maxZ()) / 2;
         int wX = block.maxX() - block.minX();
@@ -86,10 +99,30 @@ public final class ResidentialArranger {
         int perRowFront = (count + 1) / 2;                // row on +across
         int perRowBack = count / 2;                       // row on -across
 
-        List<HousePlacement> out = new ArrayList<>(count);
-        addRow(out, longX, cx, cz, perRowFront, +rowOffset, cellPitch, alongHalfLimit);
-        addRow(out, longX, cx, cz, perRowBack, -rowOffset, cellPitch, alongHalfLimit);
-        return out;
+        List<HousePlacement> houses = new ArrayList<>(count);
+        addRow(houses, longX, cx, cz, perRowFront, +rowOffset, cellPitch, alongHalfLimit);
+        addRow(houses, longX, cx, cz, perRowBack, -rowOffset, cellPitch, alongHalfLimit);
+
+        // Central lane: the across=0 gap BETWEEN the two rows, run to the block
+        // boundary at both short ends — that gap is open there (houses sit at
+        // across=±rowOffset), so the lane never crosses a footprint.
+        BlockPos endA = fromAxes(longX, cx, cz, -halfLong, 0);
+        BlockPos endB = fromAxes(longX, cx, cz, +halfLong, 0);
+        boolean aNearer = horizDistSqr(edgeNode, endA) <= horizDistSqr(edgeNode, endB);
+        BlockPos near = aNearer ? endA : endB;
+        BlockPos far = aNearer ? endB : endA;
+        // Stitch to the edge node only when it sits roughly off the lane's short
+        // end (anchor aligned with the long axis): then the connector runs
+        // through the open end gap, just past the house ends. When the edge node
+        // is beside a LONG side, a connector would cross a house row, so the lane
+        // simply exits the short end (side-entry stitching lands with the typed-
+        // toft follow-up that reworks per-house frontage).
+        int edgeAlong = longX ? (edgeNode.getX() - cx) : (edgeNode.getZ() - cz);
+        boolean aligned = Math.abs(edgeAlong) >= alongHalfLimit;
+        List<BlockPos> lane = aligned
+                ? List.of(edgeNode, near, far)
+                : List.of(near, far);
+        return new Arrangement(houses, List.of(lane));
     }
 
     /** Places {@code m} houses spaced along the long axis at the given across
@@ -110,8 +143,8 @@ public final class ResidentialArranger {
     // COURTYARD — houses around the perimeter of an inset rectangle, facing in
     // =========================================================================
 
-    private static List<HousePlacement> courtyard(Polygon.AABB block, int count,
-                                                  int houseDepth) {
+    private static Arrangement courtyard(Polygon.AABB block, int count,
+                                         int houseDepth) {
         int cx = (block.minX() + block.maxX()) / 2;
         int cz = (block.minZ() + block.maxZ()) / 2;
         int inset = houseDepth / 2 + 1;
@@ -122,7 +155,8 @@ public final class ResidentialArranger {
             List<HousePlacement> one = new ArrayList<>();
             one.add(new HousePlacement(new BlockPos(cx, 0, iz0),
                     new BlockPos(cx, 0, cz)));
-            return one;
+            // COURTYARD entry path is a staged follow-up → no lane this pass.
+            return new Arrangement(one, List.of());
         }
         // Walk the inset-rectangle perimeter, placing houses evenly; each faces
         // the block centre (inward).
@@ -133,7 +167,9 @@ public final class ResidentialArranger {
             long t = perim * i / count;
             out.add(new HousePlacement(perimeterPoint(ix0, ix1, iz0, iz1, t), centre));
         }
-        return out;
+        // COURTYARD well + borders + entry path are a staged follow-up that
+        // reuses this internal-path infra → no lane this pass.
+        return new Arrangement(out, List.of());
     }
 
     /** Point at arc-length {@code t} (0..perim) clockwise around the rectangle
@@ -164,5 +200,11 @@ public final class ResidentialArranger {
 
     private static int clamp(int v, int lo, int hi) {
         return Math.max(lo, Math.min(hi, v));
+    }
+
+    /** Horizontal (XZ) distance² — ignores Y, which the planner snaps later. */
+    private static long horizDistSqr(BlockPos a, BlockPos b) {
+        long dx = a.getX() - b.getX(), dz = a.getZ() - b.getZ();
+        return dx * dx + dz * dz;
     }
 }

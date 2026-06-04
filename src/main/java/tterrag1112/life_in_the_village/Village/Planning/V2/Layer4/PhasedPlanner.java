@@ -8,6 +8,7 @@ import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.Style;
 import tterrag1112.life_in_the_village.Village.Planning.StructureSizeCache;
@@ -358,7 +359,8 @@ public final class PhasedPlanner {
         return new Result(placement, network, List.copyOf(state.events),
                 java.util.Map.copyOf(state.nucleusContexts),
                 java.util.Set.copyOf(state.droppedBindings),
-                state.civicSquare, state.marketSquare);
+                state.civicSquare, state.marketSquare,
+                List.copyOf(state.internalLanes));
     }
 
     // =========================================================================
@@ -2006,16 +2008,43 @@ public final class PhasedPlanner {
         ResidentialVariant variant = state.forcedResidentialVariant != null
                 ? state.forcedResidentialVariant
                 : ResidentialArranger.autoSelect(gate, seed);
-        List<ResidentialArranger.HousePlacement> placements =
-                ResidentialArranger.arrange(gate, houses, cellPitch, houseDepth, variant);
+        // The lane connects to the block's road-facing edge node so the footpath
+        // flows out to the main street (same node the router branches to).
+        BlockPos edgeNode = edgePointToward(gate, state.ctx.anchor());
+        ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
+                gate, houses, cellPitch, houseDepth, edgeNode, variant);
         int placed = 0;
-        for (ResidentialArranger.HousePlacement p : placements) {
+        for (ResidentialArranger.HousePlacement p : arr.houses()) {
             if (materializeHouse(state, p.centre(), p.faceTarget())) placed++;
         }
-        LOGGER.info("residential block #{} variant={} houses={}/{} centre=({},{})",
-                blockIndex, variant, placed, houses,
+        // Carry the variant's internal lanes to the render pass: snap to the
+        // surface (floor-Y) and tag the FOOTPATH tier.
+        for (List<BlockPos> lane : arr.lanes()) {
+            List<BlockPos> snapped = snapPathToSurface(state, lane);
+            if (snapped.size() >= 2) {
+                state.internalLanes.add(new InternalPath(snapped,
+                        RoadShape.RoadTier.FOOTPATH));
+            }
+        }
+        LOGGER.info("residential block #{} variant={} houses={}/{} lanes={} centre=({},{})",
+                blockIndex, variant, placed, houses, arr.lanes().size(),
                 (gate.minX() + gate.maxX()) / 2, (gate.minZ() + gate.maxZ()) / 2);
         return placed;
+    }
+
+    /** Snaps a raw (y=0) internal-path centerline to the cell surface so the
+     *  footpath sits on the ground (floor-Y convention), not buried. */
+    private static List<BlockPos> snapPathToSurface(State state, List<BlockPos> pts) {
+        List<BlockPos> out = new ArrayList<>(pts.size());
+        for (BlockPos p : pts) {
+            if (state.fmap.inBounds(p.getX(), p.getZ())) {
+                int y = state.fmap.cellAt(p.getX(), p.getZ()).elevationY();
+                out.add(new BlockPos(p.getX(), y, p.getZ()));
+            } else {
+                out.add(p);
+            }
+        }
+        return out;
     }
 
     /**
@@ -2454,6 +2483,9 @@ public final class PhasedPlanner {
         /** Residential-variant tooling — forced variant from /litv district
          *  (null → auto-select per block). */
         ResidentialVariant forcedResidentialVariant;
+        /** Internal-path lanes emitted by residential variants (street-row lane
+         *  now; courtyard entry path later) — rendered at FOOTPATH tier. */
+        final List<InternalPath> internalLanes = new ArrayList<>();
 
         /** The reserved square voids, for the router's obstacle mask. */
         List<Polygon.AABB> voids() {
@@ -2501,7 +2533,11 @@ public final class PhasedPlanner {
                          /* Stage 4a — designed-core squares (nullable); the
                           * adapter turns these into CIVIC / MARKET PlazaRegions. */
                          Polygon.AABB civicSquare,
-                         Polygon.AABB marketSquare) {
+                         Polygon.AABB marketSquare,
+                         /* Layout Rework — residential variant internal lanes
+                          * (footpath tier); the adapter renders these through
+                          * VillageRoadRealizer.realizePaths. */
+                         List<InternalPath> internalLanes) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
@@ -2524,7 +2560,17 @@ public final class PhasedPlanner {
                       java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
                       java.util.Set<BuildingType> droppedBindings) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    null, null);
+                    null, null, List.of());
+        }
+
+        /** Pre-Layout-Rework 7-arg constructor (no internal lanes). */
+        public Result(PlacementResult placement, RoadNetwork network,
+                      List<PhaseEvent> events,
+                      java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
+                      java.util.Set<BuildingType> droppedBindings,
+                      Polygon.AABB civicSquare, Polygon.AABB marketSquare) {
+            this(placement, network, events, nucleusContexts, droppedBindings,
+                    civicSquare, marketSquare, List.of());
         }
     }
 

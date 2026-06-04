@@ -503,6 +503,10 @@ public final class V2VillageSpawnerAdapter {
         // replacing the retired RoadPainter (the checkerboard renderer).
         try {
             VillageRoadRealizer.realize(level, roads, culture);
+            // Layout Rework — residential variant internal lanes (street-row
+            // footpath now; courtyard entry path later) render through the SAME
+            // unified placer, one tier down (FOOTPATH).
+            VillageRoadRealizer.realizePaths(level, phased.internalLanes(), culture);
         } catch (Exception e) {
             LOGGER.warn("V2: VillageRoadRealizer failed: {}", e.getMessage());
         }

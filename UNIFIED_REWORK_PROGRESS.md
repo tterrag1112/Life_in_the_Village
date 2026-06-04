@@ -7110,3 +7110,141 @@ new variant-carrying overload with `null` (verified no recursion, single cache
 build); the batch-5 skip gates on `residentialGates`; the `arrange` switch is
 exhaustive; `ctx.seed()` (used for the per-block seed) is the same accessor the
 State rng uses; no codec/enum-arm/signature break on existing callers.
+
+### 2026-06-03 — Street-row lane: internal-path render infra + footpath tier
+
+The internal-path render infrastructure + the STREET_ROW central lane (first
+consumer), delivering the deferred per-building **footpath tier**. Residential
+variants now emit internal-path centerlines that render through the SAME unified
+`VillageRoadRealizer`/`UnifiedRoadPlacer` pipeline the streets use, one tier down
+(`FOOTPATH`) — not a parallel painter. (Staged follow-up to the variant framework,
+per the accepted staging.)
+
+**What shipped:**
+- **Internal-path render infra (the reusable part):**
+  - `InternalPath` (new, Layer4): `(List<BlockPos> waypoints, RoadShape.RoadTier
+    tier)` — a village-internal path carried planner→render. Lives in Layer4 so the
+    planner `Result` carries it without a Layer4→Layer5 dependency.
+  - `VillageRoadRealizer.realizePaths(level, List<InternalPath>, culture)` — realizes
+    explicit centerlines through the identical `UnifiedRoadPlacer.place` +
+    `PathMaterial` + `CulturePalette` path as `realize()` (the loop body is the same;
+    it just drives from caller centerlines instead of routed network edges). This is
+    the seam courtyard's entry path + future variants reuse.
+  - `ResidentialArranger.arrange` now returns an `Arrangement(houses, lanes)` — house
+    placements **plus** internal-path centerlines (raw, y=0). It takes the block's
+    `edgeNode` so the lane can stitch to the district edge road node.
+  - `PhasedPlanner`: `placeArrangedBlock` collects the variant's lanes, **snaps them
+    to the surface** (`snapPathToSurface`, floor-Y convention) and tags `FOOTPATH`,
+    accumulating into `state.internalLanes`; carried out on `Result.internalLanes`;
+    the adapter calls `realizePaths` right after `realize`.
+- **STREET_ROW lane (first consumer):** a single centerline down the **central
+  across=0 gap between the two house rows**, run to both short-end boundaries (the
+  gap is open there — houses sit at across=±rowOffset — so the lane never crosses a
+  footprint). Stitched to the **district edge node** when the node sits roughly off
+  the lane's short end (anchor aligned with the long axis) — a clean connector
+  through the open end gap. Houses already face the lane (`faceTarget`); with it
+  rendered, their fronts now address a real street — **the facing cosmetic from the
+  arrangement pass resolves here.**
+
+**Surface area:** 1 new file + 4 edits + 0 deletions.
+
+**Files added:**
+- `.../Village/Planning/V2/Layer4/InternalPath.java`
+**Files modified:**
+- `.../Village/Planning/V2/Layer5/VillageRoadRealizer.java` (`realizePaths` + import).
+- `.../Village/Planning/V2/Layer4/ResidentialArranger.java` (`Arrangement`; lanes;
+  edge-node stitch).
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (state lanes; `placeArrangedBlock`
+  lane capture + `snapPathToSurface`; `Result` 8th component + back-compat 7-arg ctor;
+  `RoadShape` import).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (`realizePaths` call after
+  `realize`).
+
+**Tie-In Audit:**
+- *Touched surface:* `ResidentialArranger.arrange` (return type → `Arrangement`);
+  `PhasedPlanner.Result` (+1 component); `VillageRoadRealizer` (+`realizePaths`); new
+  `InternalPath`; adapter render.
+- *Downstream callers:* `arrange` — only caller is `placeArrangedBlock` (updated).
+  `Result` — canonical ctor gained an 8th component; **a back-compat 7-arg ctor was
+  added** so every prior `new Result(...)` form (3/4/5/7-arg) still compiles (the
+  unrelated `new Result(...)` in EffectDispatcher / KingdomCapabilityEvaluator /
+  Farms.Complex are different records — unaffected). `realizePaths` is additive (no
+  existing caller). `VillageRoadRealizer.realize` untouched.
+- *Sibling systems:* `UnifiedRoadPlacer`/`PathMaterial`/`CulturePalette`/
+  `PaletteRegistry`/`SeasonTracker` — reused read-only via the copied realize body.
+  `OverlapAuditor` — the lane runs the across=0 gap (≥2 blocks from house fronts at
+  across=±rowOffset) and stitches only via open short ends, so it never overlaps a
+  house footprint; it is path geometry, not a building reservation, so the auditor
+  (buildings) is unaffected. Router — the lane complements (not fights) the routed
+  network; both reach the same edge node. NPC nav reads the routed road graph (a real
+  footpath is strictly better). `DISTRICT_ONLY_MODE` + `/litv district` unaffected.
+  Production auto-select street-row blocks get the lane too (it's in
+  `placeArrangedBlock`, not the command).
+- *Exhaustive switches:* no new tier/enum — reused `RoadShape.RoadTier.FOOTPATH`. The
+  `arrange` switch still covers all 7 `ResidentialVariant` values.
+
+**Simplification Sweep** (touches `Village/Planning/`):
+- **No parallel painter** — `realizePaths` is a thin reuse of the unified placer (the
+  roads-unification's whole point); the farm complex's separate `PathRenderer` was NOT
+  duplicated for residential. One render pipeline.
+- `InternalPath` (new) — Active (planner emits, adapter renders). `realizePaths` — one
+  method, shared by street-row now + courtyard/other variants next. No orphans
+  introduced; `arrange`'s old `List<HousePlacement>` return fully replaced (one caller).
+
+**Deviations from prompt:**
+- **Lane carried via a dedicated `realizePaths` (mirrors the farm *separate-render*
+  precedent), NOT by injecting FOOTPATH edges into the routed `NetworkSpec`.** Both
+  reuse the unified placer; the dedicated method avoids rebuilding the `NetworkSpec`/
+  `Skeleton` node-id graph (lower risk, build-unverifiable here) and gives courtyard a
+  clean reuse seam. Same realizer, same tier — the prompt's intent.
+- **Edge-node stitch is conditional.** Because CAP=4 packs houses to the block edges,
+  the only clean corridor is the central gap (reachable through the open short ends).
+  When the edge node sits off a **long** side, a connector would cross a house row, so
+  the lane exits the short end without the diagonal (the router still serves the block
+  via that node). When the node is roughly off the **short** end, it stitches cleanly.
+  Full side-entry stitching is deferred to the typed-toft follow-up (which reworks
+  per-house frontage anyway). This was the safe choice to guarantee **no lane×house
+  overlap** — flagged for the next pass.
+- **FOOTPATH chosen** (not VILLAGE_PATH) per the prompt's primary ask — it's the
+  thinnest tier (width 1), which keeps the lane clear of the house fronts at the tight
+  CAP=4 spacing. If FOOTPATH reads too thin in-world, bumping the tag to VILLAGE_PATH
+  is a one-line change in `placeArrangedBlock`.
+
+**Out-of-scope but flagged:**
+- COURTYARD well + fenced/hedged borders + entry path → next staged prompt (reuses
+  `realizePaths` for the entry path).
+- STREET_ROW typed `ResidentialPlot`/`Kind` tofts + garden render (+ homestead wiring)
+  → follow-up; the long-side edge-node stitch is folded into that frontage rework.
+- CLUSTER / GREEN / GRID / TERRACE / HILLSIDE variants → later.
+- Residential-only test command (drop TOWN_HALL) / flipping `DISTRICT_ONLY_MODE` off →
+  not here.
+
+**Cumulative pending verification:** rework spawns; districts reserve; roads unified;
+plaza designed + height-correct; `/litv district` harness; residential variant
+arrangement (street-row / courtyard); and now the street-row **lane** + internal-path
+render infra. None of #5–#7 / Stage-4 redesign / 4b / market+resi, roads, plaza
+fix-ups / plaza decoration / district command / variant framework / this lane pass has
+been smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 8 street_row` → a **clean footpath lane** runs down the
+   centre of the row (footpath palette, on the surface), houses fronting it, the lane
+   exiting toward the centre/edge node — not the old patchy emergent path. Per-block
+   log shows `lanes=1`.
+3. `/litv district residential 16` (auto) → street-row pieces show their lanes;
+   courtyard pieces unchanged (no lane yet — next pass; `lanes=0`).
+4. Normal `/litv spawn` → auto-selected street-row residential blocks get lanes; no
+   regressions (no lane×house or lane×main-street overlap, NPC nav intact, main street
+   unaffected).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net — HTTP 403). Static review substituted: `realizePaths` is a
+line-for-line reuse of the verified `realize()` body (same `UnifiedRoadPlacer.place`
+9-arg overload, `PathMaterial`, palette, season, seed); `InternalPath` is a 2-field
+record over verified types; the `Result` 8th component is gated by a new back-compat
+7-arg ctor so no existing `new Result(...)` breaks; `RoadShape.RoadTier.FOOTPATH`
+exists; `snapPathToSurface` reuses `fmap.cellAt().elevationY()` (same accessor as
+`materializeHouse`); the lane geometry only ever traverses the open across=0 gap +
+open short ends, so it cannot overlap a house footprint; `arrange`'s single caller was
+updated.
