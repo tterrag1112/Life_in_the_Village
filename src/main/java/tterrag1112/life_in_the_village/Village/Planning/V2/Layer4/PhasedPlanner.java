@@ -1913,7 +1913,11 @@ public final class PhasedPlanner {
      *  (the CAP-5 ring block was ~64×64 and reserved nothing). More houses ⇒
      *  more small blocks, fanned around the core. 4c's designed block (BSP
      *  plots + shared yard + well + fenced borders) replaces this. */
-    private static final int RESIDENTIAL_BLOCK_CAP = 4;
+    private static final int RESIDENTIAL_BLOCK_TARGET = 4;
+    /** Phase 1 — minimum houses needed to seat an OVERFLOW district (the first
+     *  district always seats). A sub-minimum remainder after at least one
+     *  district is an acceptable drop, rather than a runt district of 1. */
+    private static final int MIN_DISTRICT_HOUSES = 3;
     /** Gap (blocks) between packed houses within a block, and the block's outer
      *  margin. */
     private static final int HOUSE_GAP = 2;
@@ -1949,50 +1953,91 @@ public final class PhasedPlanner {
             LOGGER.info("residential districts: none (no HOUSE selected)");
             return;
         }
-        int n = (houseCount + RESIDENTIAL_BLOCK_CAP - 1) / RESIDENTIAL_BLOCK_CAP;
-
-        // Size one block by PACKING up to CAP houses in a near-SQUARE grid
-        // (minimises the block's max dimension → easiest to seat in the narrow
-        // band beyond the core). Square cells = max(width,length) so the house
-        // fits in any rotation (it faces the anchor, so its orientation varies
-        // with the block's bearing).
-        int blockHouses = Math.min(RESIDENTIAL_BLOCK_CAP, houseCount);
-        StructureSizeCache.FootprintInfo hf = defaultFootprint(state, BuildingType.HOUSE);
+        // Phase 1 — size the cell from the LARGEST footprint in the HOUSE
+        // variant pool, not one default. The actual house variant is resolved
+        // per-house later (pickVariantIdForV2), and the pool has real size
+        // spread; a cell sized to the biggest house can hold any resolved house
+        // without overstepping → materializeHouse no longer drops on size.
+        StructureSizeCache.FootprintInfo hf = largestHouseFootprint(state);
         int cellPitch = Math.max(hf.width(), hf.length()) + HOUSE_GAP;
-        int cols = (int) Math.ceil(Math.sqrt(blockHouses));
-        int rows = (blockHouses + cols - 1) / cols;
-        int halfX = Math.max(MIN_PLAZA_HALF, (cols * cellPitch + HOUSE_GAP) / 2);
-        int halfZ = Math.max(MIN_PLAZA_HALF, (rows * cellPitch + HOUSE_GAP) / 2);
-        int reach = Math.max(halfX, halfZ);   // ray clearance from the box
+        int houseDepth = hf.length();
 
         BlockPos anchor = state.ctx.anchor();
-        // Start close to the core (the reservation-overlap scan pushes each
-        // district out past the civic buildings); scan to the grid edge.
-        int innerR = reach + DISTRICT_GAP;
-        int outerR = Math.max(innerR, state.fmap.radius() - reach);
+        // Nominal district count for fanning the seating bearings around the
+        // core (overflow may add more; seatDistrict sweeps all bearings anyway).
+        int nEstimate = Math.max(1,
+                (houseCount + RESIDENTIAL_BLOCK_TARGET - 1) / RESIDENTIAL_BLOCK_TARGET);
 
-        int reserved = 0;
+        // Fill-to-capacity with an overflow queue: size each district for
+        // min(TARGET, remaining), subtract the ACTUAL placed (so a house lost to
+        // terrain stays in remaining and re-homes into the next district), and
+        // loop until done / out of space / a district places nothing.
         int remaining = houseCount;
+        int reserved = 0;
         int placedHouses = 0;
-        for (int k = 0; k < n; k++) {
-            // Each block prefers its fanned bearing but SWEEPS all directions
-            // if that bearing is blocked, so every block seats as long as any
-            // clear spot exists in the annulus.
-            double startAngle = (2 * Math.PI * k) / n + Math.PI / 4.0;
+        boolean noSpace = false;
+        for (int k = 0; remaining > 0; k++) {
+            // The first district always seats; overflow districts only when the
+            // remainder is worth a district (avoids a runt of 1–2).
+            if (reserved > 0 && remaining < MIN_DISTRICT_HOUSES) break;
+            int target = Math.min(RESIDENTIAL_BLOCK_TARGET, remaining);
+            int[] hd = districtHalfDims(target, cellPitch);
+            int halfX = hd[0], halfZ = hd[1];
+            int reach = Math.max(halfX, halfZ);
+            int innerR = reach + DISTRICT_GAP;
+            int outerR = Math.max(innerR, state.fmap.radius() - reach);
+            double startAngle = (2 * Math.PI * k) / nEstimate + Math.PI / 4.0;
             Polygon.AABB gate = seatDistrict(
                     state, anchor, startAngle, innerR, outerR, halfX, halfZ);
-            if (gate == null) continue;
+            if (gate == null) { noSpace = true; break; }  // no open space left
             reserved++;
-            // Explicit per-variant arrangement — place this block's houses by
-            // the variant (street-row / courtyard), not the emergent scorer.
-            int forBlock = Math.min(RESIDENTIAL_BLOCK_CAP, remaining);
-            placedHouses += placeArrangedBlock(state, gate, forBlock,
-                    cellPitch, hf.length(), k);
-            remaining -= forBlock;
+            int placed = placeArrangedBlock(state, gate, target,
+                    cellPitch, houseDepth, k);
+            if (placed == 0) { noSpace = true; break; }   // guard infinite loop
+            placedHouses += placed;
+            remaining -= placed;
         }
-        LOGGER.info("residential districts: {} requested / {} reserved;"
-                + " {} houses placed (block={}x{} cols={} rows={})",
-                n, reserved, placedHouses, 2 * halfX, 2 * halfZ, cols, rows);
+        LOGGER.info("residential districts: {} assigned / {} districts / {} placed"
+                + " / {} dropped (cellPitch={}, target={})",
+                houseCount, reserved, placedHouses, remaining, cellPitch,
+                RESIDENTIAL_BLOCK_TARGET);
+        if (noSpace && remaining > 0) {
+            LOGGER.warn("residential: dropped {} house(s) — no open space for an"
+                    + " overflow district (assigned={}, placed={})",
+                    remaining, houseCount, placedHouses);
+        } else if (remaining > 0) {
+            LOGGER.info("residential: dropped {} house(s) — sub-minimum remainder"
+                    + " (< {})", remaining, MIN_DISTRICT_HOUSES);
+        }
+    }
+
+    /** Phase 1 — the LARGEST footprint across the HOUSE variant pool for the
+     *  village culture/style, so a residential cell sized to it holds any
+     *  resolved house without overlap. Falls back to the default footprint if
+     *  the pool can't be enumerated. */
+    private static StructureSizeCache.FootprintInfo largestHouseFootprint(State state) {
+        java.util.Set<String> pool = state.availability.availableVariants(
+                state.culture, Style.RURAL, BuildingType.HOUSE, LEVEL);
+        StructureSizeCache.FootprintInfo max = null;
+        int maxDim = -1;
+        for (String variantId : pool) {
+            StructureSizeCache.FootprintInfo fp = state.sizes.get(state.culture,
+                    Style.RURAL, BuildingType.HOUSE, variantId, LEVEL, Rotation.NONE);
+            int dim = Math.max(fp.width(), fp.length());
+            if (dim > maxDim) { maxDim = dim; max = fp; }
+        }
+        return max != null ? max : defaultFootprint(state, BuildingType.HOUSE);
+    }
+
+    /** Near-square block half-dims (+ cols/rows) holding {@code houses} cells of
+     *  {@code cellPitch}, floored at {@link #MIN_PLAZA_HALF}. Returns
+     *  {@code {halfX, halfZ, cols, rows}}. */
+    private static int[] districtHalfDims(int houses, int cellPitch) {
+        int cols = (int) Math.ceil(Math.sqrt(Math.max(1, houses)));
+        int rows = (houses + cols - 1) / cols;
+        int halfX = Math.max(MIN_PLAZA_HALF, (cols * cellPitch + HOUSE_GAP) / 2);
+        int halfZ = Math.max(MIN_PLAZA_HALF, (rows * cellPitch + HOUSE_GAP) / 2);
+        return new int[]{halfX, halfZ, cols, rows};
     }
 
     /**

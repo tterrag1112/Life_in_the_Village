@@ -7512,3 +7512,131 @@ field swap propagated to its one builder + one reader; the painter's path-skip u
 farm's packed-XZ convention; the ring is excluded from truncation (closed-loop guard) so
 the loop survives; well `+1` is the plaza off-by-one fix; no new enum/codec/exhaustive
 switch.
+
+### 2026-06-04 — Residential Phase 1: footprint-rooted sizing + fill-to-capacity + overflow
+
+**Phase 1 of the residential-capacity rework.** Fixes the `16 → 12` silent house
+drop **at the root** (default-footprint cell vs. variable resolved-house size) and
+replaces the fixed per-block cap with a fill-to-capacity + overflow loop. Supersedes
+the earlier courtyard-ring tweak (a symptom). Variant growth-to-fill, manifest genre
+flags, and tiled variants are later phases — not here.
+
+**Root cause (confirmed on HEAD):** `reserveResidentialDistricts` sized every block
+from a SINGLE default footprint (`defaultFootprint(state, HOUSE)` → `cellPitch =
+max(w,l)+HOUSE_GAP`, near-square, `RESIDENTIAL_BLOCK_CAP=4`, `n=ceil(count/CAP)`). But
+the actual house variant is resolved per-house later in `materializeHouse` via
+`pickVariantIdForV2`, and the HOUSE pool has real size spread. When the resolved house
+was LARGER than the default cell its footprint overlapped the neighbour,
+`overlapsAnyReservation` rejected it, and `materializeHouse` returned null → silent
+drop. Assigned 16, placed 12.
+
+**What shipped:**
+1. **Largest-footprint cell.** New `largestHouseFootprint(state)` enumerates the HOUSE
+   variant pool via `state.availability.availableVariants(culture, RURAL, HOUSE, LEVEL)`
+   (`Set<String>` — the same pool `pickVariantIdForV2` draws from) and takes the max
+   `max(width,length)` over `state.sizes.get(...)`. The cell is sized to the biggest
+   house any position could resolve, so no resolved house oversteps its cell →
+   `materializeHouse` no longer drops on size. Falls back to `defaultFootprint` if the
+   pool is empty.
+2. **Fill-to-capacity + overflow loop.** Replaced `n=ceil(count/CAP)` + per-block
+   `forBlock=min(CAP,remaining)` + `remaining-=forBlock` with: size each district for
+   `min(TARGET, remaining)` (new `districtHalfDims` helper, recomputed per iteration so
+   the last district can be smaller); **`remaining -= placed`** (the ACTUAL placed, so a
+   house lost to terrain/slope stays in `remaining` and re-homes into the next district);
+   loop until `remaining==0`, `seatDistrict` returns null (no space), or a district
+   places 0 (infinite-loop guard). Renamed `RESIDENTIAL_BLOCK_CAP` → `RESIDENTIAL_BLOCK_TARGET`
+   (value 4).
+3. **Minimum-district floor.** `MIN_DISTRICT_HOUSES=3`. The first district always seats
+   (tiny villages still get houses); overflow districts seat only when `remaining ≥ MIN`,
+   so a sub-MIN remainder after ≥1 district is an accepted drop (no runt of 1). `16`
+   seats 16 (4×4, no size-drops); `13` seats 12 + drops 1; a stray 4 lost to terrain
+   re-homes rather than vanishing.
+4. **Roster-completeness logging.** The `residential districts: …` line now logs
+   `assigned / districts / placed / dropped`; a WARN fires if houses dropped because no
+   open space remained for an overflow district (vs. the accepted sub-MIN remainder,
+   which logs INFO). The per-block `houses=placed/assigned` line is unchanged.
+
+**Surface area:** 0 new files + 1 edit + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`reserveResidentialDistricts`
+  sizing + overflow loop; `largestHouseFootprint` + `districtHalfDims` helpers; constant
+  rename + `MIN_DISTRICT_HOUSES`; log lines).
+
+**Tie-In Audit:**
+- *Touched surface:* `reserveResidentialDistricts` sizing + loop; cell-pitch basis;
+  `RESIDENTIAL_BLOCK_CAP`→`RESIDENTIAL_BLOCK_TARGET`; log lines; two new private helpers.
+- *Downstream callers:* `RESIDENTIAL_BLOCK_CAP` had 3 uses, all inside the rewritten
+  loop — renamed/replaced; no external callers. `placeArrangedBlock` / `seatDistrict` /
+  `ResidentialArranger.arrange` signatures unchanged (still take `cellPitch` + `houseDepth`,
+  now larger → wider spacing, correct). `defaultFootprint` retained (markets +
+  `sizeDistrictToMembers` + the fallback) — not left dead for the residential cell.
+- *Sibling systems:* **NPC populator** (`VillageInhabitantPopulator.populate`) iterates
+  `placedBuildingsAll` (the ACTUAL placed buildings, keyed by type) and looks up each
+  building's inhabitant spec — it reads placed HOUSEs, NOT the Layer-3 roster target, so
+  placing the full count (no drops + overflow) just gives it the complete set with no
+  desync. **Confirmed unaffected** (benefits). `OverlapAuditor` / districts — overflow
+  districts go through the same `seatDistrict` (records `residentialGates`, sweeps
+  bearings/radii, clears prior reservations + other gates), so more/larger districts
+  still don't overlap each other or civic/market voids; rural/farm exclusion via the
+  gates is unchanged. The courtyard `COURTYARD_BORDER_CLEARANCE` still applies; the
+  larger cell = more ring room, not less. `/litv district` + `DISTRICT_ONLY_MODE`
+  unaffected.
+- *Exhaustive switches:* none new.
+
+**Simplification Sweep:** No new files. A constant rename + loop rewrite + two small
+helpers (`largestHouseFootprint`, `districtHalfDims`). The old `cols/rows` near-square
+math now lives in `districtHalfDims` (reused per district), not inlined; the dead
+`defaultFootprint(HOUSE)` residential-cell call is gone (the method stays for its other
+callers). Net ≈ flat.
+
+**Deviations from prompt:**
+- **`remaining -= placed` makes the completeness WARN structurally near-impossible to
+  trip from terrain drops** (a terrain loss stays in `remaining` and overflows, so
+  `placed == assigned - finalRemaining` by construction). I kept the WARN anyway, scoped
+  to the real failure mode it now guards: dropping houses because **no open space** could
+  seat an overflow district (the `seatDistrict==null` / `placed==0` exits). The accepted
+  sub-MIN remainder logs INFO, not WARN.
+- **Per-iteration district sizing** (per the disposition note): `districtHalfDims` is
+  recomputed each loop from `min(TARGET, remaining)`, so the trailing district is sized
+  to its actual (possibly smaller) house count rather than always TARGET.
+- **Phase-1 slack accepted:** a small house in a large cell leaves spacing slack. That is
+  the deliberate Phase-1 trade (kills all size-drops); roster-first variable packing is
+  Phase 3.
+
+**Out-of-scope but flagged:**
+- **Phase 2** — variant growth-to-fill (street extends along axis; courtyard → rectangle
+  / grow-square); absorbing a sub-MIN remainder into the last district (needs the
+  district to stretch).
+- **Phase 3** — manifest genre flags (`tilable`/`corner`) + district-aware selection +
+  roster-first variable packing (tightens the Phase-1 slack).
+- **Phase 4** — TERRACE / TILED_COURTYARD variants. **Phase 5** — explicit JSON
+  count/block-size definables.
+- STREET_ROW typed tofts + homestead wiring; `renderFountain`→`stampWell` consolidation;
+  flipping `DISTRICT_ONLY_MODE` off → as before.
+
+**Cumulative pending verification:** rework spawns; districts; roads unified; plaza;
+`/litv district`; residential arrangement; street-row lane; courtyard decoration +
+refinements; and now Phase-1 capacity (largest-footprint cell + overflow). None
+smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 16 courtyard` → **16 houses**, none dropped.
+3. `/litv district residential 16 street_row` and `/litv district residential 16`
+   (auto) → 16 placed; reads as before, just complete; still tiles, no overlaps.
+4. `/litv district residential 6` / `8` → full count; small counts still seat (first-
+   district exception). A count forced to lose houses to terrain → the remainder seats a
+   NEW district rather than vanishing; a sub-MIN leftover drops (no runt).
+5. Normal `/litv spawn` (a TOWN + a CITY) → residential complete; NPC roster matches the
+   placed houses; no OverlapAuditor abort, nav intact.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net
+— HTTP 403). Static review substituted: `largestHouseFootprint` uses the exact pool
+accessor `pickVariantIdForV2` uses (`availability.availableVariants(...)` → `Set<String>`)
++ the same `state.sizes.get(...)` footprint lookup `materializeHouse`/`defaultFootprint`
+use; the overflow loop subtracts actual placed (terrain losses re-home), with first-
+district + MIN-floor + null-gate + zero-placed guards against runts/infinite loops; the
+constant rename hit all 3 (only) call sites; `defaultFootprint` retained for its other
+callers; no signature change to `placeArrangedBlock`/`seatDistrict`/`arrange`; no new
+enum/codec/switch.
