@@ -5,7 +5,6 @@ import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Random;
 
 /**
  * Layout Rework — computes the EXPLICIT house arrangement for a reserved
@@ -37,32 +36,17 @@ public final class ResidentialArranger {
                               List<List<BlockPos>> lanes,
                               BlockPos yardCentre) {}
 
-    /** Half-width (blocks) of the central lane STREET_ROW houses front. */
-    private static final int LANE_HALF = 2;
+    /** Half-width (blocks) of the central lane STREET_ROW houses front. Public
+     *  so the district sizer can shape the block's short axis to two rows + lane. */
+    public static final int LANE_HALF = 2;
     /** Clearance (blocks) between the courtyard house ring and the perimeter
-     *  border, so the fence/hedge wraps OUTSIDE the houses. */
-    private static final int COURTYARD_BORDER_CLEARANCE = 3;
-    /** Aspect ratio at/above which a block is "elongated" → STREET_ROW. */
-    private static final double ELONGATED_ASPECT = 1.5;
-
-    /**
-     * Auto-selects a variant for a block by shape + seed: clearly elongated
-     * blocks become STREET_ROW; near-square blocks coin-flip on the seed so
-     * neighbouring tiled blocks vary rather than reading uniform. (With only
-     * two variants this is the whole rule; it widens as variants land.)
-     */
-    public static ResidentialVariant autoSelect(Polygon.AABB block, long seed) {
-        int w = block.maxX() - block.minX();
-        int h = block.maxZ() - block.minZ();
-        double aspect = (double) Math.max(w, h) / Math.max(1, Math.min(w, h));
-        if (aspect >= ELONGATED_ASPECT) return ResidentialVariant.STREET_ROW;
-        return new Random(seed).nextBoolean()
-                ? ResidentialVariant.STREET_ROW
-                : ResidentialVariant.COURTYARD;
-    }
+     *  border, so the fence/hedge wraps OUTSIDE the houses. Public so the
+     *  district sizer can compute the same inset when shaping the rectangle. */
+    public static final int COURTYARD_BORDER_CLEARANCE = 3;
 
     /**
      * Arranges {@code houseCount} houses in {@code block} per {@code variant},
+
      * returning house placements + internal-path centerlines. {@code cellPitch}
      * = house footprint max-dim + gap (spacing); {@code houseDepth} = footprint
      * depth (insets rows/rings off the lane/edge); {@code edgeNode} = the block's

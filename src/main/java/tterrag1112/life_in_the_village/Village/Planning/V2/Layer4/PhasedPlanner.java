@@ -1914,6 +1914,14 @@ public final class PhasedPlanner {
      *  more small blocks, fanned around the core. 4c's designed block (BSP
      *  plots + shared yard + well + fenced borders) replaces this. */
     private static final int RESIDENTIAL_BLOCK_TARGET = 4;
+    /** Phase 2 — upper bound on houses a single grown district holds before the
+     *  rest overflow into the next district (keeps growth bounded). */
+    private static final int RESIDENTIAL_BLOCK_MAX = 16;
+    /** Phase 2 — COURTYARD growth override: when true a courtyard grows as a
+     *  SQUARE (authored-content path), else as a one-axis RECTANGLE (default, so
+     *  the centre isn't empty). Built + reachable but default-off; JSON wiring is
+     *  Phase 5. */
+    private static final boolean COURTYARD_GROW_SQUARE = false;
     /** Phase 1 — minimum houses needed to seat an OVERFLOW district (the first
      *  district always seats). A sub-minimum remainder after at least one
      *  district is an acceptable drop, rather than a runt district of 1. */
@@ -1968,10 +1976,12 @@ public final class PhasedPlanner {
         int nEstimate = Math.max(1,
                 (houseCount + RESIDENTIAL_BLOCK_TARGET - 1) / RESIDENTIAL_BLOCK_TARGET);
 
-        // Fill-to-capacity with an overflow queue: size each district for
-        // min(TARGET, remaining), subtract the ACTUAL placed (so a house lost to
-        // terrain stays in remaining and re-homes into the next district), and
-        // loop until done / out of space / a district places nothing.
+        // Phase 2 — grow-to-fill + overflow. Per district: pick the variant
+        // FIRST (it drives the shape), then GROW to hold as much of `remaining`
+        // as the open space allows (size by the variant's growth strategy, seat,
+        // and BACK OFF the want when nothing that big fits). Subtract the ACTUAL
+        // placed (a house lost to terrain re-homes into the next district); loop
+        // until done / out of space / a district places nothing.
         int remaining = houseCount;
         int reserved = 0;
         int placedHouses = 0;
@@ -1980,27 +1990,41 @@ public final class PhasedPlanner {
             // The first district always seats; overflow districts only when the
             // remainder is worth a district (avoids a runt of 1–2).
             if (reserved > 0 && remaining < MIN_DISTRICT_HOUSES) break;
-            int target = Math.min(RESIDENTIAL_BLOCK_TARGET, remaining);
-            int[] hd = districtHalfDims(target, cellPitch);
-            int halfX = hd[0], halfZ = hd[1];
-            int reach = Math.max(halfX, halfZ);
-            int innerR = reach + DISTRICT_GAP;
-            int outerR = Math.max(innerR, state.fmap.radius() - reach);
+            ResidentialVariant variant = state.forcedResidentialVariant != null
+                    ? state.forcedResidentialVariant
+                    : pickVariantBySeed(state.ctx.seed() ^ (k * 0x9E3779B97F4A7C15L), k);
             double startAngle = (2 * Math.PI * k) / nEstimate + Math.PI / 4.0;
-            Polygon.AABB gate = seatDistrict(
-                    state, anchor, startAngle, innerR, outerR, halfX, halfZ);
+            int floor = (reserved == 0) ? 1 : MIN_DISTRICT_HOUSES;
+
+            // Grow-to-fill back-off: try the largest want, step down to TARGET,
+            // then toward `floor`, taking the largest size that seats.
+            Polygon.AABB gate = null;
+            int seated = 0;
+            for (int want = Math.min(RESIDENTIAL_BLOCK_MAX, remaining); want >= floor; ) {
+                int[] hd = districtDims(variant, want, cellPitch, houseDepth,
+                        COURTYARD_GROW_SQUARE);
+                int halfX = hd[0], halfZ = hd[1];
+                int reach = Math.max(halfX, halfZ);
+                int innerR = reach + DISTRICT_GAP;
+                int outerR = Math.max(innerR, state.fmap.radius() - reach);
+                gate = seatDistrict(
+                        state, anchor, startAngle, innerR, outerR, halfX, halfZ);
+                if (gate != null) { seated = want; break; }
+                want = (want > RESIDENTIAL_BLOCK_TARGET)
+                        ? RESIDENTIAL_BLOCK_TARGET : want - 1;
+            }
             if (gate == null) { noSpace = true; break; }  // no open space left
             reserved++;
-            int placed = placeArrangedBlock(state, gate, target,
-                    cellPitch, houseDepth, k);
+            int placed = placeArrangedBlock(state, gate, seated,
+                    cellPitch, houseDepth, variant, k);
             if (placed == 0) { noSpace = true; break; }   // guard infinite loop
             placedHouses += placed;
             remaining -= placed;
         }
         LOGGER.info("residential districts: {} assigned / {} districts / {} placed"
-                + " / {} dropped (cellPitch={}, target={})",
+                + " / {} dropped (cellPitch={}, target={}, max={})",
                 houseCount, reserved, placedHouses, remaining, cellPitch,
-                RESIDENTIAL_BLOCK_TARGET);
+                RESIDENTIAL_BLOCK_TARGET, RESIDENTIAL_BLOCK_MAX);
         if (noSpace && remaining > 0) {
             LOGGER.warn("residential: dropped {} house(s) — no open space for an"
                     + " overflow district (assigned={}, placed={})",
@@ -2029,15 +2053,57 @@ public final class PhasedPlanner {
         return max != null ? max : defaultFootprint(state, BuildingType.HOUSE);
     }
 
-    /** Near-square block half-dims (+ cols/rows) holding {@code houses} cells of
-     *  {@code cellPitch}, floored at {@link #MIN_PLAZA_HALF}. Returns
-     *  {@code {halfX, halfZ, cols, rows}}. */
-    private static int[] districtHalfDims(int houses, int cellPitch) {
-        int cols = (int) Math.ceil(Math.sqrt(Math.max(1, houses)));
-        int rows = (houses + cols - 1) / cols;
-        int halfX = Math.max(MIN_PLAZA_HALF, (cols * cellPitch + HOUSE_GAP) / 2);
-        int halfZ = Math.max(MIN_PLAZA_HALF, (rows * cellPitch + HOUSE_GAP) / 2);
-        return new int[]{halfX, halfZ, cols, rows};
+    /** Phase 2 — picks the variant for district {@code k} BEFORE sizing (it
+     *  drives the shape). Alternates STREET_ROW / COURTYARD with a seed parity
+     *  so neighbouring districts vary; reserved variants are not auto-picked
+     *  (only forced, which the caller handles). */
+    private static ResidentialVariant pickVariantBySeed(long seed, int k) {
+        int parity = (int) (seed & 1L);
+        return ((k + parity) % 2 == 0)
+                ? ResidentialVariant.STREET_ROW
+                : ResidentialVariant.COURTYARD;
+    }
+
+    /**
+     * Phase 2 — variant-aware district half-dims {@code {halfX, halfZ}} (X is the
+     * long/lane axis). The variant's GROWTH STRATEGY drives the shape:
+     * <ul>
+     *   <li>COURTYARD — a one-axis RECTANGLE: the short axis is bounded to the
+     *       border inset + a yard minimum; the long axis extends so the inset
+     *       perimeter ≈ {@code houses · cellPitch} (the ring fills it, no empty
+     *       square). {@code growSquare} sizes both axes equally instead (authored
+     *       content; default-off).</li>
+     *   <li>STREET_ROW / reserved — a long RECTANGLE along the lane: two rows so
+     *       the long half grows with {@code ceil(houses/2)·cellPitch}, the short
+     *       half fixed at two house depths + the lane.</li>
+     * </ul>
+     * Floored at {@link #MIN_PLAZA_HALF} so tiny counts still seat.
+     */
+    private static int[] districtDims(ResidentialVariant variant, int houses,
+                                      int cellPitch, int houseDepth,
+                                      boolean growSquare) {
+        int margin = HOUSE_GAP;
+        if (variant == ResidentialVariant.COURTYARD) {
+            int inset = houseDepth / 2 + 1 + ResidentialArranger.COURTYARD_BORDER_CLEARANCE;
+            if (growSquare) {
+                // Square: perimeter 8·(half-inset) ≈ houses·cellPitch.
+                int half = Math.max(MIN_PLAZA_HALF, inset + houses * cellPitch / 8 + margin);
+                return new int[]{half, half};
+            }
+            int shortHalf = Math.max(MIN_PLAZA_HALF, inset + cellPitch);
+            // Rectangle: perimeter 4·(longHalf-inset) + 4·(shortHalf-inset)
+            // ≈ houses·cellPitch → solve for longHalf.
+            int longHalf = Math.max(shortHalf,
+                    houses * cellPitch / 4 - shortHalf + 2 * inset + margin);
+            return new int[]{longHalf, shortHalf};
+        }
+        // STREET_ROW (and reserved variants, which arrange falls back to street):
+        // two rows fronting a central lane — long axis grows, short axis fixed.
+        int perRow = (houses + 1) / 2;
+        int longHalf = Math.max(MIN_PLAZA_HALF, perRow * cellPitch / 2 + margin);
+        int shortHalf = Math.max(MIN_PLAZA_HALF,
+                houseDepth + ResidentialArranger.LANE_HALF + margin);
+        return new int[]{longHalf, shortHalf};
     }
 
     /**
@@ -2051,14 +2117,15 @@ public final class PhasedPlanner {
      */
     private static int placeArrangedBlock(State state, Polygon.AABB gate,
                                           int houses, int cellPitch,
-                                          int houseDepth, int blockIndex) {
+                                          int houseDepth, ResidentialVariant variant,
+                                          int blockIndex) {
         if (houses <= 0) return 0;
+        // Phase 2 — the variant is chosen BEFORE sizing (it drives the district
+        // shape), so it arrives as a parameter; this block only seeds the border
+        // style + arranges. The seed stays position-derived for determinism.
         long seed = state.ctx.seed()
                 ^ ((long) gate.minX() * 31L + gate.minZ())
                 ^ ((long) blockIndex << 20);
-        ResidentialVariant variant = state.forcedResidentialVariant != null
-                ? state.forcedResidentialVariant
-                : ResidentialArranger.autoSelect(gate, seed);
         // The lane connects to the block's road-facing edge node so the footpath
         // flows out to the main street (same node the router branches to).
         BlockPos edgeNode = edgePointToward(gate, state.ctx.anchor());

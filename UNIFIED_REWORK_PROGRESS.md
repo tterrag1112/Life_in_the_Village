@@ -7640,3 +7640,125 @@ district + MIN-floor + null-gate + zero-placed guards against runts/infinite loo
 constant rename hit all 3 (only) call sites; `defaultFootprint` retained for its other
 callers; no signature change to `placeArrangedBlock`/`seatDistrict`/`arrange`; no new
 enum/codec/switch.
+
+### 2026-06-04 — Residential Phase 2: variant growth strategies + grow-to-fill
+
+**Phase 2 of the residential-capacity rework.** Phase 1 rooted spacing in the real
+footprints + added the overflow loop, but districts were still a near-square grid at a
+fixed target — so a courtyard read as a square with an empty middle and a "street" was a
+square grid. Phase 2 **inverts the selection** (variant picks the shape, not the
+reverse), gives each variant a **growth strategy** that drives the district's shape +
+capacity, and lets a district **grow to fill the open space it found** before
+overflowing. Manifest genre flags, roster-first packing, and the tiled variants stay
+Phases 3–4.
+
+**Phase-1 surface confirmed on HEAD:** `largestHouseFootprint`, the overflow loop
+(`remaining -= placed`), `RESIDENTIAL_BLOCK_TARGET`, `MIN_DISTRICT_HOUSES=3`,
+`districtHalfDims` — all present; Phase 2 attaches to them.
+
+**What shipped:**
+1. **Variant chosen BEFORE sizing (the inversion).** `reserveResidentialDistricts` now
+   picks the variant per district up front — `forced ?? pickVariantBySeed(seed, k)` (a
+   seed/index alternation of STREET_ROW / COURTYARD, neighbour-varied) — and **threads it
+   into `placeArrangedBlock`** (new `variant` param). The shape-based
+   `ResidentialArranger.autoSelect` is **retired** (its only caller was the in-block
+   re-selection; deleted, with its now-unused `Random` import + `ELONGATED_ASPECT`).
+2. **Per-variant growth sizer** `districtDims(variant, houses, cellPitch, houseDepth,
+   growSquare) → {halfX, halfZ}` — **replaces** the near-square `districtHalfDims` for
+   residential:
+   - **STREET_ROW / reserved** — a long rectangle along the lane: long half grows with
+     `ceil(houses/2)·cellPitch`, short half fixed at `houseDepth + LANE_HALF + margin`
+     (two rows + lane). `streetRow` fills it along its axis.
+   - **COURTYARD** — a one-axis rectangle: short half bounded (border inset + a yard
+     min); long half extends so the inset perimeter ≈ `houses·cellPitch` (`courtyard`
+     rings it → tight centre, not an empty square). E.g. 16 → ~77×31.
+   - **`growSquare` override** (default-off constant `COURTYARD_GROW_SQUARE`): sizes both
+     axes equally (authored-content path) — built + reachable but inert; JSON is Phase 5.
+   - `LANE_HALF` + `COURTYARD_BORDER_CLEARANCE` made public on `ResidentialArranger` so
+     the sizer computes the same lane/inset the arranger uses (single source).
+3. **Grow-to-fill with seating back-off.** New `RESIDENTIAL_BLOCK_MAX=16`. Per district:
+   try `want = min(MAX, remaining)`, size by the variant + `seatDistrict`; if nothing
+   that big fits, **back off** (`want` → TARGET → toward the floor) and retry, taking the
+   largest size that seats. Place what seats; `remaining -= placed`; the Phase-1 overflow
+   loop continues. First district floors at 1 (always seats); overflow districts floor at
+   `MIN_DISTRICT_HOUSES`. Net: 16 in open ground → one elongated district; tight CITY →
+   it backs off + splits.
+
+**Surface area:** 0 new files + 2 edits + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (variant-before-sizing; grow-to-fill
+  back-off; `districtDims` replaces `districtHalfDims`; `pickVariantBySeed`;
+  `placeArrangedBlock` takes the variant; `RESIDENTIAL_BLOCK_MAX` + `COURTYARD_GROW_SQUARE`).
+- `.../Village/Planning/V2/Layer4/ResidentialArranger.java` (retire `autoSelect` +
+  `Random`/`ELONGATED_ASPECT`; make `LANE_HALF` + `COURTYARD_BORDER_CLEARANCE` public).
+
+**Tie-In Audit:**
+- *Touched surface:* `reserveResidentialDistricts` (selection order + sizer + back-off);
+  `placeArrangedBlock` (+`variant` param); `autoSelect` retired; `districtHalfDims` →
+  `districtDims`; two `ResidentialArranger` constants made public.
+- *Downstream callers:* `placeArrangedBlock` — only caller is the loop (updated to pass
+  the variant). `autoSelect`/`districtHalfDims` — each had exactly one caller (both in
+  the loop), removed. `arrange`/`streetRow`/`courtyard` unchanged — they fill the now
+  variant-shaped (rectangular) AABB (street runs the long axis; courtyard rings the
+  rectangle; the existing perimeter÷count spacing lands right with the perimeter sized to
+  `count·cellPitch`).
+- *Sibling systems:* `seatDistrict` / `residentialGates` / `OverlapAuditor` — grown
+  districts are bigger AABBs but go through the same overlap-clearing seat; the **back-off
+  is the release valve** when CITY extent is tight (an unseatable giant steps down to
+  TARGET→floor). The **courtyard decoration** (well/borders/ring) + the **edge node +
+  lane** all key off the gate AABB, so they follow the rectangle (well still centres,
+  borders wrap, ring/lane run the longer axis). **NPC populator** reads `placedBuildingsAll`
+  (Phase-1 finding) — unaffected by district shape. `/litv district` + `DISTRICT_ONLY_MODE`
+  + forced-variant channel — forced variant now also drives shape (the point); otherwise
+  unaffected.
+- *Exhaustive switches:* `districtDims` branches COURTYARD vs (STREET_ROW + reserved),
+  matching `arrange`'s switch (reserved → streetRow fallback) — no silent mismatch. No
+  new enum.
+
+**Simplification Sweep:** `autoSelect`-by-shape **deleted** (replaced by variant-before-
+sizing; no dead second selection path) + its unused `Random`/`ELONGATED_ASPECT`.
+`districtHalfDims` **replaced** by `districtDims` (not kept alongside). Net **negative**
+(one method + one import + one constant removed; one variant-aware sizer + one tiny
+picker added).
+
+**Deviations from prompt:**
+- **Back-off inlined as a shrink loop** (not a separate helper): the size↔seat retry is a
+  tight `for` over descending `want` calling the existing `seatDistrict` — simpler than a
+  wrapper, and `seatDistrict`'s fixed `halfX,halfZ` signature stays untouched. Flagged the
+  alternative (extract if it grows).
+- **Variant pick is a clean STREET_ROW/COURTYARD alternation with seed parity** (not a
+  weighted distribution) — enough for two variants + neighbour variety; weighting waits
+  for more variants (Phase 4).
+- **Courtyard short axis = `inset + cellPitch`** (a conservative yard min) — generous, so
+  no house overlap on the short ends; tightening is Phase 3 (roster-first packing). The
+  rectangle still elongates with count (the requested look).
+- **`growSquare` is a private constant default-off**, not JSON (Phase 5) — the code path
+  is live + reachable so it compiles/exercises, just inert.
+
+**Cumulative pending verification:** rework spawns; districts; roads unified; plaza;
+`/litv district`; residential arrangement; street-row lane; courtyard decoration +
+refinements; Phase-1 capacity; and now Phase-2 growth (variant→shape, grow-to-fill). None
+smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv district residential 16 courtyard` → ONE elongated rectangular courtyard of 16
+   (tight centre, not an empty square); border + well + ring intact, following the
+   rectangle.
+3. `/litv district residential 16 street_row` → a long street of houses fronting a
+   central lane (not a square grid).
+4. `/litv district residential 8` / `24` → 8 a modest district; 24 grows to fill / splits
+   via overflow; all houses accounted for.
+5. `/litv spawn` (TOWN + CITY) → districts grow where space allows, back off + split where
+   tight; no OverlapAuditor abort; lanes connect; NPC roster matches placed houses.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net
+— HTTP 403). Static review substituted: the variant is now chosen before `districtDims`
++ `seatDistrict` + `placeArrangedBlock` (all threaded); `districtDims` shapes long-axis
+rectangles per variant (street: ceil(count/2) along the lane; courtyard: perimeter ≈
+count·cellPitch) floored at `MIN_PLAZA_HALF`; the back-off `for` terminates (want →
+TARGET → −1 → floor) and `seatDistrict` is unchanged; the sizer's COURTYARD-vs-street
+split matches `arrange`'s fallback; `LANE_HALF`/`COURTYARD_BORDER_CLEARANCE` are the same
+public constants the arranger uses; `autoSelect`/`districtHalfDims` removed with no
+remaining callers; `growSquare` branch compiles + is reachable; no new enum/codec/switch.
