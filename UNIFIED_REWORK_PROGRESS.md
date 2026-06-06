@@ -8010,3 +8010,126 @@ consistent; overflow (`remaining -= placed`) + MIN floor + first-district-always
 graceful annulus sweep are intact; `pickVariantBySeed` removed with no remaining callers;
 reused `seatGrown`/`seatDistrict`/`districtDims`/`placeArrangedBlock` unchanged; no new
 enum/codec/switch.
+
+### 2026-06-05 — Residential centrality band, Part 1 (Option B): band reservation + farms-beyond
+
+**Part 1 of the centrality-band design.** 3a placed several diagonal precincts but they
+all degraded to STREET_ROW. Part 1 reserves residential a dedicated **centrality band**
+just outside the civic precinct (no new enum — Option B), bounds the 3a sweep to it, and
+pushes **farms beyond** it, so residential owns its ring instead of grabbing the crowded
+inner edge and competing with farms for the gaps.
+
+**⚠ KEY FINDING (the load-bearing report): the band is NECESSARY BUT NOT SUFFICIENT — a
+courtyard does not fit the per-tier ring.** The prompt assumed the COURTYARD short-axis is
+"~34". On HEAD it is **~62**: `districtDims(COURTYARD).shortHalf = inset + cellPitch ≈ 31`
+(full short axis `2·31 = 62`) for house-sized cells. The CITY ring outside civic, leaving
+a farm reserve, is only **~28 deep** (`extent 80 − farm reserve 18 − bandInner ~34`). So
+`62 ≫ 28` → `bandFitsCourtyard=false` → the 3a street fallback still fires. **The band
+correctly reserves the ring and evicts farms, but courtyards still won't appear at CITY
+until the COURTYARD short-axis is tightened toward its minimum (~34 = 2·(border+houseDepth)
++ yard; the current `inset + cellPitch` is ~2× over-generous).** That tightening is a
+`districtDims` SIZING change, which Part 1 scopes out — **recommended as the immediate
+next pass** (it is the actual lever that makes courtyards fit the now-reserved ring).
+
+**What shipped:**
+- **Band definition.** `innerR = civicPrecinct reach + DISTRICT_GAP`; depth targets the
+  COURTYARD short-axis (`2·min(districtDims(COURTYARD,TARGET))`) but clamps to `extent −
+  RESIDENTIAL_FARM_RESERVE`; `outerR` floored for a street. **Degeneracy guard:** if the
+  extent can't host a band that still leaves a farm ring (tight TOWN/HAMLET), the band is
+  **disabled** — residential falls back to the open sweep bounded only to the extent, and
+  farms stay unconstrained (never starved).
+- **3a sweep bounded to the band.** `seatGrown` now takes `bandInnerR/bandOuterR` and
+  sweeps radii within `[max(bandInnerR, reach+gap), min(bandOuterR, fmap−reach)]` instead
+  of `[reach+gap, fmap−reach]` — so residential seats in the reserved ring, not the
+  fringe. Everything else in 3a unchanged (diagonal-first, courtyard-preferred + street
+  fallback, overflow, MIN floor, `placedVariant`).
+- **Farms beyond the band.** New `withinResidentialBand` adds a radial check to the rural
+  exclusion in `findBestCandidate` (alongside the existing civic-precinct + residential-
+  gate checks), keyed off `state.residentialBandOuterR` (set at the batch-3 hook, read by
+  the batch-2 rural pass; 0 ⇒ no houses or band disabled ⇒ farms unconstrained).
+- **Diagnostics.** `residential band: [in, out] depth=… active=… fitsCourtyard=…` — the
+  `fitsCourtyard=false` line is the explicit depth-scarcity signal feeding the finding.
+
+**Surface area:** 0 new files + 1 edit + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (band computation + degeneracy
+  guard in `reserveResidentialDistricts`; `seatGrown` band params; `withinResidentialBand`
+  + rural-exclusion radial check; `state.residentialBandOuterR`; constants
+  `RESIDENTIAL_FARM_RESERVE` / `RESIDENTIAL_MIN_BAND_DEPTH`).
+
+**Tie-In Audit:**
+- *Touched surface:* `reserveResidentialDistricts` (band + sweep range); `seatGrown` (+2
+  params, both calls updated); the rural exclusion in `findBestCandidate` (+radial check);
+  `state.residentialBandOuterR`.
+- *Downstream callers:* `seatGrown` — both call sites (courtyard + street fallback) pass
+  the band; no other caller. The rural exclusion gains one OR-term; the existing civic /
+  gate checks unchanged. `OverlapAuditor` — precincts still avoid civic/market/each other
+  via the unchanged reservation checks; the band just relocates them within the ring.
+- *Sibling systems:* **Farms** (batch 2) — now excluded within `residentialBandOuterR`;
+  **verify in-world they still seat** (CITY leaves `[bandOuterR≈62, zoneCap≈85]` + fields;
+  the degeneracy guard disables the band on tight tiers so TOWN/HAMLET farms are
+  unaffected). If CITY farms drop, raise `RESIDENTIAL_FARM_RESERVE` / shrink the band.
+  **Router** + nodes — unchanged (precincts connect as in 3a). **NPC populator** — reads
+  placed buildings, unaffected. **Zone partition** — unchanged (CIVIC→RURAL; the band is a
+  radial reservation, not a zone — Option B divergence noted). `DISTRICT_ONLY_MODE` +
+  `/litv district` — the forced single precinct seats within the band too (band computed
+  regardless of forced).
+- *Exhaustive switches:* none new (Option B — no enum).
+
+**Simplification Sweep:** The band's `outerR` replaces 3a's `fmap.radius() − reach` as the
+residential sweep's outer bound (single source, now band-derived). No new files, no
+parallel seat path — `seatGrown`/`seatDistrict` stay the one seat primitive. Net ≈ flat.
+
+**Deviations from prompt:**
+- **bandDepth = the REAL `districtDims` courtyard short-axis (~62), not the assumed ~34.**
+  Because the real value far exceeds the extent's ring, the band clamps and courtyards
+  still street (the prompt's anticipated "extent too shallow → clamp → street fallback,
+  never force" path). The actionable finding (tighten the courtyard short-axis) is the
+  report the prompt asked for.
+- **Did NOT tighten the courtyard sizing to force courtyards** — that is a `districtDims`
+  change outside Part 1's scope; flagged as the recommended next pass instead of silent
+  scope creep.
+- **Band disabled on tight tiers** (farm-reserve degeneracy guard) rather than forcing a
+  band that starves farms — honours "never drop farms".
+- **Farm-beyond via a radial check** (the prompt's preferred lighter "radial-bound" form),
+  not an annulus-of-AABBs reservation — farms already honour the civic/gate AABB checks, so
+  one more OR-term (radius) is the thinnest seam.
+
+**Out-of-scope but flagged:**
+- **Tighten the COURTYARD short-axis** (`districtDims`: `inset + cellPitch` → ~`2·(border
+  + houseDepth) + yard`) so a courtyard (~34) fits the band — **the next lever; without it
+  Part 1 reserves the ring but courtyards stay street at CITY.**
+- **Part 2** — subdistrict fill of the band's leftover/empty gaps (parks / secondary /
+  filler).
+- Manifest genre flags + district-aware selection → Phase 3. Tiled variants → Phase 4.
+  JSON → Phase 5. RESIDENTIAL NucleusKind (Option A) → not chosen. `DISTRICT_ONLY_MODE`
+  off → not yet.
+
+**Cumulative pending verification:** rework spawns; districts; roads; plaza; `/litv
+district`; residential arrangement; street-row lane; courtyard decoration + refinements;
+P1–P2 capacity/growth/integration; 3a precincts; and now the Part-1 centrality band +
+farms-beyond. None smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv spawn` CITY AGRICULTURAL → log shows `residential band: [..] active=true
+   fitsCourtyard=false`; residential precincts seat in the band; **farms seat BEYOND the
+   band** (confirm farms still place — `placement: … rural …` non-zero); all houses
+   placed; no overlap aborts. (Courtyards still street — expected until the sizing lever.)
+3. `/litv spawn` TOWN → `active=false` (band disabled, extent too tight); residential +
+   farms seat as before, bounded to the extent; no farm drop.
+4. `/litv district residential 16 courtyard` / `16 street_row` → one precinct each,
+   16/16 (open command world has room).
+5. Confirm farms didn't drop at CITY (the main risk); if they did, the band is too greedy
+   → raise `RESIDENTIAL_FARM_RESERVE`.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net —
+HTTP 403). Static review substituted: the band derives `innerR` from `civicPrecinct`'s
+half-extents + `outerR` from the COURTYARD `districtDims` short-axis clamped to `extent −
+farm reserve`, with a degeneracy guard that disables the band (and the farm exclusion)
+when the extent can't host it; `seatGrown`'s band-bounded radial range still clamps to
+`fmap − reach` so blocks stay on the map; `withinResidentialBand` (squared-distance, no
+sqrt) gates the rural pass only when `residentialBandOuterR > 0` (set at the batch-3 hook,
+read by the later batch-2 rural pass); both `seatGrown` calls pass the band; the
+`fitsCourtyard` log surfaces the courtyard-size-vs-ring finding; no new enum/codec/switch.

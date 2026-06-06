@@ -654,12 +654,14 @@ public final class PhasedPlanner {
                 BlockPos pos = state.fmap.cellWorldPos(i, j);
 
                 // Rural exclusion: keep the rural nucleus out of the civic
-                // precinct AND the residential district gates (Stage 4b) so
-                // farms place beyond every district.
+                // precinct, the residential district gates (Stage 4b), AND the
+                // whole residential centrality BAND (Part 1) — so farms place
+                // beyond residential's ring, leaving the band's gaps for Part 2.
                 if (ruralType
                         && ((precinct != null
                                 && insideAabb(pos.getX(), pos.getZ(), precinct))
-                            || insideAny(pos.getX(), pos.getZ(), state.residentialGates))) {
+                            || insideAny(pos.getX(), pos.getZ(), state.residentialGates)
+                            || withinResidentialBand(state, pos))) {
                     rejZone++;
                     continue;
                 }
@@ -1922,6 +1924,14 @@ public final class PhasedPlanner {
      *  the centre isn't empty). Built + reachable but default-off; JSON wiring is
      *  Phase 5. */
     private static final boolean COURTYARD_GROW_SQUARE = false;
+    /** Centrality-band Part 1 — radial ring (blocks) kept for FARMS beyond the
+     *  residential band, so pushing residential out doesn't starve the rural
+     *  pass. The band clamps to leave this; if that makes the band too shallow
+     *  for a courtyard, the 3a street fallback applies (never drop farms). */
+    private static final int RESIDENTIAL_FARM_RESERVE = 18;
+    /** Centrality-band Part 1 — minimum band depth (blocks) so a street precinct
+     *  always fits even when the extent can't host a courtyard-deep band. */
+    private static final int RESIDENTIAL_MIN_BAND_DEPTH = 24;
     /** Phase 1 — minimum houses needed to seat an OVERFLOW district (the first
      *  district always seats). A sub-minimum remainder after at least one
      *  district is an acceptable drop, rather than a runt district of 1. */
@@ -1976,6 +1986,46 @@ public final class PhasedPlanner {
         int houseDepth = hf.length();
 
 
+        // Centrality-band Part 1 — reserve residential a dedicated ring just
+        // OUTSIDE the civic precinct, deep enough for a courtyard where the
+        // extent allows, and keep FARMS beyond it (residentialBandOuterR, read
+        // by the rural exclusion in findBestCandidate). innerR clears the civic
+        // precinct; the depth targets the COURTYARD short-axis but clamps to the
+        // extent (leaving a farm ring) — if it clamps below courtyard depth, 3a's
+        // street fallback still applies (never force, never drop farms).
+        int civicReach = 0;
+        if (state.civicPrecinct != null) {
+            civicReach = Math.max(
+                    (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
+                    (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
+        }
+        int bandInnerR = civicReach + DISTRICT_GAP;
+        int[] cdims = districtDims(ResidentialVariant.COURTYARD,
+                RESIDENTIAL_BLOCK_TARGET, cellPitch, houseDepth, COURTYARD_GROW_SQUARE);
+        int courtyardDepth = 2 * Math.min(cdims[0], cdims[1]);   // block short axis
+        int extentCap = state.villageRadius;
+        // Residential gets the ring outside civic up to courtyard depth, but
+        // never past (extent − farm reserve) so farms keep a ring. If the extent
+        // can't host a usable band that still leaves farm room, the band is
+        // DISABLED (fall back to 3a's open sweep, bounded only to the extent;
+        // never starve farms) — true for tight tiers (TOWN/HAMLET).
+        int bandCap = extentCap - RESIDENTIAL_FARM_RESERVE;
+        int bandOuterR;
+        boolean bandActive = (bandCap - bandInnerR) >= RESIDENTIAL_MIN_BAND_DEPTH;
+        if (bandActive) {
+            bandOuterR = Math.min(bandInnerR + courtyardDepth + DISTRICT_GAP, bandCap);
+            state.residentialBandOuterR = bandOuterR;   // farms kept beyond
+        } else {
+            bandOuterR = Math.max(bandInnerR + RESIDENTIAL_MIN_BAND_DEPTH, extentCap);
+            state.residentialBandOuterR = 0;            // farms unconstrained
+        }
+        boolean bandFitsCourtyard = bandActive
+                && (bandOuterR - bandInnerR) >= courtyardDepth;
+        LOGGER.info("residential band: [{}, {}] depth={} active={} (civicReach={},"
+                + " courtyardDepth={}, extentCap={}, fitsCourtyard={})",
+                bandInnerR, bandOuterR, bandOuterR - bandInnerR, bandActive,
+                civicReach, courtyardDepth, extentCap, bandFitsCourtyard);
+
         // Stage 3a — RESIDENTIAL PRECINCTS. Reserve several pockets around the
         // civic core and seat a district in each, biased to the DIAGONAL/corner
         // directions (the most untaken 2D depth, so courtyards survive there) and
@@ -2021,7 +2071,8 @@ public final class PhasedPlanner {
             // size that seats.
             int[] seatedOut = new int[1];
             Polygon.AABB gate = seatGrown(state, variant, wantStart, floor,
-                    cellPitch, houseDepth, anchor, startAngle, seatedOut);
+                    cellPitch, houseDepth, anchor, startAngle, bandInnerR,
+                    bandOuterR, seatedOut);
             ResidentialVariant placedVariant = variant;
             // Seat robustness — a bulky COURTYARD may not fit the tight ring
             // around the civic core even after back-off; fall back to the THIN
@@ -2029,7 +2080,8 @@ public final class PhasedPlanner {
             // than the emergent scatter that fired when 0 districts seated).
             if (gate == null && variant != ResidentialVariant.STREET_ROW) {
                 gate = seatGrown(state, ResidentialVariant.STREET_ROW, wantStart,
-                        floor, cellPitch, houseDepth, anchor, startAngle, seatedOut);
+                        floor, cellPitch, houseDepth, anchor, startAngle,
+                        bandInnerR, bandOuterR, seatedOut);
                 if (gate != null) placedVariant = ResidentialVariant.STREET_ROW;
             }
             if (gate == null) { noSpace = true; break; }  // no open space left
@@ -2090,14 +2142,19 @@ public final class PhasedPlanner {
      *  {@code floor} fits. */
     private static Polygon.AABB seatGrown(State state, ResidentialVariant variant,
             int wantStart, int floor, int cellPitch, int houseDepth,
-            BlockPos anchor, double startAngle, int[] seatedOut) {
+            BlockPos anchor, double startAngle, int bandInnerR, int bandOuterR,
+            int[] seatedOut) {
         for (int want = wantStart; want >= floor; ) {
             int[] hd = districtDims(variant, want, cellPitch, houseDepth,
                     COURTYARD_GROW_SQUARE);
             int halfX = hd[0], halfZ = hd[1];
             int reach = Math.max(halfX, halfZ);
-            int innerR = reach + DISTRICT_GAP;
-            int outerR = Math.max(innerR, state.fmap.radius() - reach);
+            // Centrality-band Part 1 — sweep the radial range WITHIN the band
+            // (outside the civic precinct, inside the band's outer edge), still
+            // clamped so the block stays on the feature map.
+            int innerR = Math.max(bandInnerR, reach + DISTRICT_GAP);
+            int outerR = Math.min(bandOuterR, state.fmap.radius() - reach);
+            outerR = Math.max(outerR, innerR);
             Polygon.AABB gate = seatDistrict(
                     state, anchor, startAngle, innerR, outerR, halfX, halfZ);
             if (gate != null) { seatedOut[0] = want; return gate; }
@@ -2105,6 +2162,16 @@ public final class PhasedPlanner {
                     ? RESIDENTIAL_BLOCK_TARGET : want - 1;
         }
         return null;
+    }
+
+    /** Centrality-band Part 1 — true if {@code pos} is within the residential
+     *  band's outer radius (so farms are excluded from residential's ring). */
+    private static boolean withinResidentialBand(State state, BlockPos pos) {
+        if (state.residentialBandOuterR <= 0) return false;
+        BlockPos a = state.ctx.anchor();
+        long dx = pos.getX() - a.getX(), dz = pos.getZ() - a.getZ();
+        long r = state.residentialBandOuterR;
+        return dx * dx + dz * dz < r * r;
     }
 
     /** Stage 3a — preferred seating directions for residential precincts: the
@@ -2736,6 +2803,10 @@ public final class PhasedPlanner {
          *  interior); leftover open cells become a green via
          *  ParkCandidateFinder. Reserved after the civic core, before rural. */
         final List<Polygon.AABB> residentialGates = new ArrayList<>();
+        /** Centrality-band Part 1 — outer radius of the residential band; rural
+         *  (farm) placement is kept BEYOND this so residential owns its ring.
+         *  0 when no houses (farms then unconstrained). */
+        int residentialBandOuterR = 0;
         /** Residential-variant tooling — forced variant from /litv district
          *  (null → auto-select per block). */
         ResidentialVariant forcedResidentialVariant;
