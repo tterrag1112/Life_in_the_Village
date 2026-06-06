@@ -1976,17 +1976,28 @@ public final class PhasedPlanner {
         int houseDepth = hf.length();
 
 
-        // Nominal district count for fanning the seating bearings around the
-        // core (overflow may add more; seatDistrict sweeps all bearings anyway).
-        int nEstimate = Math.max(1,
-                (houseCount + RESIDENTIAL_BLOCK_TARGET - 1) / RESIDENTIAL_BLOCK_TARGET);
+        // Stage 3a — RESIDENTIAL PRECINCTS. Reserve several pockets around the
+        // civic core and seat a district in each, biased to the DIAGONAL/corner
+        // directions (the most untaken 2D depth, so courtyards survive there) and
+        // skipping the market's cardinal. Distributing houses into TARGET-ish
+        // shares (instead of growing one district to swallow them all) is what
+        // gives the city SEVERAL pockets rather than one squeezed street. The
+        // variant is COURTYARD-preferred — the seat-or-STREET_ROW-fallback below
+        // IS the per-precinct depth test (a courtyard that seats had the depth;
+        // one that doesn't degrades to a street). The forced channel (/litv
+        // district) overrides to a single precinct of the forced variant.
+        boolean forced = state.forcedResidentialVariant != null;
+        java.util.List<Double> directions = residentialDirections(state, anchor);
+        int nPrecincts = forced ? 1 : Math.max(1, Math.min(directions.size(),
+                (houseCount + RESIDENTIAL_BLOCK_TARGET - 1) / RESIDENTIAL_BLOCK_TARGET));
+        int share = forced ? Math.min(RESIDENTIAL_BLOCK_MAX, houseCount)
+                : Math.min(RESIDENTIAL_BLOCK_MAX,
+                        (houseCount + nPrecincts - 1) / nPrecincts);
 
-        // Phase 2 — grow-to-fill + overflow. Per district: pick the variant
-        // FIRST (it drives the shape), then GROW to hold as much of `remaining`
-        // as the open space allows (size by the variant's growth strategy, seat,
-        // and BACK OFF the want when nothing that big fits). Subtract the ACTUAL
-        // placed (a house lost to terrain re-homes into the next district); loop
-        // until done / out of space / a district places nothing.
+        // Per precinct: choose the direction (diagonals first), seat a district
+        // of up to `share` houses there (courtyard-preferred, street fallback),
+        // subtract the ACTUAL placed (terrain losses re-home), and loop until
+        // done / out of space / a precinct places nothing.
         int remaining = houseCount;
         int reserved = 0;
         int placedHouses = 0;
@@ -1995,12 +2006,16 @@ public final class PhasedPlanner {
             // The first district always seats; overflow districts only when the
             // remainder is worth a district (avoids a runt of 1–2).
             if (reserved > 0 && remaining < MIN_DISTRICT_HOUSES) break;
-            ResidentialVariant variant = state.forcedResidentialVariant != null
+            // Courtyard-preferred (forced overrides); the street fallback below
+            // handles directions too thin for a courtyard.
+            ResidentialVariant variant = forced
                     ? state.forcedResidentialVariant
-                    : pickVariantBySeed(state.ctx.seed() ^ (k * 0x9E3779B97F4A7C15L), k);
-            double startAngle = (2 * Math.PI * k) / nEstimate + Math.PI / 4.0;
+                    : ResidentialVariant.COURTYARD;
+            // Direction-ordered seating: precinct k prefers directions[k]
+            // (diagonals first); seatDistrict sweeps around it if blocked.
+            double startAngle = directions.get(k % directions.size());
             int floor = (reserved == 0) ? 1 : MIN_DISTRICT_HOUSES;
-            int wantStart = Math.min(RESIDENTIAL_BLOCK_MAX, remaining);
+            int wantStart = Math.min(share, remaining);
 
             // Grow-to-fill back-off (want → TARGET → floor), taking the largest
             // size that seats.
@@ -2019,16 +2034,19 @@ public final class PhasedPlanner {
             }
             if (gate == null) { noSpace = true; break; }  // no open space left
             reserved++;
+            LOGGER.info("residential precinct #{} dir={}° variant={} want={}",
+                    reserved, (int) Math.toDegrees(startAngle), placedVariant,
+                    seatedOut[0]);
             int placed = placeArrangedBlock(state, gate, seatedOut[0],
                     cellPitch, houseDepth, placedVariant, k);
             if (placed == 0) { noSpace = true; break; }   // guard infinite loop
             placedHouses += placed;
             remaining -= placed;
         }
-        LOGGER.info("residential districts: {} assigned / {} districts / {} placed"
-                + " / {} dropped (cellPitch={}, target={}, max={})",
+        LOGGER.info("residential districts: {} assigned / {} precincts / {} placed"
+                + " / {} dropped (cellPitch={}, nPrecincts={}, share={}, dirs={})",
                 houseCount, reserved, placedHouses, remaining, cellPitch,
-                RESIDENTIAL_BLOCK_TARGET, RESIDENTIAL_BLOCK_MAX);
+                nPrecincts, share, directions.size());
         if (noSpace && remaining > 0) {
             LOGGER.warn("residential: dropped {} house(s) — no open space for an"
                     + " overflow district (assigned={}, placed={})",
@@ -2089,15 +2107,35 @@ public final class PhasedPlanner {
         return null;
     }
 
-    /** Phase 2 — picks the variant for district {@code k} BEFORE sizing (it
-     *  drives the shape). Alternates STREET_ROW / COURTYARD with a seed parity
-     *  so neighbouring districts vary; reserved variants are not auto-picked
-     *  (only forced, which the caller handles). */
-    private static ResidentialVariant pickVariantBySeed(long seed, int k) {
-        int parity = (int) (seed & 1L);
-        return ((k + parity) % 2 == 0)
-                ? ResidentialVariant.STREET_ROW
-                : ResidentialVariant.COURTYARD;
+    /** Stage 3a — preferred seating directions for residential precincts: the
+     *  DIAGONALS first (corner pockets with the most untaken 2D depth, so
+     *  courtyards survive there), then the cardinals NOT occupied by the market
+     *  sub-district. seatDistrict sweeps around each as a fallback, so this is a
+     *  preference, not a hard constraint. */
+    private static java.util.List<Double> residentialDirections(State state,
+                                                                BlockPos anchor) {
+        java.util.List<Double> dirs = new java.util.ArrayList<>();
+        dirs.add(Math.PI / 4);     dirs.add(3 * Math.PI / 4);
+        dirs.add(5 * Math.PI / 4); dirs.add(7 * Math.PI / 4);
+        Double marketBearing = null;
+        if (state.marketSquare != null) {
+            BlockPos mc = squareCentreOf(state.marketSquare);
+            marketBearing = Math.atan2(mc.getZ() - anchor.getZ(),
+                    mc.getX() - anchor.getX());
+        }
+        double[] cardinals = {0, Math.PI / 2, Math.PI, 3 * Math.PI / 2};
+        for (double c : cardinals) {
+            if (marketBearing == null || angularGap(c, marketBearing) > Math.PI / 4) {
+                dirs.add(c);
+            }
+        }
+        return dirs;
+    }
+
+    /** Smallest absolute angle between two bearings (radians). */
+    private static double angularGap(double a, double b) {
+        double d = Math.abs(a - b) % (2 * Math.PI);
+        return Math.min(d, 2 * Math.PI - d);
     }
 
     /**

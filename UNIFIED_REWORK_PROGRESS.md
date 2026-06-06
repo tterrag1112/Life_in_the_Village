@@ -7886,3 +7886,127 @@ chosen variant isn't already street; `placedVariant` keeps the gate ↔ arrangem
 consistent (courtyard→street fallback yields no orphaned courtyard decor);
 `largestHouseFootprint` removed with no remaining callers; `state.variantResolver` is the
 existing field; no new enum/codec/switch.
+
+### 2026-06-05 — Residential 3a: precinct reservation + diagonal-biased per-precinct variant
+
+**Stage 3a of the residential-zone work.** Phases 1–2 made residential robust but it
+seated into a radially shallow leftover ring, so a city read as **one squeezed street**.
+3a seats residential as **several precincts around the civic core**, biased to the
+**diagonal/corner pockets** (the most untaken 2D depth), each **courtyard-preferred** so
+courtyards survive where the geometry allows.
+
+**Disposition (verified on HEAD):** `state.civicPrecinct` (AABB, set by `addCivicPrecinct`
+before the batch-3 residential hook), `state.marketSquare`, `primaryAxis`, and
+`seatDistrict` (sweeps `DISTRICT_ANGLE_STEPS` bearings from `startAngle` × radii). The
+**key trace finding:** the "one thin street" wasn't only depth — P2's grow-to-fill made
+the **first district swallow all houses** (`min(MAX=16, 12)=12`) → ONE giant block.
+
+**What shipped (surgical, all reuse):**
+1. **Distribute, don't grow-one-giant.** Houses partition into `~TARGET`-ish shares —
+   `nPrecincts = clamp(ceil(count/TARGET), 1, #directions)`, `share = min(MAX,
+   ceil(count/nPrecincts))` — so `wantStart = min(share, remaining)` per precinct gives a
+   CITY **several** pockets (12 → 3 of 4) instead of one block of 12. This is the main
+   variety lever.
+2. **Direction order — diagonals first, skip the market cardinal.** New
+   `residentialDirections` lists the 4 diagonals (corner pockets, most 2D depth) then the
+   cardinals NOT occupied by the market sub-district (derived from `marketSquare`'s
+   bearing). Precinct `k` prefers `directions[k % size]` as `seatDistrict`'s `startAngle`
+   (which still sweeps around it as a fallback).
+3. **Courtyard-preferred per precinct = the depth test.** The variant is COURTYARD
+   (forced overrides); the existing **seat-or-STREET_ROW-fallback** (`seatGrown` +
+   `placedVariant`) IS the per-direction depth measurement — a courtyard that seats had
+   the depth; one that can't degrades to a thin street. So courtyards land in the deep
+   diagonal pockets, streets in the shallow ones — variety by geometry, not seed.
+   (Replaces P2's `pickVariantBySeed`, removed.)
+4. **`/litv district` → one precinct.** Forced ⇒ `nPrecincts=1`, `share=min(MAX,count)` —
+   one precinct of the forced variant, so the test path runs the **same** seat code (16
+   courtyard → one precinct of 16, as P2).
+5. **Logging.** Per-precinct `dir=…° variant=… want=…` (the variant log is the
+   **depth-scarcity signal** — all-STREET_ROW ⇒ even diagonals are too thin ⇒ the
+   civic/market depth lever is needed) + summary `nPrecincts / share / dirs`.
+
+Kept from P1/P2: roster-first cell (`residentialCellFootprint`), `seatGrown` back-off,
+`districtDims`, overflow loop, MIN floor, first-district-always, graceful fallback (a
+precinct that can't seat re-homes via the sweep; never emergent scatter).
+
+**Surface area:** 0 new files + 1 edit + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`reserveResidentialDistricts`:
+  precinct distribution + `residentialDirections`/`angularGap` + courtyard-preferred +
+  `/litv district` one-precinct; removed `pickVariantBySeed`).
+
+**Tie-In Audit:**
+- *Touched surface:* `reserveResidentialDistricts` (distribution + direction order +
+  per-precinct variant); reads `civicPrecinct`/`marketSquare`. `seatGrown`/`seatDistrict`/
+  `districtDims`/`placeArrangedBlock` unchanged (reused as the seat primitive).
+- *Downstream callers:* `pickVariantBySeed` removed (only the loop used it).
+  `BlockServingRouter` — more precincts ⇒ more `residentialGates` ⇒ more
+  `districtConnectionNodes` + (for courtyards) more `noBranchBlocks`/`CourtyardDecor`;
+  the MST + suppression scale per-district, no signature change. `OverlapAuditor` —
+  precincts avoid civic/market/each other via the existing `seatDistrict` reservation +
+  `residentialGates` overlap checks (unchanged). **Farms** (batch 2) already avoid
+  `Reservation`s; more residential gates push farms outward (intended). **NPC populator**
+  reads placed buildings — unaffected. **Zone partition** unchanged (CIVIC+RURAL;
+  precincts are geometric, not zonal — noted divergence). `DISTRICT_ONLY_MODE` +
+  forced-variant channel — the command now flows through one precinct (same seat code).
+- *Exhaustive switches:* none new (reused `ResidentialVariant`).
+
+**Simplification Sweep:** Removed `pickVariantBySeed` (P2 alternation, superseded by
+courtyard-preferred-by-depth). Added `residentialDirections` + `angularGap`. `seatGrown`/
+`seatDistrict` stay the single seat primitive, now driven per precinct/direction. Net ≈
+flat. No parallel seat path.
+
+**Deviations from prompt:**
+- **No explicit per-direction depth math; the seat-or-fallback IS the depth test.** The
+  prompt asked to "measure available radial depth per direction." A courtyard-sized seat
+  attempt (via `seatGrown`, which sweeps radii) succeeds exactly when the depth suffices
+  — so trying courtyard-then-street is the measurement, reusing the primitive instead of
+  duplicating geometry. The per-precinct variant log surfaces the result.
+- **Kept P2's `innerR` (rely on reservation-overlap rejection), did NOT hard-anchor
+  `innerR` beyond the civic-precinct AABB.** Residential already can't overlap civic
+  buildings / square / market (they're reservations); seating in the civic precinct's
+  empty CORNERS is existing intended behaviour and **preserves more radial depth for
+  courtyards** (a hard push-out past the whole precinct would waste the very depth 3a is
+  trying to find). The direction order is what places precincts deliberately around the
+  core. Flagged in case a hard offset is later wanted.
+- **Courtyard-preferred everywhere (not seed-alternated).** Variety now comes from depth
+  (diagonal pockets → courtyard, thin → street), which is the design's intent; in fully
+  open ground (the command) everything fits ⇒ all courtyards.
+
+**Out-of-scope but flagged:**
+- **The depth lever** — if the per-precinct log shows even diagonals degrade to streets
+  at CITY, the dominant limiter is civic precinct + market consuming the extent; the fix
+  is shrinking the civic precinct / pushing the market out / a residential extent share —
+  a **separate design pass**, not built here.
+- Manifest genre flags + district-aware selection → Phase 3. TERRACE / TILED_COURTYARD →
+  Phase 4. JSON definables → Phase 5. A RESIDENTIAL NucleusKind → not pursued.
+  `DISTRICT_ONLY_MODE` off → not yet.
+
+**Cumulative pending verification:** rework spawns; districts; roads; plaza; `/litv
+district`; residential arrangement; street-row lane; courtyard decoration + refinements;
+P1 capacity; P2 growth; P2 integration fix; and now 3a precincts. None smoke-tested
+in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv spawn` CITY AGRICULTURAL → **several residential precincts** around the core,
+   **≥1 courtyard in a diagonal pocket**, streets in thin ones — not one squeezed street;
+   all houses placed; no overlap aborts. Log shows precinct `dir=…° variant=…`
+   (diagonal-first) + `nPrecincts`.
+3. `/litv spawn` TOWN → one/two precincts; reads right.
+4. `/litv district residential 16 courtyard` / `16 street_row` → one precinct each,
+   16/16, correct variant.
+5. Confirm no `0 districts / emergent`; if courtyards all degrade to streets, the
+   per-precinct log says so (→ depth lever).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net —
+HTTP 403). Static review substituted: `residentialDirections` always returns ≥4 bearings
+(diagonals) so `directions.get(k % size)` is safe; the market cardinal is excluded via
+`angularGap > π/4` from `marketSquare`'s bearing; `share`/`nPrecincts` distribute houses
+(forced ⇒ 1 precinct) and `wantStart = min(share, remaining)` caps growth so a city gets
+several pockets; courtyard-preferred + the unchanged STREET_ROW fallback keep gate↔shape
+consistent; overflow (`remaining -= placed`) + MIN floor + first-district-always +
+graceful annulus sweep are intact; `pickVariantBySeed` removed with no remaining callers;
+reused `seatGrown`/`seatDistrict`/`districtDims`/`placeArrangedBlock` unchanged; no new
+enum/codec/switch.
