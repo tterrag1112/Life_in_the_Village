@@ -1902,7 +1902,7 @@ public final class PhasedPlanner {
      *  {@link #DISTRICT_TYPES} count (5), so a district-only CITY is
      *  legitimately "not viable" by the full-village rule — the adapter logs
      *  and proceeds instead of aborting (it's an intentional partial village). */
-    public static final boolean DISTRICT_ONLY_MODE = true;
+    public static final boolean DISTRICT_ONLY_MODE = false;
     /** The district-member types kept under {@link #DISTRICT_ONLY_MODE}: civic
      *  core (TOWN_HALL, CHAPEL, INN), market (MARKET), residential (HOUSE). */
     private static final EnumSet<BuildingType> DISTRICT_TYPES = EnumSet.of(

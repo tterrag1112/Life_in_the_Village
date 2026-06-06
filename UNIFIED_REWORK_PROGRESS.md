@@ -8230,3 +8230,82 @@ without change; the Part-1 band's `courtyardDepth = 2·min(dims)` now reads 36, 
 `FARM_RESERVE` 18→10 lifts `bandOuterR` so `fitsCourtyard` flips true at CITY (assuming
 `civicReach≈30`); farms retain a ring beyond `bandOuterR` (verify N>0 in-world); no new
 enum/codec/switch.
+
+### 2026-06-06 — Full-spawn reconnaissance: DISTRICT_ONLY_MODE flipped off
+
+Reconnaissance pass — reassemble the full village now that civic + market + residential
+(courtyards) all work. **Flipped `DISTRICT_ONLY_MODE` → false** (one line); the comment
+guarantees "off ⇒ today's behaviour exactly", and the adapter's viability-abort relaxation
+only applies while the flag is ON, so the flip cleanly restores the full roster (rural
+farms + loose workshops) + the strict viability check. No accompanying change needed — the
+Stage-4b required-farm gate (drops only fieldless strays, non-fatal) is already in place.
+
+**⚠ Reconnaissance caveat:** this sandbox has **no game runtime** (and blocks
+maven.neoforged.net), so the actual `/litv spawn` CITY/TOWN observation is **deferred to
+the user**. Below is the **static** coexistence analysis + a prioritised punch-list; the
+in-world spawn is the smoke test.
+
+**Static coexistence trace:**
+- **Courtyard ↔ farm (the key nuance) — clean by construction.** The rural exclusion in
+  `findBestCandidate` rejects FARMHOUSE cells inside `civicPrecinct` OR any
+  `residentialGate` OR `withinResidentialBand` (radius < `bandOuterR`). A courtyard's full
+  footprint — including the few blocks it extends past `bandOuterR` into the farm-reserve
+  ring — lies inside its **gate AABB** (recorded in `residentialGates`), so farms avoid it
+  via the gate check **regardless of radius**. Farm *fields* additionally require a
+  district-clear `ComplexParcel` (the Stage-4b gate drops the farm if none fits). So farms
+  cannot collide with courtyards; the worst case is a farm *dropping* near a courtyard, not
+  overlapping it.
+- **No fatal static regression found.** The band/courtyard work runs regardless of the
+  flag; flipping off just re-adds batch-2 rural + emergent loose types, which predate the
+  flag. `OverlapAuditor` still guards building overlap; viability returns to full strictness
+  (the full roster should satisfy CITY's diversity minimum).
+
+**Punch-list (prioritised; flagged, NOT fixed here per the recon scope):**
+- *Important — verify in-world:* **farm supply at CITY.** Residential now evicts farms from
+  the whole band; farms fit `[bandOuterR≈70, zoneCap≈85]` + the fringe. If that's too tight,
+  the Stage-4b gate over-drops → low `rural N` (and possibly a viability dip). The fix lever
+  is `RESIDENTIAL_FARM_RESERVE` (raise it) — but confirm with a spawn first.
+- *Important — verify:* **`fitsCourtyard` at CITY** depends on the real `civicReach`; if the
+  civic precinct is large, courtyards still street (the flagged civic-precinct depth lever).
+- *Known debt (flagged):* loose **workshops** place via the emergent scorer (un-districted —
+  4c); any `unavailable (no NBT)` types; `fitsCourtyard`/band diagnostic log noise.
+- *Cosmetic:* the residential **band leftover is bald grass** between precincts → addressed
+  by Part 2a (subdistrict fill), shipped next.
+
+**Surface area:** 1 edit (one boolean).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`DISTRICT_ONLY_MODE` true → false).
+
+**Tie-In Audit (light):** the flag gates only the selection filter (line 212) + the
+adapter's viability relaxation (only while on). Off = full roster + strict viability =
+pre-flag behaviour + all the shipped district work. No other reader. Farms/workshops
+re-enabled via batch-2 + emergent (unchanged paths).
+
+**Deviations from prompt:** **Could not spawn** (no runtime / sandbox 403) — delivered the
+flag flip + a STATIC coexistence analysis + punch-list instead of an observed full-village
+report. No fatal fix was needed (none observable statically; none implied by the trace).
+The "relaxed farm gate" needed no change (the existing Stage-4b gate is already non-fatal +
+tuned; the flip alone re-enables the rural pass).
+
+**Out-of-scope but flagged:** Part 2a subdistrict fill (next); workshop districting (4c);
+civic-precinct depth lever; `fitsCourtyard` diagnostic reconciliation; any redesign.
+
+**Cumulative pending verification:** all prior phases + now the full-village reassembly
+(flag off). **This pass especially needs an in-world spawn** (CITY + TOWN) to confirm
+coexistence + farm supply.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403; no runtime). Static review done.
+2. `/litv spawn` CITY AGRICULTURAL (flag now off) → full village: districted civic + market
+   + residential courtyards, farms beyond the band, loose workshops. Confirm: all present;
+   `placement: … rural N …` with **N > 0** (farms didn't over-drop); no `OverlapAuditor`
+   abort; no `viable=false → abort`; `placed=N dropped=M` sane.
+3. `/litv spawn` TOWN → same, smaller.
+4. Record the punch-list outcomes (farm supply, fitsCourtyard, workshop quality) for the
+   follow-up passes.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net +
+no game runtime). Static review: the flip is a single boolean the comment documents as
+fully reversible; the courtyard↔farm trace shows farms avoid courtyard gates + the band;
+no fatal interaction surfaced. In-world spawn required to close the recon.
