@@ -1924,11 +1924,16 @@ public final class PhasedPlanner {
      *  the centre isn't empty). Built + reachable but default-off; JSON wiring is
      *  Phase 5. */
     private static final boolean COURTYARD_GROW_SQUARE = false;
+    /** Courtyard short-axis fix-up — half the central yard (blocks) on the
+     *  courtyard's RADIAL short axis. The full short axis is two house rows +
+     *  border clearance + this yard (2·yardHalf) — NOT cellPitch (which is the
+     *  tangential along-perimeter spacing, on the long axis only). */
+    private static final int COURTYARD_YARD_HALF = 3;
     /** Centrality-band Part 1 — radial ring (blocks) kept for FARMS beyond the
      *  residential band, so pushing residential out doesn't starve the rural
      *  pass. The band clamps to leave this; if that makes the band too shallow
      *  for a courtyard, the 3a street fallback applies (never drop farms). */
-    private static final int RESIDENTIAL_FARM_RESERVE = 18;
+    private static final int RESIDENTIAL_FARM_RESERVE = 10;
     /** Centrality-band Part 1 — minimum band depth (blocks) so a street precinct
      *  always fits even when the extent can't host a courtyard-deep band. */
     private static final int RESIDENTIAL_MIN_BAND_DEPTH = 24;
@@ -2231,9 +2236,17 @@ public final class PhasedPlanner {
                 int half = Math.max(MIN_PLAZA_HALF, inset + houses * cellPitch / 8 + margin);
                 return new int[]{half, half};
             }
-            int shortHalf = Math.max(MIN_PLAZA_HALF, inset + cellPitch);
-            // Rectangle: perimeter 4·(longHalf-inset) + 4·(shortHalf-inset)
-            // ≈ houses·cellPitch → solve for longHalf.
+            // Short (RADIAL) axis: two house rows + their border clearance + a
+            // central yard. NOT `inset + cellPitch` — cellPitch is the TANGENTIAL
+            // along-perimeter spacing (it belongs on the long axis only); using it
+            // here doubled the courtyard's depth (~62 vs the ~36 it needs) so it
+            // never fit the centrality band. shortHalf − inset − houseDepth/2 ==
+            // COURTYARD_YARD_HALF, so the arranger's inset rings it cleanly.
+            int shortHalf = Math.max(MIN_PLAZA_HALF,
+                    houseDepth + 1 + ResidentialArranger.COURTYARD_BORDER_CLEARANCE
+                            + COURTYARD_YARD_HALF);
+            // Long axis still extends with count: perimeter 4·(longHalf-inset) +
+            // 4·(shortHalf-inset) ≈ houses·cellPitch → solve for longHalf.
             int longHalf = Math.max(shortHalf,
                     houses * cellPitch / 4 - shortHalf + 2 * inset + margin);
             return new int[]{longHalf, shortHalf};

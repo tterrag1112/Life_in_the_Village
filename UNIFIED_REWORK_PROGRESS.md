@@ -8133,3 +8133,100 @@ when the extent can't host it; `seatGrown`'s band-bounded radial range still cla
 sqrt) gates the rural pass only when `residentialBandOuterR > 0` (set at the batch-3 hook,
 read by the later batch-2 rural pass); both `seatGrown` calls pass the band; the
 `fitsCourtyard` log surfaces the courtyard-size-vs-ring finding; no new enum/codec/switch.
+
+### 2026-06-06 — Courtyard short-axis fix-up: stop misapplying cellPitch to the radial depth
+
+The centrality band (Part 1) reserves residential its ring but courtyards still degraded
+to STREET_ROW because the COURTYARD block was sized **~2× too deep**. Root: a **category
+error** in `districtDims(COURTYARD)` — the short (RADIAL) half was `inset + cellPitch`, but
+`cellPitch` is the **tangential** along-perimeter house spacing, not radial depth. Using it
+on the short axis doubled the courtyard's depth (~62 vs the ~36 it needs), so it never fit
+the ~28-deep CITY band → `fitsCourtyard=false`.
+
+**What shipped:**
+1. **Radial-minimal short axis.** `shortHalf = houseDepth + 1 + COURTYARD_BORDER_CLEARANCE
+   + COURTYARD_YARD_HALF` (new constant, =3) — two house rows + border clearance + a
+   central yard. For house-sized cells: `18` half → **36 full** (was `inset+cellPitch=31`
+   half → 62). `cellPitch` stays on the LONG axis only (the correct along-perimeter
+   spacing); STREET_ROW + the courtyard long axis are unchanged. The formula reconciles
+   with the arranger exactly: `shortHalf − inset − houseDepth/2 == COURTYARD_YARD_HALF`, so
+   `ResidentialArranger.courtyard` rings the thinner block with no change (yard-half ≈ 4,
+   houses still face the yard, no overlap; well/borders/ring follow the gate AABB).
+2. **Closed the band gap.** Even at 36 the band was capped by `extent − RESIDENTIAL_FARM_
+   RESERVE`. Lowered `RESIDENTIAL_FARM_RESERVE` 18 → 10 (the prompt's "modest band widen"),
+   so at CITY (extent 80, `civicReach≈30` → `bandInner≈34`) `bandOuterR = min(34+36+4,
+   80−10=70) = 70` → band ≈ 36 ≥ courtyardDepth 36 → **`fitsCourtyard=true`**; farms keep
+   `[≈70, zoneCap 85]` + fields. (Tightened the yard implicitly via the minimal formula
+   first; the reserve drop was the remaining ~8 blocks.)
+
+**Surface area:** 0 new files + 1 edit + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`districtDims(COURTYARD)` short-axis;
+  `COURTYARD_YARD_HALF` constant; `RESIDENTIAL_FARM_RESERVE` 18→10).
+
+**Tie-In Audit:**
+- *Touched surface:* `districtDims(COURTYARD)` short-axis; `COURTYARD_YARD_HALF`;
+  `RESIDENTIAL_FARM_RESERVE`.
+- *Downstream callers:* `districtDims` feeds `seatGrown` (precinct sizing) + the Part-1
+  band's `courtyardDepth`/`fitsCourtyard` — both auto-pick up the smaller short axis (band
+  now flips true at CITY). No signature change.
+- *Sibling systems:* `ResidentialArranger.courtyard` — adapts to the block AABB; the
+  inset/ring math still rings cleanly at the thinner short axis (verified: yard-half ≈ 4 >
+  0, ring rect non-degenerate). COURTYARD **decoration** (well/borders/ring) keys off the
+  gate AABB → follows the thinner rectangle. **Farms** — `FARM_RESERVE` 18→10 widens the
+  band; **re-confirm `placement: … rural N …` with N > 0 at CITY** (the one in-world risk;
+  if farms drop, nudge the reserve back up). `seatGrown`/`seatDistrict`/`OverlapAuditor`/
+  router/NPC populator — a smaller block only seats more easily; unaffected.
+- *Exhaustive switches:* none new.
+
+**Simplification Sweep:** A sizing correction, not new machinery — `cellPitch` stops being
+misapplied to the radial axis; one new constant. Net flat.
+
+**Deviations from prompt:**
+- **Closed the gap with BOTH a tight yard AND a band widen** (the prompt preferred yard
+  first, band only if needed). The minimal radial formula already uses a tight yard
+  (`YARD_HALF=3`, full ~6–8); even so, 36 exceeded the 18-reserve band (~28), so the
+  reserve drop to 10 was required — within Part 1's farm-safety intent (CITY farms still
+  get ~15 blocks + fields). Flagged the in-world farm check as the gate.
+- **No arranger change.** The short-axis formula was chosen to satisfy `shortHalf − inset −
+  houseDepth/2 = YARD_HALF`, so the existing arranger inset rings the thinner block without
+  modification — the cleanest reconciliation.
+- **CITY `fitsCourtyard` depends on the actual `civicReach`.** The numbers assume
+  `civicReach≈30`; if the civic precinct is larger, the band shrinks and courtyards may
+  still street — that residual is the civic-precinct depth lever (flagged in Part 1), not
+  this fix-up. The `residential band: … fitsCourtyard=…` log is the in-world truth.
+
+**Out-of-scope but flagged:**
+- **Part 2** — subdistrict fill of the band's leftover/empty space.
+- Civic-precinct depth lever (if `fitsCourtyard` is still false at CITY due to a large
+  civic precinct) → the separate design item from Part 1.
+- STREET_ROW sizing; manifest genre flags (Phase 3); tiled variants (Phase 4); JSON (Phase
+  5); `DISTRICT_ONLY_MODE` off → as before.
+
+**Cumulative pending verification:** rework spawns; districts; roads; plaza; `/litv
+district`; residential arrangement; street-row lane; courtyard decoration + refinements;
+P1–P2 capacity/growth/integration; 3a precincts; Part-1 band; and now the courtyard
+short-axis fix. None smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv spawn` CITY AGRICULTURAL → log shows `residential band: … fitsCourtyard=true`;
+   **a COURTYARD appears** in a deep band direction (per-precinct variant log not all
+   STREET_ROW); `placement: … rural N …` with **N > 0** (farms didn't drop); all houses
+   placed; no overlaps.
+3. `/litv district residential 16 courtyard` → a (thinner) courtyard, 16/16; well/borders/
+   ring read correctly.
+4. `/litv spawn` TOWN → band/courtyard scale (or band disabled on a tight extent); farms
+   beyond; no drop.
+5. Confirm the courtyard short axis is ≈ 36 (not ≈ 62) and farms still place.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net —
+HTTP 403). Static review substituted: the COURTYARD short half is now `houseDepth + 1 +
+COURTYARD_BORDER_CLEARANCE + COURTYARD_YARD_HALF` (radial need, no `cellPitch`), floored at
+`MIN_PLAZA_HALF`; the long axis (count-extending, `cellPitch`-based perimeter) is unchanged;
+`shortHalf − inset − houseDepth/2 = COURTYARD_YARD_HALF` so the arranger inset rings it
+without change; the Part-1 band's `courtyardDepth = 2·min(dims)` now reads 36, and
+`FARM_RESERVE` 18→10 lifts `bandOuterR` so `fitsCourtyard` flips true at CITY (assuming
+`civicReach≈30`); farms retain a ring beyond `bandOuterR` (verify N>0 in-world); no new
+enum/codec/switch.
