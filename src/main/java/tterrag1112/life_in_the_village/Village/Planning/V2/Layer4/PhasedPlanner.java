@@ -2018,7 +2018,12 @@ public final class PhasedPlanner {
         // can't host a usable band that still leaves farm room, the band is
         // DISABLED (fall back to 3a's open sweep, bounded only to the extent;
         // never starve farms) — true for tight tiers (TOWN/HAMLET).
-        int bandCap = extentCap - RESIDENTIAL_FARM_RESERVE;
+        // Fix-up — under DISTRICT_ONLY_MODE the rural/farm pass is skipped, so
+        // there are NO farms to reserve a ring for; subtracting the reserve there
+        // only needlessly disabled the band (→ the fill never seated, bald band).
+        // Use reserve 0 when district-only; keep it for the flag-off full village.
+        int farmReserve = DISTRICT_ONLY_MODE ? 0 : RESIDENTIAL_FARM_RESERVE;
+        int bandCap = extentCap - farmReserve;
         int bandOuterR;
         boolean bandActive = (bandCap - bandInnerR) >= RESIDENTIAL_MIN_BAND_DEPTH;
         if (bandActive) {

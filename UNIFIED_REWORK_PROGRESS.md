@@ -8514,3 +8514,73 @@ by the same `parkPreferenceFor` × inclination-affinity formula as `pickBestStyl
 minSize floor (band blocks exceed the maxSize ceiling by design); the adapter passes the
 chosen style + `style.preserveBias()` to `GardenPlot`; `find()`/`pickBestStyle` unchanged;
 the flag revert is the single boolean; no new enum/codec/switch.
+
+### 2026-06-06 — Fix-up: band must be active under DISTRICT_ONLY_MODE (parks weren't seating)
+
+In-world the band fill (2a green-commons + 2b park styles) produced **nothing** at CITY:
+`residential band: … active=false`, `band fill: 0 green-commons`. Root cause: the band's
+cap subtracts `RESIDENTIAL_FARM_RESERVE` **unconditionally**, but under `DISTRICT_ONLY_MODE`
+the rural/farm pass is skipped — there are no farms to reserve a ring for, so the reserve
+only needlessly shrank the cap below `bandInnerR + MIN_BAND_DEPTH` and disabled the band.
+At the civic sizes these CITY spawns produce (`civicReach ≈ 48–50` → `bandInnerR ≈ 54`):
+`bandCap = 80 − 10 = 70`, `70 − 54 = 16 < 24` → **false** → no green blocks seated → bald
+band. (Seed-varied: small-civic seeds activated, large-civic disabled — why some seeds
+showed greens.)
+
+**Fix (one conditional):** `farmReserve = DISTRICT_ONLY_MODE ? 0 : RESIDENTIAL_FARM_RESERVE`;
+`bandCap = extentCap − farmReserve`. Under district-only: `bandCap = 80`, `80 − 54 = 26 ≥
+24` → **active** → the green ring `gInner..gOuter` (≈ `[54, 58]`) is non-empty → 2a/2b fill
+seats + renders. The reserve is retained for the flag-off full-village path (farms there do
+need the ring — the deferred squeeze, untouched). `residentialBandOuterR` stays
+unconstrained (0-effect) under district-only since farms don't run anyway.
+
+**Secondary finding (flagged, NOT authored here — Garrett's content call):** the park
+decorative accents `BENCH` / `TRELLIS` / `TOPIARY` / `STATUE_PEDESTAL` are `Kind.NBT`, and
+`ParkRenderer.tryNbtAt` logs "stamping deferred" + places nothing (the park NBTs aren't
+authored, like the missing sign NBTs). So a green-commons / park renders its **procedural**
+primitives only — `GRAVEL_PATH`, `FLOWER_BED`, `HEDGEROW` (+ `POND` for some styles) — which
+IS visible, just without furniture. Decision for Garrett: author the park NBTs or accept
+procedural-only parks for now. Not authored in this fix-up.
+
+**Surface area:** 1 edit (one conditional).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`farmReserve` gated on
+  `DISTRICT_ONLY_MODE` in the band cap).
+
+**Tie-In Audit:**
+- *Touched surface:* the `bandCap` farm-reserve term (now conditional on `DISTRICT_ONLY_MODE`).
+- *Downstream:* with the band active under district-only, 2a green-commons + 2b park-style
+  fill seat + render (intended). `residentialBandOuterR` unconstrained under district-only
+  (no farms to exclude). Courtyards unaffected (they seat via the annulus regardless of
+  `active`). `OverlapAuditor` — greens reserve via the seat sweep (unchanged). Post-pass
+  park de-dup still skips the band. **Flag-off path unchanged** — reserve still applies →
+  farms still get their ring (the deferred squeeze).
+- *Exhaustive switches:* none.
+
+**Simplification Sweep:** one conditional on an existing constant; no new machinery. Net flat.
+
+**Deviations from prompt:** none — the conditional-reserve was the one-line change as
+disposed. Could not build/spawn (sandbox 403 + no runtime); static review only.
+
+**Out-of-scope but flagged:** park NBT authoring (`BENCH`/`TRELLIS`/`TOPIARY`/
+`STATUE_PEDESTAL`) → Garrett's content call; civic-shrink / farm complex-region / extent-cap
+relax / spawner over-provision → deferred (district conversion); 2c (corner generalise +
+sliver tiler) → next.
+
+**Cumulative pending verification:** all prior phases + 2a/2b fill + now this fix making it
+active. **Needs an in-world spawn** (flag on) to confirm `active=true` + greens/parks render.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY (flag on) → `residential band: … active=true`; `band fill: N
+   green-commons` with **N > 0**; the gaps show gravel paths + flower beds + hedgerows
+   (procedural) — no longer bald.
+3. Featured-terrain CITY → 2b's varied park styles (still procedural-only furniture).
+4. Confirm courtyards unchanged, no overlap/abort; note park NBT accents still absent (flagged).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: `farmReserve` is 0 under `DISTRICT_ONLY_MODE` → `bandCap = extentCap`
+→ at `civicReach ≈ 50`, `bandCap − bandInnerR ≈ 26 ≥ RESIDENTIAL_MIN_BAND_DEPTH (24)` →
+`bandActive=true` → `bandOuterR` yields a non-empty green seating ring; the flag-off branch
+keeps `RESIDENTIAL_FARM_RESERVE` (farms' ring preserved); no other behaviour touched.
