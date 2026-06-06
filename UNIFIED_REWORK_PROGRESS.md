@@ -8309,3 +8309,109 @@ coexistence + farm supply.
 no game runtime). Static review: the flip is a single boolean the comment documents as
 fully reversible; the courtyard↔farm trace shows farms avoid courtyard gates + the band;
 no fatal interaction surfaced. In-world spawn required to close the recon.
+
+### 2026-06-06 — Residential Part 2a: subdistrict fill of the band leftover (green-commons)
+
+The centrality band gives residential precincts (courtyards/streets) tiling within it;
+the leftover between precincts was bald grass. 2a fills it with **green-commons
+subdistricts** so the band reads finished — reserved + connected, not decoration.
+
+**What shipped:**
+1. **Green-commons fill (reservation-time, via the seat sweep).** After the precincts
+   seat, `reserveResidentialDistricts` seats modest **GREEN blocks** in the band's open
+   directions using the SAME `seatDistrict` sweep — so they avoid civic / market /
+   precincts (its overlap checks), **join `residentialGates`** (→ a district node →
+   `BlockServingRouter` connects them for FREE — no new spur path), and stay empty (the
+   batch-5 HOUSE skip + explicit-only house placement never fill them). Diagonals-first
+   directions, `RESIDENTIAL_GREEN_ROUNDS` (2) passes, only when the band is `active`.
+2. **Rendered as COTTAGE_GREEN GardenPlots (full reuse).** The band's green blocks are
+   carried on `Result.residentialBand` (`ResidentialBand{centre, innerR, outerR,
+   greens}`); the adapter turns each into a `GardenPlot(COTTAGE_GREEN, empty primitives)`
+   + `data.addGardenPlot` — and `ParkRenderer.renderOne` composes the lawn + flowers /
+   hedges / benches / trellis from the style at render time, so an empty plot renders as a
+   real green (not bald). Same saved-data → `ParkRenderer` path as the post-pass parks. No
+   new renderer, no new style (COTTAGE_GREEN is the feature-independent `TerrainAffinity.
+   OPEN` default).
+3. **Post-pass de-dup.** The village-wide `ParkCandidateFinder` post-pass now SKIPS plots
+   whose centre is `withinOuter` the band (the band fills itself); parks elsewhere (rural
+   fringe) still register. When the band is disabled (tight tiers) `residentialBand` is
+   null → no skip, no regression.
+
+**Surface area:** 1 new file + 2 edits + 0 deletions.
+
+**Files added:** `.../Village/Planning/V2/Layer4/ResidentialBand.java`
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (green-fill loop;
+  `state.residentialBand`; `Result` +component + back-compat 9-arg ctor;
+  `RESIDENTIAL_GREEN_ROUNDS`).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (post-pass band-skip de-dup +
+  green-commons GardenPlot render).
+
+**Tie-In Audit:**
+- *Touched surface:* `reserveResidentialDistricts` (green-fill); `Result` (+`residentialBand`);
+  the adapter park post-pass; new `ResidentialBand`.
+- *Downstream callers:* `Result` canonical +1 component, gated by a new pre-Part-2a 9-arg
+  ctor so every prior `new Result(...)` form compiles. `seatDistrict` reused unchanged
+  (records greens in `residentialGates`). `BlockServingRouter` — greens get district nodes
+  via `districtConnectionNodes(residentialGates)` → connected; they carry no buildings, so
+  no per-building terminals (and they're not courtyards → not in `noBranchBlocks`).
+  `ParkCandidateFinder`/`GardenPlot`/`ParkRenderer` reused (no scoping change — partition
+  by `withinOuter` at the adapter). 
+- *Sibling systems:* `OverlapAuditor` — greens are reserved via `seatDistrict`'s overlap
+  checks (clear of civic/market/precincts); they're GardenPlots, not buildings, so no
+  building overlap. **Farms** — greens are inside the band (already farm-excluded); added
+  to `residentialGates` (also excluded) — no new farm interaction. **NPC populator** —
+  greens add no inhabitant buildings (reads placed buildings, unaffected). Batch-5 HOUSE
+  skip keeps houses out of greens; explicit placement only fills precinct gates.
+- *Exhaustive switches:* none new (reused `GardenStyle.COTTAGE_GREEN`).
+
+**Simplification Sweep:** Reused `seatDistrict` (no new fill geometry / tiler),
+`GardenPlot`/`ParkRenderer`/`GardenStyle.COTTAGE_GREEN` (no new renderer/style), and
+`residentialGates`→router for connection (no new spur). One new carry record. Net small.
+
+**Deviations from prompt:**
+- **Green-commons via SEATED green blocks (reuse `seatDistrict`), not a cell-by-cell
+  leftover tiler.** Far lower risk + free router connection, but it fills the band with
+  discrete green blocks in the open directions rather than every leftover cell — small
+  slivers between blocks may remain grass. Flagged: a finer leftover tiler is a follow-up
+  if slivers read poorly.
+- **All band fill is COTTAGE_GREEN; feature-scored park STYLES inside the band are
+  DEFERRED.** COTTAGE_GREEN already renders as a garden/green (flowers/hedges/benches), so
+  the band reads finished; terrain-specialized band parks (ZEN near water, etc.) are a
+  follow-up. The post-pass still places feature-scored parks OUTSIDE the band, so "parks
+  where terrain scores" happens in the rural fringe, green-commons in the band. (The
+  prompt wanted both inside the band; this is the bounded slice.)
+- **Reserved at planner time (green blocks in `residentialGates`), rendered at adapter
+  time (GardenPlots).** The band already protects the space from farms, so the GardenPlot
+  is the render of a planner-reserved block — "reserved + connected" holds.
+- **Could not build/spawn** (sandbox 403 + no runtime) — static review only.
+
+**Out-of-scope but flagged:**
+- **2b** — generalise "fill region R's leftover" to other districts' leftovers (corner
+  method) + more filler types (secondary residential); feature-scored band parks; a finer
+  sliver tiler.
+- Workshop districting (4c); civic-precinct depth lever; `fitsCourtyard` diagnostic;
+  `DISTRICT_ONLY_MODE` left off (recon).
+
+**Cumulative pending verification:** all prior phases + the full-village recon (flag off)
++ now the band green-commons fill. **Needs an in-world spawn** to confirm the band reads
+finished + no double parks + farms intact.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY → band gaps filled with **green-commons** (lawn/flowers/benches via
+   COTTAGE_GREEN), not bald; courtyards/streets intact; greens connected (district nodes);
+   log `residential band fill: N green-commons subdistrict(s) (active=true)`; no double
+   parks in the band (post-pass skips it); parks still appear in the rural fringe.
+3. `/litv spawn` TOWN → band disabled (`active=false`) → no greens, parks unchanged (no
+   regression).
+4. Confirm `OverlapAuditor` clean + farms still place (`rural N>0`) + no NPC desync.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net +
+no runtime). Static review: green blocks seat via the verified `seatDistrict` (records in
+`residentialGates` → router-connected; overlap-checked vs civic/market/precincts);
+`ResidentialBand` carried on `Result` (back-compat 9-arg ctor added; all prior ctors
+compile); the adapter skips band-interior post-pass parks (`withinOuter`, squared-distance)
++ renders greens as COTTAGE_GREEN GardenPlots (empty primitives → `ParkRenderer.renderOne`
+composes from the style); `residentialBand` null when the band is disabled (no tight-tier
+park regression); no new enum/codec/switch.

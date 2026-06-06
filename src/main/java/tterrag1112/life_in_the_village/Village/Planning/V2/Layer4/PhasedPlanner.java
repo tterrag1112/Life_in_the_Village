@@ -366,7 +366,8 @@ public final class PhasedPlanner {
                 java.util.Set.copyOf(state.droppedBindings),
                 state.civicSquare, state.marketSquare,
                 List.copyOf(state.internalLanes),
-                List.copyOf(state.courtyardDecor));
+                List.copyOf(state.courtyardDecor),
+                state.residentialBand);
     }
 
     // =========================================================================
@@ -1937,6 +1938,9 @@ public final class PhasedPlanner {
     /** Centrality-band Part 1 — minimum band depth (blocks) so a street precinct
      *  always fits even when the extent can't host a courtyard-deep band. */
     private static final int RESIDENTIAL_MIN_BAND_DEPTH = 24;
+    /** Part 2a — passes around the direction list when seating GREEN fill blocks
+     *  in the band leftover (each pass seats one green per still-open direction). */
+    private static final int RESIDENTIAL_GREEN_ROUNDS = 2;
     /** Phase 1 — minimum houses needed to seat an OVERFLOW district (the first
      *  district always seats). A sub-minimum remainder after at least one
      *  district is an acceptable drop, rather than a runt district of 1. */
@@ -2100,6 +2104,37 @@ public final class PhasedPlanner {
             placedHouses += placed;
             remaining -= placed;
         }
+
+        // Part 2a — fill the band's LEFTOVER with GREEN-COMMONS subdistricts so
+        // the band reads finished, not bald grass between precincts. Seat modest
+        // green blocks via the SAME seat sweep (seatDistrict records them in
+        // residentialGates → they avoid precincts/civic/market AND get a district
+        // node → the router connects them). The adapter renders each as a
+        // COTTAGE_GREEN GardenPlot. Only when the band is active (else degenerate).
+        List<Polygon.AABB> greens = new ArrayList<>();
+        if (bandActive && !directions.isEmpty()) {
+            int greenHalf = Math.max(MIN_PLAZA_HALF, cellPitch);
+            int gInner = Math.max(bandInnerR, greenHalf + DISTRICT_GAP);
+            int gOuter = Math.min(bandOuterR, state.fmap.radius() - greenHalf);
+            if (gOuter >= gInner) {
+                int attempts = directions.size() * RESIDENTIAL_GREEN_ROUNDS;
+                for (int gd = 0; gd < attempts; gd++) {
+                    double a = directions.get(gd % directions.size());
+                    Polygon.AABB g = seatDistrict(state, anchor, a,
+                            gInner, gOuter, greenHalf, greenHalf);
+                    if (g != null) greens.add(g);
+                }
+            }
+        }
+        // Only carry the band when it's active — else (disabled on tight tiers)
+        // a non-null band would make the adapter skip parks within bandOuterR
+        // and add no greens (a regression for those tiers).
+        state.residentialBand = bandActive
+                ? new ResidentialBand(anchor, bandInnerR, bandOuterR, List.copyOf(greens))
+                : null;
+        LOGGER.info("residential band fill: {} green-commons subdistrict(s) (active={})",
+                greens.size(), bandActive);
+
         LOGGER.info("residential districts: {} assigned / {} precincts / {} placed"
                 + " / {} dropped (cellPitch={}, nPrecincts={}, share={}, dirs={})",
                 houseCount, reserved, placedHouses, remaining, cellPitch,
@@ -2820,6 +2855,10 @@ public final class PhasedPlanner {
          *  (farm) placement is kept BEYOND this so residential owns its ring.
          *  0 when no houses (farms then unconstrained). */
         int residentialBandOuterR = 0;
+        /** Part 2a — the band + its green-commons fill blocks (carried to the
+         *  adapter for GardenPlot render + park-finder de-dup). Null when no
+         *  houses / band disabled. */
+        ResidentialBand residentialBand;
         /** Residential-variant tooling — forced variant from /litv district
          *  (null → auto-select per block). */
         ResidentialVariant forcedResidentialVariant;
@@ -2883,7 +2922,10 @@ public final class PhasedPlanner {
                          List<InternalPath> internalLanes,
                          /* Layout Rework — COURTYARD decoration (well + borders);
                           * the adapter stamps the well + paints borders. */
-                         List<CourtyardDecor> courtyardDecor) {
+                         List<CourtyardDecor> courtyardDecor,
+                         /* Part 2a — residential band + green-commons fill (the
+                          * adapter renders greens + de-dups the park finder). */
+                         ResidentialBand residentialBand) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
@@ -2906,7 +2948,7 @@ public final class PhasedPlanner {
                       java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
                       java.util.Set<BuildingType> droppedBindings) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    null, null, List.of(), List.of());
+                    null, null, List.of(), List.of(), null);
         }
 
         /** Pre-Layout-Rework 7-arg constructor (no internal lanes). */
@@ -2916,7 +2958,7 @@ public final class PhasedPlanner {
                       java.util.Set<BuildingType> droppedBindings,
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, List.of(), List.of());
+                    civicSquare, marketSquare, List.of(), List.of(), null);
         }
 
         /** Pre-courtyard-decor 8-arg constructor (lanes but no courtyard decor). */
@@ -2927,7 +2969,19 @@ public final class PhasedPlanner {
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare,
                       List<InternalPath> internalLanes) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, internalLanes, List.of());
+                    civicSquare, marketSquare, internalLanes, List.of(), null);
+        }
+
+        /** Pre-Part-2a 9-arg constructor (courtyard decor but no band fill). */
+        public Result(PlacementResult placement, RoadNetwork network,
+                      List<PhaseEvent> events,
+                      java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
+                      java.util.Set<BuildingType> droppedBindings,
+                      Polygon.AABB civicSquare, Polygon.AABB marketSquare,
+                      List<InternalPath> internalLanes,
+                      List<CourtyardDecor> courtyardDecor) {
+            this(placement, network, events, nucleusContexts, droppedBindings,
+                    civicSquare, marketSquare, internalLanes, courtyardDecor, null);
         }
     }
 

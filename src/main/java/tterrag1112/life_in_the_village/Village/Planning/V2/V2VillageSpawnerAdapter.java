@@ -387,7 +387,37 @@ public final class V2VillageSpawnerAdapter {
                             village.getId(),
                             seed,
                             level.getGameTime());
-            for (var plot : plots) data.addGardenPlot(plot);
+            // Part 2a — the residential band fills its own leftover with
+            // green-commons (below), so SKIP village-wide parks inside the band
+            // (de-dup); parks elsewhere (rural fringe, etc.) still register.
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.ResidentialBand
+                    band = phased.residentialBand();
+            for (var plot : plots) {
+                if (band != null) {
+                    int px = (plot.bounds().minX() + plot.bounds().maxX()) / 2;
+                    int pz = (plot.bounds().minZ() + plot.bounds().maxZ()) / 2;
+                    if (band.withinOuter(px, pz)) continue;
+                }
+                data.addGardenPlot(plot);
+            }
+            // Green-commons subdistricts: render each band fill block as a
+            // COTTAGE_GREEN GardenPlot (feature-independent; ParkRenderer composes
+            // lawn + flowers/hedges/benches from the style), so the band reads
+            // finished, never bald. They join the same saved-data → ParkRenderer
+            // path as the post-pass parks, and connect via their district nodes.
+            if (band != null) {
+                for (var g : band.greens()) {
+                    data.addGardenPlot(new tterrag1112.life_in_the_village.Village
+                            .Decoration.Parks.GardenPlot(
+                            java.util.UUID.randomUUID(), village.getId(),
+                            new tterrag1112.life_in_the_village.Village.Decoration.Parks
+                                    .GardenPlot.Bounds(g.minX(), g.minZ(), g.maxX(), g.maxZ()),
+                            tterrag1112.life_in_the_village.Village.Decoration.Parks
+                                    .GardenStyle.COTTAGE_GREEN,
+                            0.7, java.util.List.of(), java.util.List.of(),
+                            level.getGameTime()));
+                }
+            }
         } catch (Exception e) {
             LOGGER.warn("V2: ParkCandidateFinder failed for {}: {}",
                     village.getName(), e.getMessage());
