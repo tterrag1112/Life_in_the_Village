@@ -8584,3 +8584,85 @@ runtime). Static review: `farmReserve` is 0 under `DISTRICT_ONLY_MODE` → `band
 → at `civicReach ≈ 50`, `bandCap − bandInnerR ≈ 26 ≥ RESIDENTIAL_MIN_BAND_DEPTH (24)` →
 `bandActive=true` → `bandOuterR` yields a non-empty green seating ring; the flag-off branch
 keeps `RESIDENTIAL_FARM_RESERVE` (farms' ring preserved); no other behaviour touched.
+
+### 2026-06-06 — Residential Part 2c: sliver tighten + corner-method disposition (CLOSES Part 2)
+
+Closes Part 2 (subdistrict fill). 2a/2b filled the band leftover with seated ~44-span green/
+park blocks; two flagged follow-ups remained.
+
+**1. Sliver tighten (shipped).** Extracted the band green-seating into `seatGreenRound(half,
+rounds)` and now run it TWICE: a coarse round at `max(MIN_PLAZA_HALF, cellPitch)` (the main
+blocks) then a **finer round at `MIN_PLAZA_HALF`** that fills the residual slivers between the
+coarse blocks + precincts. `seatDistrict`'s overlap reject means the small blocks land ONLY
+in true gaps, so the band reads continuously finished — no new painter, same GardenPlot /
+`styleForRegion` render path. Small greens pick a sane style: a `MIN_PLAZA_HALF` block (span
+~10) is below most `GardenStyle.minSize` (12–16), so `styleForRegion` returns its
+`COTTAGE_GREEN` fallback (flat/low-score → green; ZEN's min-10 only on a high feature score),
+and `ParkRenderer` composes to the small bounds.
+
+**2. Corner-method generalize — DEFERRED to 4c (disposition outcome, per no-speculative-
+abstraction).** Investigated whether the civic precinct / market apron have genuinely bald,
+undecorated leftover a generalized `fillRegionLeftover` helper would serve: the civic SQUARE
+is paved + decorated by `PlazaPaver` + `CivicPlazaComplex`, the market by `PlazaPaver` +
+`MarketStallSeeder`, and the civic-precinct corners are the **ring-building zone** (buildings
++ frontage), not bald grass. Filling there would risk **double-decoration / collision** with
+the plaza + ring buildings. **No confirmed bald consumer exists today**, so extracting a
+generalized helper now would be speculative. Kept the fill band-scoped; the generalization
+lands naturally with **4c (workshop districts)** — the first guaranteed undecorated leftover
+a reusable helper would actually serve. (`seatGreenRound` is the seam to lift then.)
+
+**Surface area:** 1 edit (extract + finer round).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (extract `seatGreenRound`; coarse +
+  finer MIN_PLAZA_HALF round).
+
+**Tie-In Audit:**
+- *Touched surface:* the band green-fill (now coarse + fine via `seatGreenRound`).
+- *Downstream:* finer greens reserve via `seatDistrict` (overlap-checked vs blocks/precincts/
+  civic/market) → `OverlapAuditor` clean; they join `residentialGates` → router-connected like
+  the coarse ones. `styleForRegion`/`ParkRenderer` — small blocks fall back to COTTAGE_GREEN
+  (below feature/size thresholds) + compose to bounds. Post-pass park de-dup (band skip)
+  unaffected (finer greens are in-band). Courtyards / farms-skipped / NPC — unaffected. No
+  civic/market double-decoration (generalization deferred).
+- *Exhaustive switches:* none.
+
+**Simplification Sweep:** Extracted one helper (`seatGreenRound`) reused for both rounds — net
+**negative** duplication (the inline loop became one method called twice). No new painter, no
+speculative generalized helper (deferred until 4c has a consumer). Net flat/negative.
+
+**Deviations from prompt:**
+- **Corner-method generalization NOT done** — the disposition found no genuinely bald,
+  undecorated civic/market leftover (plaza/pad/ring-buildings cover it), so per the
+  no-speculative-abstraction invariant it's deferred to 4c (the prompt's gated "if no bald
+  leftover → defer" branch). `seatGreenRound` is the extraction seam for then.
+- **Sliver fix is the finer seated round, not a cell-tiler** (the prompt's preferred option);
+  the cell-level path fill remains the fallback only if the finer round still reads badly
+  in-world (can't verify here — sandbox 403 + no runtime).
+
+**Out-of-scope but flagged:**
+- **4c** — workshop districts (the first real consumer for the generalized leftover-fill;
+  lift `seatGreenRound` then).
+- Park NBT accents authoring (procedural-only parks until then) → Garrett's content call.
+- Civic-shrink / farm complex-region / extent-cap relax / spawner over-provision → deferred
+  (district conversion). Tiled variants (Phase 4) → later.
+
+**Cumulative pending verification:** all prior phases + 2a/2b/band-active fix + now 2c sliver
+tighten. **Part 2 (subdistrict fill) is COMPLETE** pending the in-world spawn that confirms
+the band reads continuously finished.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY (flag on) → band **continuously filled** — green/park in the gaps,
+   **no bald slivers** between blocks/precincts; courtyards intact; `band fill: N` higher
+   than before (coarse + fine).
+3. Featured-terrain CITY → 2b park-style mix + greens, continuous.
+4. Confirm no overlap/abort, no civic/market double-decoration, no courtyard regress.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: `seatGreenRound` is the prior inline loop extracted verbatim (same
+`seatDistrict` call, gInner/gOuter clamps); the finer `MIN_PLAZA_HALF` round only runs when
+`MIN_PLAZA_HALF < coarseHalf` and lands blocks only in residual gaps (overlap reject); small
+greens render via the existing `styleForRegion` (COTTAGE_GREEN fallback below thresholds) +
+`ParkRenderer`; no new enum/codec/switch; the corner-method helper is intentionally NOT
+extracted (no consumer). **Part 2 closed.**

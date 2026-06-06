@@ -2118,17 +2118,17 @@ public final class PhasedPlanner {
         // COTTAGE_GREEN GardenPlot. Only when the band is active (else degenerate).
         List<Polygon.AABB> greens = new ArrayList<>();
         if (bandActive && !directions.isEmpty()) {
-            int greenHalf = Math.max(MIN_PLAZA_HALF, cellPitch);
-            int gInner = Math.max(bandInnerR, greenHalf + DISTRICT_GAP);
-            int gOuter = Math.min(bandOuterR, state.fmap.radius() - greenHalf);
-            if (gOuter >= gInner) {
-                int attempts = directions.size() * RESIDENTIAL_GREEN_ROUNDS;
-                for (int gd = 0; gd < attempts; gd++) {
-                    double a = directions.get(gd % directions.size());
-                    Polygon.AABB g = seatDistrict(state, anchor, a,
-                            gInner, gOuter, greenHalf, greenHalf);
-                    if (g != null) greens.add(g);
-                }
+            // Coarse round — the main ~cellPitch-span green blocks.
+            int coarseHalf = Math.max(MIN_PLAZA_HALF, cellPitch);
+            seatGreenRound(state, anchor, directions, bandInnerR, bandOuterR,
+                    coarseHalf, RESIDENTIAL_GREEN_ROUNDS, greens);
+            // Part 2c — finer round at MIN_PLAZA_HALF fills the residual SLIVERS
+            // between the coarse blocks + precincts, so the band reads continuously
+            // finished (no bald strips). seatDistrict's overlap reject means these
+            // small blocks land ONLY in true gaps.
+            if (MIN_PLAZA_HALF < coarseHalf) {
+                seatGreenRound(state, anchor, directions, bandInnerR, bandOuterR,
+                        MIN_PLAZA_HALF, RESIDENTIAL_GREEN_ROUNDS, greens);
             }
         }
         // Only carry the band when it's active — else (disabled on tight tiers)
@@ -2207,6 +2207,25 @@ public final class PhasedPlanner {
                     ? RESIDENTIAL_BLOCK_TARGET : want - 1;
         }
         return null;
+    }
+
+    /** Part 2a/2c — seats GREEN-COMMONS fill blocks of half-extent {@code half}
+     *  in the band, sweeping the preferred {@code directions} for {@code rounds}
+     *  passes. Reuses {@link #seatDistrict} (records each in {@code residentialGates}
+     *  → router-connected; its overlap reject lands blocks only in true gaps), so a
+     *  coarse + finer call tightens the fill with no new painter. Appends to {@code out}. */
+    private static void seatGreenRound(State state, BlockPos anchor,
+            java.util.List<Double> directions, int bandInnerR, int bandOuterR,
+            int half, int rounds, List<Polygon.AABB> out) {
+        int gInner = Math.max(bandInnerR, half + DISTRICT_GAP);
+        int gOuter = Math.min(bandOuterR, state.fmap.radius() - half);
+        if (gOuter < gInner) return;
+        int attempts = directions.size() * rounds;
+        for (int gd = 0; gd < attempts; gd++) {
+            double a = directions.get(gd % directions.size());
+            Polygon.AABB g = seatDistrict(state, anchor, a, gInner, gOuter, half, half);
+            if (g != null) out.add(g);
+        }
     }
 
     /** Centrality-band Part 1 — true if {@code pos} is within the residential
