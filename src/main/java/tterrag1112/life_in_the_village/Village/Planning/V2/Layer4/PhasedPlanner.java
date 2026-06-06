@@ -1961,16 +1961,21 @@ public final class PhasedPlanner {
             LOGGER.info("residential districts: none (no HOUSE selected)");
             return;
         }
-        // Phase 1 — size the cell from the LARGEST footprint in the HOUSE
-        // variant pool, not one default. The actual house variant is resolved
-        // per-house later (pickVariantIdForV2), and the pool has real size
-        // spread; a cell sized to the biggest house can hold any resolved house
-        // without overstepping → materializeHouse no longer drops on size.
-        StructureSizeCache.FootprintInfo hf = largestHouseFootprint(state);
+        BlockPos anchor = state.ctx.anchor();
+        // Phase 2 fix-up — ROSTER-FIRST sizing: size the cell to the house the
+        // district will ACTUALLY hold, not the pool's largest. House variants are
+        // distance-banded (large near the anchor, cottage far); residential
+        // districts seat BEYOND the core, so they resolve `house`/`cottage`, never
+        // `large_house`. Sizing to the pool max (large_house, ~25) inflated every
+        // block ~1.5–2.5× → nothing seated in a populated CITY → emergent scatter.
+        // We resolve at a tentative residential distance (~LARGE band edge, a
+        // conservative upper bound), so the cell holds any house the district
+        // gets without overdrawing.
+        StructureSizeCache.FootprintInfo hf = residentialCellFootprint(state, anchor);
         int cellPitch = Math.max(hf.width(), hf.length()) + HOUSE_GAP;
         int houseDepth = hf.length();
 
-        BlockPos anchor = state.ctx.anchor();
+
         // Nominal district count for fanning the seating bearings around the
         // core (overflow may add more; seatDistrict sweeps all bearings anyway).
         int nEstimate = Math.max(1,
@@ -1995,28 +2000,27 @@ public final class PhasedPlanner {
                     : pickVariantBySeed(state.ctx.seed() ^ (k * 0x9E3779B97F4A7C15L), k);
             double startAngle = (2 * Math.PI * k) / nEstimate + Math.PI / 4.0;
             int floor = (reserved == 0) ? 1 : MIN_DISTRICT_HOUSES;
+            int wantStart = Math.min(RESIDENTIAL_BLOCK_MAX, remaining);
 
-            // Grow-to-fill back-off: try the largest want, step down to TARGET,
-            // then toward `floor`, taking the largest size that seats.
-            Polygon.AABB gate = null;
-            int seated = 0;
-            for (int want = Math.min(RESIDENTIAL_BLOCK_MAX, remaining); want >= floor; ) {
-                int[] hd = districtDims(variant, want, cellPitch, houseDepth,
-                        COURTYARD_GROW_SQUARE);
-                int halfX = hd[0], halfZ = hd[1];
-                int reach = Math.max(halfX, halfZ);
-                int innerR = reach + DISTRICT_GAP;
-                int outerR = Math.max(innerR, state.fmap.radius() - reach);
-                gate = seatDistrict(
-                        state, anchor, startAngle, innerR, outerR, halfX, halfZ);
-                if (gate != null) { seated = want; break; }
-                want = (want > RESIDENTIAL_BLOCK_TARGET)
-                        ? RESIDENTIAL_BLOCK_TARGET : want - 1;
+            // Grow-to-fill back-off (want → TARGET → floor), taking the largest
+            // size that seats.
+            int[] seatedOut = new int[1];
+            Polygon.AABB gate = seatGrown(state, variant, wantStart, floor,
+                    cellPitch, houseDepth, anchor, startAngle, seatedOut);
+            ResidentialVariant placedVariant = variant;
+            // Seat robustness — a bulky COURTYARD may not fit the tight ring
+            // around the civic core even after back-off; fall back to the THIN
+            // STREET_ROW so the district still seats (a street reads far better
+            // than the emergent scatter that fired when 0 districts seated).
+            if (gate == null && variant != ResidentialVariant.STREET_ROW) {
+                gate = seatGrown(state, ResidentialVariant.STREET_ROW, wantStart,
+                        floor, cellPitch, houseDepth, anchor, startAngle, seatedOut);
+                if (gate != null) placedVariant = ResidentialVariant.STREET_ROW;
             }
             if (gate == null) { noSpace = true; break; }  // no open space left
             reserved++;
-            int placed = placeArrangedBlock(state, gate, seated,
-                    cellPitch, houseDepth, variant, k);
+            int placed = placeArrangedBlock(state, gate, seatedOut[0],
+                    cellPitch, houseDepth, placedVariant, k);
             if (placed == 0) { noSpace = true; break; }   // guard infinite loop
             placedHouses += placed;
             remaining -= placed;
@@ -2035,22 +2039,54 @@ public final class PhasedPlanner {
         }
     }
 
-    /** Phase 1 — the LARGEST footprint across the HOUSE variant pool for the
-     *  village culture/style, so a residential cell sized to it holds any
-     *  resolved house without overlap. Falls back to the default footprint if
-     *  the pool can't be enumerated. */
-    private static StructureSizeCache.FootprintInfo largestHouseFootprint(State state) {
+    /** Phase 2 fix-up — fraction of the village radius at which to resolve the
+     *  residential house variant for SIZING. ~LARGE-band edge: residential seats
+     *  beyond the core (normDist ≳ 0.3 → `house`/`cottage`), so this is the
+     *  biggest house a district realistically holds → the cell never overdraws. */
+    private static final double RESIDENTIAL_SIZING_DIST_FRAC = 0.35;
+
+    /** Phase 2 fix-up — the footprint to size the residential cell to: the HOUSE
+     *  variant resolved (side-effect-free) at a tentative residential distance,
+     *  so blocks match the real roster (cottage/house) instead of the pool's
+     *  worst-case large_house. Falls back to the default footprint if the pool is
+     *  empty or unresolvable. */
+    private static StructureSizeCache.FootprintInfo residentialCellFootprint(
+            State state, BlockPos anchor) {
         java.util.Set<String> pool = state.availability.availableVariants(
                 state.culture, Style.RURAL, BuildingType.HOUSE, LEVEL);
-        StructureSizeCache.FootprintInfo max = null;
-        int maxDim = -1;
-        for (String variantId : pool) {
-            StructureSizeCache.FootprintInfo fp = state.sizes.get(state.culture,
-                    Style.RURAL, BuildingType.HOUSE, variantId, LEVEL, Rotation.NONE);
-            int dim = Math.max(fp.width(), fp.length());
-            if (dim > maxDim) { maxDim = dim; max = fp; }
+        int sampleR = Math.max(1,
+                (int) (state.villageRadius * RESIDENTIAL_SIZING_DIST_FRAC));
+        BlockPos sample = new BlockPos(anchor.getX() + sampleR, anchor.getY(),
+                anchor.getZ());
+        String vid = state.variantResolver.houseVariantForSizing(
+                pool, sample, anchor, state.villageRadius);
+        if (vid == null) return defaultFootprint(state, BuildingType.HOUSE);
+        return state.sizes.get(state.culture, Style.RURAL, BuildingType.HOUSE,
+                vid, LEVEL, Rotation.NONE);
+    }
+
+    /** Phase 2 fix-up — seats one district at the LARGEST {@code want} that fits,
+     *  backing off (want → TARGET → toward {@code floor}) and re-sizing per step
+     *  via {@link #districtDims}. Returns the gate (with the seated count in
+     *  {@code seatedOut[0]}), or null if nothing from {@code wantStart} down to
+     *  {@code floor} fits. */
+    private static Polygon.AABB seatGrown(State state, ResidentialVariant variant,
+            int wantStart, int floor, int cellPitch, int houseDepth,
+            BlockPos anchor, double startAngle, int[] seatedOut) {
+        for (int want = wantStart; want >= floor; ) {
+            int[] hd = districtDims(variant, want, cellPitch, houseDepth,
+                    COURTYARD_GROW_SQUARE);
+            int halfX = hd[0], halfZ = hd[1];
+            int reach = Math.max(halfX, halfZ);
+            int innerR = reach + DISTRICT_GAP;
+            int outerR = Math.max(innerR, state.fmap.radius() - reach);
+            Polygon.AABB gate = seatDistrict(
+                    state, anchor, startAngle, innerR, outerR, halfX, halfZ);
+            if (gate != null) { seatedOut[0] = want; return gate; }
+            want = (want > RESIDENTIAL_BLOCK_TARGET)
+                    ? RESIDENTIAL_BLOCK_TARGET : want - 1;
         }
-        return max != null ? max : defaultFootprint(state, BuildingType.HOUSE);
+        return null;
     }
 
     /** Phase 2 — picks the variant for district {@code k} BEFORE sizing (it

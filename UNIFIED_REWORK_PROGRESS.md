@@ -7762,3 +7762,127 @@ TARGET → −1 → floor) and `seatDistrict` is unchanged; the sizer's COURTYAR
 split matches `arrange`'s fallback; `LANE_HALF`/`COURTYARD_BORDER_CLEARANCE` are the same
 public constants the arranger uses; `autoSelect`/`districtHalfDims` removed with no
 remaining callers; `growSquare` branch compiles + is reachable; no new enum/codec/switch.
+
+### 2026-06-05 — Residential Phase 2 fix-up: roster-first cell sizing + seat robustness
+
+Phases 1–2 worked in isolation (`/litv district residential 16 …` → 16/16) but a full
+`/litv spawn` CITY failed to integrate: `residential districts: 12 assigned / 0
+districts / 0 placed / 12 dropped (cellPitch=25)` → every house fell to the emergent
+scatter pass (loose cottages, not districts). Two compounding root causes, both fixed.
+
+**Disposition (confirmed on HEAD):**
+- **Over-sizing.** `cellPitch=25` came from the Phase-1 pool-max (`large_house`). But
+  house variants are **distance-banded** (`VariantResolver.orderForHouseDistance`:
+  `<0.3R`→large, `0.3–0.7R`→house, `>0.7R`→cottage) and residential seats **beyond the
+  core**, so it only ever resolves `house`/`cottage` — `large_house` is a worst-case
+  that never occurs. Every block was inflated to hold a house it would never get.
+- **Seat cascade.** Even backed off to TARGET, a courtyard's short axis (`inset +
+  cellPitch`) doesn't shrink with count → a ~70×70 block that can't find a clear spot in
+  the tight ring around civic+market; and the loop **breaks on the first `gate==null`**,
+  so if the first district (maybe a bulky courtyard) can't seat, ALL houses scatter —
+  even though a thin street would have fit.
+
+**What shipped (two prongs):**
+1. **Roster-first cell sizing.** New `VariantResolver.houseVariantForSizing` (side-effect-
+   free — no placement record / maxPerVillage consume) returns the distance-banded house
+   id at a position. `PhasedPlanner.residentialCellFootprint` resolves it at a tentative
+   residential distance (`villageRadius · 0.35`, the `house` band) — the **conservative
+   upper bound** for residential, so the cell holds any house a district gets without
+   overdrawing, while dropping the never-real `large_house`. Replaces (and deletes)
+   `largestHouseFootprint`; falls back to `defaultFootprint` if the pool is empty. **This
+   is Phase-3's roster-first sizing pulled forward — sizing half only; genre flags stay
+   Phase 3.**
+2. **Seat robustness.** Extracted the grow-to-fill back-off into `seatGrown` (want →
+   TARGET → floor, re-sizing per step). If the chosen variant yields no gate even after
+   back-off, **retry with the thin STREET_ROW** before declaring no-space — so a district
+   seats (a street reads far better than scatter) wherever any thin block fits. The block
+   is then arranged as the variant that actually seated (`placedVariant`), so shape +
+   gate match.
+
+Seam taken: **option (a)** — tentative-centre resolve — because the resolver is purely
+distance-banded (deterministic, no rng), so a district-centre proxy yields the real
+footprint with no double-seat thrash (option (b) was unnecessary).
+
+**Surface area:** 0 new files + 2 edits + 0 deletions.
+
+**Files modified:**
+- `.../Village/Decoration/Variants/VariantResolver.java` (`houseVariantForSizing`, side-
+  effect-free).
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`residentialCellFootprint` +
+  `RESIDENTIAL_SIZING_DIST_FRAC` replace `largestHouseFootprint`; `seatGrown` helper +
+  STREET_ROW seat fallback; `placedVariant` threaded to `placeArrangedBlock`).
+
+**Tie-In Audit:**
+- *Touched surface:* the residential cell-size source (pool-max → roster-first); the seat
+  path (back-off extracted + street fallback); new `VariantResolver` sizing method.
+- *Downstream callers:* `houseVariantForSizing` is additive (new); `pickVariantIdForV2`
+  (the real per-house placement path) is **untouched** — `materializeHouse` still places
+  each house at its real resolved footprint, and the cell now ≥ that footprint, so no
+  size-drops. `largestHouseFootprint` removed with no remaining callers. `seatGrown` is
+  the only seat path now (loop + fallback both call it). `seatDistrict` unchanged.
+- *Sibling systems:* `OverlapAuditor` — smaller right-sized blocks + the thin fallback
+  seat more easily and overlap less. The **emergent HOUSE scatter** fallback now fires
+  only when districts genuinely can't seat (it ran here purely because blocks=0); with
+  districts seating, `/litv spawn` reports N districts / placed. **NPC populator** reads
+  `placedBuildingsAll` — unaffected. Courtyard decoration (well/borders/ring) + edge
+  node/lane key off the gate AABB — when a courtyard falls back to STREET_ROW the arrange
+  yields `yardCentre=null` → no courtyard decor built (consistent, no orphaned well).
+  `/litv district` forced-variant test still seats in its open world (now tighter).
+- *Exhaustive switches:* none new.
+
+**Simplification Sweep:** Deleted the dead pool-max path (`largestHouseFootprint`); one
+cell-size source now (`residentialCellFootprint`). Extracted `seatGrown` so the back-off
+isn't duplicated for the street fallback. Net ≈ flat (one method removed, one resolver +
+one sizer + one seat helper added, inline back-off de-duplicated).
+
+**Deviations from prompt:**
+- **Right-sizing alone was NOT sufficient** for the seat failure (the disposition's open
+  question): the cellPitch drop (25→~22, `large_house`→`house`) is modest, and a bulky
+  courtyard still can't fit a tight ring. The **seat fix that actually unblocks CITY is
+  the STREET_ROW fallback** (thin blocks seat where courtyards can't) + the back-off to
+  floor=1. Both shipped; flagged that the deeper "reserve a residential zone before
+  civic/market" question (the annulus being leftover space) remains a **separate design
+  item**, not forced here.
+- **Sized to the `house` band, not per-district cottage-tight.** One cellPitch for all
+  districts, at the conservative `house` band — far (cottage) districts get mild slack.
+  True per-district cottage-tightening needs the district's final radius (chicken-and-egg
+  with sizing), which is Phase-3 roster-first packing; flagged.
+- **Courtyards may fall back to streets in tight CITY rings.** A deliberate trade (street
+  district ≫ scatter); courtyards still seat wherever the outer annulus has room, so the
+  mix is preserved, not eliminated.
+
+**Out-of-scope but flagged:**
+- **Reserve a dedicated residential zone / order residential before civic+market** — the
+  real "annulus is leftover space" limiter; a separate design item (don't redesign zone
+  partitioning here).
+- Per-district cottage-tight sizing (far districts) → Phase 3 roster-first packing.
+- Manifest genre flags (`tilable`/`corner`) → Phase 3. TERRACE / TILED_COURTYARD → Phase
+  4. JSON definables → Phase 5. `DISTRICT_ONLY_MODE` off → not yet.
+
+**Cumulative pending verification:** rework spawns; districts; roads; plaza; `/litv
+district`; residential arrangement; street-row lane; courtyard decoration + refinements;
+Phase-1 capacity; Phase-2 growth; and now the Phase-2 integration fix (roster-first cell +
+seat robustness). None smoke-tested in-world yet.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done.
+2. `/litv spawn` CITY AGRICULTURAL (the Farmcity case) → residential reports **N
+   districts / 12 placed** (not `0 / emergent scatter`); houses read as districts, not
+   loose cottages.
+3. `/litv district residential 16 courtyard` / `16 street_row` → still 16/16; blocks
+   visibly **tighter** (cell ≈ real house size, not large_house).
+4. `/litv spawn` TOWN → districts seat; full village reads right; NPC count tracks placed.
+5. Confirm the log no longer shows `0 districts / emergent` for a normal CITY (and if a
+   drop happens, the WARN says why).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net —
+HTTP 403). Static review substituted: `houseVariantForSizing` mirrors
+`pickHouseByDistance`'s size order minus the record/maxPerVillage side effects (distance-
+only, so a proxy centre is valid); `residentialCellFootprint` resolves at `0.35·radius`
+(the `house` band → conservative upper bound, ≥ any house the district resolves so
+`materializeHouse` never size-drops) with a default-footprint fallback; `seatGrown`
+terminates (want → TARGET → −1 → floor) and the STREET_ROW fallback only runs when the
+chosen variant isn't already street; `placedVariant` keeps the gate ↔ arrangement shape
+consistent (courtyard→street fallback yields no orphaned courtyard decor);
+`largestHouseFootprint` removed with no remaining callers; `state.variantResolver` is the
+existing field; no new enum/codec/switch.

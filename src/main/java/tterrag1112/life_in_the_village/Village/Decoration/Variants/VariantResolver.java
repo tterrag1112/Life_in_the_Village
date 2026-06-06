@@ -204,6 +204,26 @@ public final class VariantResolver {
         return new String[]{"cottage", "house", "large_house"};
     }
 
+    /**
+     * Side-effect-free: the HOUSE variant id that {@link #pickHouseByDistance}
+     * would prefer at {@code pos} — for SIZING a residential district to its
+     * real roster (Phase-2 fix-up) WITHOUT recording a placement or consuming a
+     * maxPerVillage slot. Distance-banded only (the same size order placement
+     * uses), so a tentative district-centre proxy yields the footprint the
+     * district will actually hold. Returns null only when {@code available} is
+     * empty (caller falls back to the default footprint).
+     */
+    public String houseVariantForSizing(java.util.Set<String> available,
+                                        BlockPos pos, BlockPos anchor,
+                                        int villageRadius) {
+        if (available.isEmpty()) return null;
+        double normDist = normalisedDistance(pos, anchor, villageRadius);
+        for (String v : orderForHouseDistance(normDist)) {
+            if (available.contains(v)) return v;
+        }
+        return new TreeSet<>(available).first();
+    }
+
     private static double normalisedDistance(BlockPos pos, BlockPos anchor,
                                              int villageRadius) {
         double dx = pos.getX() - anchor.getX();
