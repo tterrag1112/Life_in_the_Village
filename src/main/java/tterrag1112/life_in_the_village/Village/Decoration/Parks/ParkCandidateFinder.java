@@ -356,6 +356,51 @@ public final class ParkCandidateFinder {
     /** Picks the highest-affinity style for {@code candidate} using
      *  the candidate's terrain mix, the village's inclination, and
      *  the culture's per-style preference weights. */
+    /**
+     * Part 2b — picks a {@link GardenStyle} for a residential band FILL BLOCK:
+     * a feature PARK style where the block's terrain scores above the seed
+     * threshold (reusing {@link #scoreCell} + the same culture/inclination
+     * preference {@link #pickBestStyle} uses), else {@link GardenStyle#COTTAGE_GREEN}
+     * (the green-commons default). Applies only the {@code minSize} floor — band
+     * blocks are deliberately larger than the natural clusters {@link #find}
+     * builds, and {@link tterrag1112.life_in_the_village.Village.Decoration.Parks
+     * .ParkRenderer} composes to whatever bounds.
+     */
+    public static GardenStyle styleForRegion(V2FeatureMap fmap,
+                                             GardenPlot.Bounds bounds,
+                                             Culture culture, Inclination inclination) {
+        if (fmap == null || bounds == null) return GardenStyle.COTTAGE_GREEN;
+        int cx = (bounds.minX() + bounds.maxX()) / 2;
+        int cz = (bounds.minZ() + bounds.maxZ()) / 2;
+        int qx = (bounds.maxX() - bounds.minX()) / 4;
+        int qz = (bounds.maxZ() - bounds.minZ()) / 4;
+        int[][] samples = {{cx, cz}, {cx - qx, cz - qz}, {cx + qx, cz - qz},
+                {cx - qx, cz + qz}, {cx + qx, cz + qz}};
+        double total = 0.0;
+        int n = 0;
+        for (int[] s : samples) {
+            if (!fmap.inBounds(s[0], s[1])) continue;
+            total += scoreCell(fmap.cellAt(s[0], s[1]), fmap.cellSize());
+            n++;
+        }
+        double avg = n > 0 ? total / n : 0.0;
+        if (avg < SEED_SCORE_THRESHOLD) return GardenStyle.COTTAGE_GREEN;
+
+        int span = Math.max(bounds.width(), bounds.length());
+        GardenStyle best = GardenStyle.COTTAGE_GREEN;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (GardenStyle style : GardenStyle.values()) {
+            if (span < style.minSize()) continue;   // floor only (band blocks are big)
+            double prefWeight = culture == null ? 1.0
+                    : culture.planningBias().parkPreferenceFor(style.name());
+            double inclinationBonus = inclination != null
+                    && style.inclinationAffinity().contains(inclination) ? 1.5 : 1.0;
+            double score = prefWeight * inclinationBonus;
+            if (score > bestScore) { bestScore = score; best = style; }
+        }
+        return best;
+    }
+
     private static StyleFit pickBestStyle(Candidate candidate, Culture culture,
                                           Inclination inclination) {
         StyleFit best = null;

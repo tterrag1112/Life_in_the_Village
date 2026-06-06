@@ -8415,3 +8415,102 @@ compile); the adapter skips band-interior post-pass parks (`withinOuter`, square
 + renders greens as COTTAGE_GREEN GardenPlots (empty primitives → `ParkRenderer.renderOne`
 composes from the style); `residentialBand` null when the band is disabled (no tight-tier
 park regression); no new enum/codec/switch.
+
+### 2026-06-06 — Residential Part 2b: flag back on + feature-scored park styles in the band
+
+Completes Part 2's parks + green-commons fork. 2a filled the band leftover with hardcoded
+`COTTAGE_GREEN`; 2b **scores each band fill block and picks a real `GardenStyle`** — a
+feature park where the terrain scores, `COTTAGE_GREEN` elsewhere — so the band reads as a
+varied mix, not uniform lawn.
+
+**Garrett's strategic note (baked in, acted on only as scoped):** the full-spawn recon
+showed the oversized civic precinct squeezes farms + disables the band at full scale.
+**Per Garrett, that's resolved by continuing the district conversion, NOT fixed now** — so
+2b **flips `DISTRICT_ONLY_MODE` back to `true`** (the focused district canvas where the
+band is active). **Deferred, flag-only (NOT done):** civic-precinct shrink, farm
+complex-region reservation, extent-cap relax (→ ~180 once the full district system lands),
+and the building-per-population spawner over-provisioning (e.g. 2 CHAPEL at CITY).
+
+**What shipped:**
+1. **`DISTRICT_ONLY_MODE` → true** (reverts the recon flip; the one-line flag was the only
+   recon change, so the revert is clean — band active again).
+2. **Per-block feature-scored style.** New `ParkCandidateFinder.styleForRegion(fmap,
+   bounds, culture, inclination)` — samples the block's cells via the existing `scoreCell`
+   (forest/water/slope); if the average clears `SEED_SCORE_THRESHOLD` it picks the best
+   feature style by the **same culture/inclination preference `pickBestStyle` uses**
+   (`FORMAL_PARK`/`ZEN_GARDEN`/`SACRED_GROVE`/…), else returns `COTTAGE_GREEN`. The adapter
+   calls it per band green block and `addGardenPlot`s with that style + `style.preserveBias()`
+   (replacing 2a's hardcoded `COTTAGE_GREEN`/0.7). `ParkRenderer` already composes per
+   `GardenStyle`, so the richer styles render with no render change.
+
+**Surface area:** 0 new files + 3 edits + 0 deletions.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`DISTRICT_ONLY_MODE` false → true).
+- `.../Village/Decoration/Parks/ParkCandidateFinder.java` (public `styleForRegion`).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (band greens use `styleForRegion`
+  + `style.preserveBias()`).
+
+**Tie-In Audit:**
+- *Touched surface:* the flag; `ParkCandidateFinder` (+`styleForRegion`); the adapter band
+  green render.
+- *Downstream callers:* `styleForRegion` is additive (new public method; `find()` +
+  `pickBestStyle` unchanged — `find()`'s strict size gate stays for natural clusters). The
+  adapter band loop now picks a style per block; the rest of the 2a path (carry, de-dup,
+  addGardenPlot) is unchanged. `ResidentialBand` unchanged (greens stay AABBs — the style
+  is chosen at render, where `fmap`/`culture`/`inclination` are all in scope).
+- *Sibling systems:* `ParkRenderer` — composes the chosen style at the band-block bounds
+  (it scales pieces to area; band blocks are larger than natural clusters but render fine).
+  The post-pass `ParkCandidateFinder` band de-dup (2a) is intact (no double parks; non-band
+  parks unaffected). `OverlapAuditor`/router — a style change moves no geometry (greens
+  already reserved + node-connected in 2a). NPC populator — greens add no inhabitants.
+  Flag-on restores district-only (farms/loose skipped) — the deferred squeeze is out of
+  scope, as Garrett directed.
+- *Exhaustive switches:* none new (reused `GardenStyle`).
+
+**Simplification Sweep:** Reused `scoreCell` + the `pickBestStyle` preference formula +
+`GardenStyle` + `ParkRenderer`; the only new code is the per-block `styleForRegion` (style
+instead of a hardcoded constant). No new fill/render/enum. Net small.
+
+**Deviations from prompt:**
+- **`styleForRegion` is a new helper, not a direct `pickBestStyle` call.** `pickBestStyle`
+  HARD-rejects `span > maxSize`, and band blocks (~44 span) exceed every `GardenStyle`
+  maxSize (≤30) → it would always return null → always `COTTAGE_GREEN` (no parks). So
+  `styleForRegion` reuses the scorer + the identical preference formula but applies only
+  the `minSize` floor (band blocks are deliberately larger than the natural clusters
+  `find()` builds; `ParkRenderer` composes to any bounds). Small intentional formula
+  duplication — `pickBestStyle` stays strict for `find()`.
+- **Style chosen in the adapter, not the planner** (the disposition's call): keeps
+  `ResidentialBand` unchanged (greens stay AABBs); the adapter has `fmap`/`culture`/
+  `siteCtx.inclination()`.
+- **Sliver tightening NOT done** → flagged for 2c (the seated-block fill can leave thin
+  grass slivers; a real cell-tiler / extra small-block round is 2c, not rebuilt here).
+- **Could not build/spawn** (sandbox 403 + no runtime) — static review only.
+
+**Out-of-scope but flagged:**
+- **Deferred (Garrett, districts-first):** civic-precinct shrink, farm complex-region
+  reservation, extent-cap relax (~180), spawner over-provisioning tuning.
+- **2c** — generalise the leftover fill to other districts' corners (corner method) + a
+  real sliver cell-tiler.
+- Tiled variants (Phase 4); workshop districting (4c); `fitsCourtyard` diagnostic.
+
+**Cumulative pending verification:** all prior phases + 2a green-commons + now 2b park
+styles. **Needs an in-world spawn** (flag on) to confirm the band reads varied (parks +
+greens) on featured terrain + green-dominant on flat.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY on featured terrain (forest/water near the band) → the band shows a
+   **mix of park styles + green-commons** in the gaps (not uniform `COTTAGE_GREEN`);
+   courtyards/streets intact; `residential band … active=true`.
+3. `/litv spawn` CITY flat → green-commons dominant (low feature score), still finished.
+4. `/litv spawn` TOWN → scales; band may be disabled (then no fill, as 2a).
+5. Confirm no double parks (band de-dup), no overlap/abort, flag-on restores district-only.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net +
+no runtime). Static review: `styleForRegion` reuses `scoreCell` (same `Cell`/`cellSize`
+types as `find()`), samples 5 in-bounds points, gates on `SEED_SCORE_THRESHOLD`, and picks
+by the same `parkPreferenceFor` × inclination-affinity formula as `pickBestStyle` with a
+minSize floor (band blocks exceed the maxSize ceiling by design); the adapter passes the
+chosen style + `style.preserveBias()` to `GardenPlot`; `find()`/`pickBestStyle` unchanged;
+the flag revert is the single boolean; no new enum/codec/switch.

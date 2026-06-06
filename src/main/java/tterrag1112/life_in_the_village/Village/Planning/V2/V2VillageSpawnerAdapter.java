@@ -407,15 +407,19 @@ public final class V2VillageSpawnerAdapter {
             // path as the post-pass parks, and connect via their district nodes.
             if (band != null) {
                 for (var g : band.greens()) {
+                    var gb = new tterrag1112.life_in_the_village.Village.Decoration.Parks
+                            .GardenPlot.Bounds(g.minX(), g.minZ(), g.maxX(), g.maxZ());
+                    // Part 2b — feature-scored style per block (park where the
+                    // terrain scores, else COTTAGE_GREEN green-commons).
+                    tterrag1112.life_in_the_village.Village.Decoration.Parks.GardenStyle
+                            gstyle = tterrag1112.life_in_the_village.Village.Decoration
+                                    .Parks.ParkCandidateFinder.styleForRegion(
+                                    fmap, gb, culture, siteCtx.inclination());
                     data.addGardenPlot(new tterrag1112.life_in_the_village.Village
                             .Decoration.Parks.GardenPlot(
-                            java.util.UUID.randomUUID(), village.getId(),
-                            new tterrag1112.life_in_the_village.Village.Decoration.Parks
-                                    .GardenPlot.Bounds(g.minX(), g.minZ(), g.maxX(), g.maxZ()),
-                            tterrag1112.life_in_the_village.Village.Decoration.Parks
-                                    .GardenStyle.COTTAGE_GREEN,
-                            0.7, java.util.List.of(), java.util.List.of(),
-                            level.getGameTime()));
+                            java.util.UUID.randomUUID(), village.getId(), gb, gstyle,
+                            gstyle.preserveBias(), java.util.List.of(),
+                            java.util.List.of(), level.getGameTime()));
                 }
             }
         } catch (Exception e) {
