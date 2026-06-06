@@ -8666,3 +8666,126 @@ runtime). Static review: `seatGreenRound` is the prior inline loop extracted ver
 greens render via the existing `styleForRegion` (COTTAGE_GREEN fallback below thresholds) +
 `ParkRenderer`; no new enum/codec/switch; the corner-method helper is intentionally NOT
 extracted (no consumer). **Part 2 closed.**
+
+### 2026-06-06 — 4c-a: workshop band + civic-precinct shrink (structural)
+
+The structural pass of workshop districting. The loose workshops were the last
+un-districted buildings, and `BLACKSMITH`/`BAKERY` (CIVIC affinity → batch 3) bloated the
+civic precinct (the ~94×96 that squeezed farms + disabled the residential band at full
+spawn). 4c-a routes the craft set into a **workshop band** and pulls the crafts out of
+batch 3, so the **civic precinct shrinks** → `civicReach` drops → the residential band
+activates with more depth + farms regain field-room. The craft-quarter *look* is 4c-b.
+
+**What shipped:**
+1. **Craft set → workshop batch (the civic-shrink lever).** `CRAFT_SET` = `BLACKSMITH,
+   BAKERY, CARPENTRY, MILLER, WOODCUTTER, STOCKPILE, WAREHOUSE, STABLE`. `getBatch` routes
+   the whole set to `WORKSHOP_BATCH = 4` (after the rural check, before the affinity
+   branch) — so `BLACKSMITH`/`BAKERY` leave batch 3 and `STOCKPILE`/`WAREHOUSE` leave batch
+   6. `addCivicPrecinct` unions only batch-3 footprints (`TOWN_HALL`+`INN`+`CHAPEL`) → the
+   precinct shrinks with no change to `addCivicPrecinct` itself.
+2. **Workshop band (reuse the precinct machinery).** New `reserveWorkshopDistricts` (batch-3
+   hook, after residential) seats several workshop precincts via the SAME `seatDistrict` +
+   `residentialDirections` (sized to the craft footprint, `WORKSHOP_TARGET = 4` per
+   precinct), recorded in a new `workshopGates`. `seatDistrict` gained a `targetGates` param
+   and now rejects overlap with **both** bands (residential + workshop), so they never
+   collide; a `π/8` bearing offset interleaves workshops into the sectors residential
+   didn't take. There's now a concrete second consumer, so this is reuse (shared
+   `seatDistrict`/directions), not a parallel path.
+3. **Craft placement gated to the band.** `findBestCandidate` gains `workshopGated` (mirror
+   of `houseGated`): a craft building must lie inside a `workshopGate` (the gate overrides
+   its CIVIC zone scoring, like houses override RURAL). Crafts place via the scorer WITHIN
+   their precincts (the deliberate arrangement is 4c-b). Farms are excluded from
+   `workshopGates` too (added to the rural exclusion); workshop precincts get district
+   nodes (`districtConnectionNodes` iterates `workshopGates`) → router-connected.
+4. **`DISTRICT_ONLY_MODE` member update.** `DISTRICT_TYPES` += the craft set, so under
+   district-only the workshops are now KEPT (a district) instead of skipped as loose.
+
+**Surface area:** 1 edit (no new files).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`CRAFT_SET`/`WORKSHOP_BATCH`/
+  `WORKSHOP_TARGET`; `DISTRICT_TYPES` += crafts; `getBatch` craft routing; `workshopGates`
+  state; `seatDistrict` `targetGates` param + dual-band overlap; `reserveWorkshopDistricts`
+  + the batch-3 hook; `workshopGated` + farm exclusion + `districtConnectionNodes`).
+
+**Tie-In Audit:**
+- *Touched surface:* `getBatch` (craft routing); `addCivicPrecinct` (shrinks via routing,
+  unchanged code); `seatDistrict` (+param, dual-band overlap); `findBestCandidate`
+  (`workshopGated` + farm exclusion); `districtConnectionNodes`; `DISTRICT_TYPES`;
+  `reserveWorkshopDistricts`; `workshopGates`.
+- *Downstream callers:* `seatDistrict` gained `targetGates` — all 3 call sites updated
+  (residential `seatGrown`/`seatGreenRound` pass `residentialGates`; workshop passes
+  `workshopGates`); `seatGrown`/`seatGreenRound` signatures unchanged (they always seat
+  residential). No external `seatDistrict` caller. **Economy/NPC** — crafts moving batch
+  3→4 changes only placement ORDER; business registration + the inhabitant populator read
+  the final placed buildings post-spawn, so blacksmith/bakery still register + get
+  inhabitants (verify in-world). The `ProximityPenalty(HOUSE,BLACKSMITH)` is a
+  `findBestCandidate` scorer term — now moot (houses are placed explicitly; blacksmith is
+  gated to the workshop band, a different region) — left as a harmless soft term.
+- *Sibling systems:* `addCivicPrecinct` shrinks (crafts no longer batch-3). **Residential
+  band** — smaller `civicReach` → `bandInnerR` drops → band activates more often + deeper
+  (the payoff); residential precincts seat first, workshops avoid them. **Farms** — civic
+  shrink + workshop reservation should *free* farm room (the deferred squeeze easing);
+  farms also excluded from `workshopGates`. `OverlapAuditor` — workshop precincts reserve
+  via `seatDistrict`'s dual-band overlap reject. Router — more district nodes (workshops),
+  connected like residential. `DISTRICT_ONLY_MODE` — crafts now kept.
+- *Exhaustive switches:* none new (no `DistrictType` enum — the two gate lists + the
+  `targetGates` param are the lightest generalization).
+
+**Simplification Sweep:** Generalized the seat by reusing `seatDistrict`/`residentialDirections`
+with a `targetGates` param + a sibling `reserveWorkshopDistricts` — no parallel seat path,
+no duplicated sweep. One new method + one param + two constants/lists. Net small (the
+generalization has a real second consumer, per no-speculative-abstraction).
+
+**Deviations from prompt:**
+- **Crafts placed by the scorer GATED to the band, not explicitly arranged.** 4c-a is the
+  structural pass (band + civic shrink); the deliberate craft-quarter arrangement/look is
+  4c-b. Reusing `findBestCandidate` + a gate (like the original `houseGated`) is far less
+  new code than an explicit arranger.
+- **Lightest generalization (two gate lists + `targetGates`), NOT a `DistrictType` enum /
+  `seatDistrictBand` refactor.** The shared `seatDistrict` already serves both with one
+  param; a full enum/refactor would be heavier than the two consumers justify.
+- **Workshops currently seat in the ring BEYOND the green-filled residential band** (the
+  residential hook fills the band — precincts + greens — before workshops run), so the
+  layering is civic → residential band → workshops → farms. Tighter sector-sharing between
+  residential + workshops is 4c-b polish; flagged.
+- **`DISTRICT_ONLY_MODE` left as 2b set it (`true`).** The work items didn't instruct
+  flipping; it's a dev toggle. **4c-a's payoff (civic shrink → farms recover) is only
+  observable flag-OFF** (farms run) — flip to `false` to validate the full-village squeeze
+  fix; flag-on now also seats the workshop band. (If you want the full village as the
+  committed default, that's a one-line flip.)
+- **Could not build/spawn** (sandbox 403 + no runtime) — static review only; the
+  civic-extent / farm-count / band-active numbers need an in-world dump to confirm.
+
+**Out-of-scope but flagged:**
+- **4c-b** — craft-quarter look (workshop arrangement + shared yard/well + leftover green
+  via `seatGreenRound`); tighter residential↔workshop sector-sharing.
+- Workshop yards/tofts (homestead); a RESOURCE nucleus (not chosen — band form); farm
+  complex-region reservation + extent-cap relax (4c-a should *help* farms, not fully fix);
+  spawner over-provisioning. Tiled variants (Phase 4).
+
+**Cumulative pending verification:** all prior phases + now 4c-a. **Needs an in-world spawn
+(flag OFF) to confirm:** civic precinct smaller than the pre-4c ~94×96; `residential band
+active=true`; `rural N` materially > the pre-4c ~1; workshop band present (crafts not in the
+civic core, not scattered); economy/NPC intact.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done. **Flip
+   `DISTRICT_ONLY_MODE` → false to validate the squeeze fix.**
+2. `/litv spawn` CITY AGRICULTURAL (flag off) → workshop band present (crafts + storage +
+   stable), NOT in the civic core / not scattered; civic precinct smaller (vs pre-4c
+   ~94×96); `residential band active=true`; `rural N` ≫ pre-4c 1 (farms recovering); no
+   overlap/abort.
+3. `/litv spawn` CITY (flag on) → craft set kept + seats in the workshop band.
+4. `/litv spawn` TOWN → bands coexist; scales.
+5. Economy: blacksmith/bakery register businesses; no NPC desync.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net +
+no runtime). Static review: `CRAFT_SET` (8 confirmed `BuildingType`s) routes to batch 4 in
+`getBatch` (before HOUSE/WELL/affinity); `addCivicPrecinct` (batch-3 union) therefore drops
+crafts → shrinks; `reserveWorkshopDistricts` reuses `seatDistrict`/`residentialDirections`
+with a non-empty radial range (`innerR = max(civicReach+gap, reach+gap)`, fixed from an
+empty +reach range) recording into `workshopGates`; `seatDistrict`'s `targetGates` param is
+passed at all 3 call sites + rejects overlap vs both gate lists; `workshopGated` mirrors
+`houseGated`; farms + connection now include `workshopGates`; `DISTRICT_TYPES` += crafts;
+no new enum/codec/switch.

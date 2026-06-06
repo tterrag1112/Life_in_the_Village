@@ -301,6 +301,7 @@ public final class PhasedPlanner {
             if (batch == 3) {
                 addCivicPrecinct(state);
                 reserveResidentialDistricts(state, selection);
+                reserveWorkshopDistricts(state, selection);
             }
         }
         LOGGER.info("placement: {} primary, {} rural, {} civic, {} resource,"
@@ -644,6 +645,10 @@ public final class PhasedPlanner {
         // the next district (capacity ≈ CAP/district, total ≥ houseCount).
         final boolean houseGated = type == BuildingType.HOUSE
                 && !state.residentialGates.isEmpty();
+        // 4c-a — a craft-set building must place INSIDE the reserved workshop
+        // precincts (the workshop band), like houses into residential gates.
+        final boolean workshopGated = CRAFT_SET.contains(type)
+                && !state.workshopGates.isEmpty();
 
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
@@ -662,7 +667,15 @@ public final class PhasedPlanner {
                         && ((precinct != null
                                 && insideAabb(pos.getX(), pos.getZ(), precinct))
                             || insideAny(pos.getX(), pos.getZ(), state.residentialGates)
+                            || insideAny(pos.getX(), pos.getZ(), state.workshopGates)
                             || withinResidentialBand(state, pos))) {
+                    rejZone++;
+                    continue;
+                }
+
+                // 4c-a — a craft building must lie inside a workshop precinct.
+                if (workshopGated
+                        && !insideAny(pos.getX(), pos.getZ(), state.workshopGates)) {
                     rejZone++;
                     continue;
                 }
@@ -1418,14 +1431,16 @@ public final class PhasedPlanner {
         // Batch 2 — rural nucleus types per strategy (typically
         // FARMHOUSE for AGRICULTURAL).
         if (rules != null && rules.ruralNucleusTypes().contains(type)) return 2;
+        // 4c-a — the craft set goes to the WORKSHOP BAND batch (not civic
+        // batch 3), gated into the reserved workshop precincts. This pulls
+        // BLACKSMITH/BAKERY out of the civic core → the civic precinct shrinks.
+        if (CRAFT_SET.contains(type)) return WORKSHOP_BATCH;
         // Bulk-distributed HOUSE goes to batch 5 regardless of any
         // CIVIC pull (HOUSE is "the rest of the village," not a
         // core lead).
         if (type == BuildingType.HOUSE) return 5;
         // Decorative / small.
-        if (type == BuildingType.STOCKPILE
-                || type == BuildingType.WELL
-                || type == BuildingType.WAREHOUSE) return 6;
+        if (type == BuildingType.WELL) return 6;
         // Batch 3 vs 4: rules.affinities determines which.
         // RESOURCE-preferring types go in batch 4; CIVIC / SACRED /
         // GATEWAY-preferring types go in batch 3.
@@ -1908,7 +1923,25 @@ public final class PhasedPlanner {
      *  core (TOWN_HALL, CHAPEL, INN), market (MARKET), residential (HOUSE). */
     private static final EnumSet<BuildingType> DISTRICT_TYPES = EnumSet.of(
             BuildingType.TOWN_HALL, BuildingType.CHAPEL, BuildingType.INN,
-            BuildingType.MARKET, BuildingType.HOUSE);
+            BuildingType.MARKET, BuildingType.HOUSE,
+            // 4c-a — the craft set is now a district (workshop band), so keep it
+            // under DISTRICT_ONLY_MODE (it was skipped as loose pre-4c).
+            BuildingType.BLACKSMITH, BuildingType.BAKERY, BuildingType.CARPENTRY,
+            BuildingType.MILLER, BuildingType.WOODCUTTER, BuildingType.STOCKPILE,
+            BuildingType.WAREHOUSE, BuildingType.STABLE);
+
+    /** 4c-a — the craft set routed into the WORKSHOP BAND (out of the civic
+     *  batch-3 core, so the civic precinct shrinks). Placed by the scorer GATED
+     *  into the reserved workshop precincts (the craft-quarter LOOK is 4c-b). */
+    private static final EnumSet<BuildingType> CRAFT_SET = EnumSet.of(
+            BuildingType.BLACKSMITH, BuildingType.BAKERY, BuildingType.CARPENTRY,
+            BuildingType.MILLER, BuildingType.WOODCUTTER, BuildingType.STOCKPILE,
+            BuildingType.WAREHOUSE, BuildingType.STABLE);
+    /** 4c-a — batch the craft set runs in (after the batch-3 hook reserves the
+     *  workshop precincts; NOT batch 3, so they leave the civic precinct). */
+    private static final int WORKSHOP_BATCH = 4;
+    /** 4c-a — target craft buildings per workshop precinct (sizing + count). */
+    private static final int WORKSHOP_TARGET = 4;
 
     /** Houses per residential district. Kept SMALL (4) so a block holding the
      *  big HOUSE footprint (≈20×11) stays a compact ~44×44 — small enough to
@@ -2154,6 +2187,66 @@ public final class PhasedPlanner {
         }
     }
 
+    /**
+     * 4c-a — reserves the WORKSHOP BAND: several precincts around the core (just
+     * outside the civic precinct), sized to hold the craft set, recorded in
+     * {@code workshopGates}. Reuses the residential seat machinery
+     * ({@link #seatDistrict} + {@link #residentialDirections}) — there's now a
+     * concrete second consumer, so this is reuse, not a parallel path. The craft
+     * buildings then place via the scorer GATED into these precincts (the
+     * {@code workshopGated} check in {@link #findBestCandidate}); the
+     * craft-quarter arrangement/look is 4c-b. Workshops seat AFTER residential
+     * (its hook runs first) and avoid both bands via seatDistrict's overlap
+     * reject; a bearing offset interleaves them with the residential precincts.
+     */
+    private static void reserveWorkshopDistricts(State state,
+                                                 List<BuildingType> selection) {
+        int workshopCount = 0;
+        for (BuildingType t : selection) if (CRAFT_SET.contains(t)) workshopCount++;
+        if (workshopCount == 0) {
+            LOGGER.info("workshop districts: none (no craft set selected)");
+            return;
+        }
+        BlockPos anchor = state.ctx.anchor();
+        StructureSizeCache.FootprintInfo wf =
+                defaultFootprint(state, BuildingType.BLACKSMITH);   // representative craft
+        int wPitch = Math.max(wf.width(), wf.length()) + HOUSE_GAP;
+        int per = Math.min(WORKSHOP_TARGET, workshopCount);
+        int cols = (int) Math.ceil(Math.sqrt(Math.max(1, per)));
+        int rows = (per + cols - 1) / cols;
+        int whalfX = Math.max(MIN_PLAZA_HALF, (cols * wPitch + HOUSE_GAP) / 2);
+        int whalfZ = Math.max(MIN_PLAZA_HALF, (rows * wPitch + HOUSE_GAP) / 2);
+        int reach = Math.max(whalfX, whalfZ);
+
+        int civicReach = 0;
+        if (state.civicPrecinct != null) {
+            civicReach = Math.max(
+                    (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
+                    (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
+        }
+        // Match residential's radial range (center lower-bound = clear of civic;
+        // overlap reject pushes the actual seat out past civic/residential), so
+        // the sweep range is non-empty (adding +reach to innerR emptied it).
+        int innerR = Math.max(civicReach + DISTRICT_GAP, reach + DISTRICT_GAP);
+        int outerR = Math.max(innerR, state.villageRadius - reach);
+
+        java.util.List<Double> dirs = residentialDirections(state, anchor);
+        int n = Math.max(1,
+                (workshopCount + WORKSHOP_TARGET - 1) / WORKSHOP_TARGET);
+        int seated = 0;
+        for (int k = 0; k < n; k++) {
+            // Offset from the residential bearings so workshops interleave into
+            // the sectors residential didn't take (overlap reject guarantees it).
+            double a = dirs.get(k % dirs.size()) + Math.PI / 8.0;
+            Polygon.AABB g = seatDistrict(state, anchor, a, innerR, outerR,
+                    whalfX, whalfZ, state.workshopGates);
+            if (g != null) seated++;
+        }
+        LOGGER.info("workshop districts: {} requested / {} seated"
+                + " (workshops={}, per={}, block={}x{})",
+                n, seated, workshopCount, per, 2 * whalfX, 2 * whalfZ);
+    }
+
     /** Phase 2 fix-up — fraction of the village radius at which to resolve the
      *  residential house variant for SIZING. ~LARGE-band edge: residential seats
      *  beyond the core (normDist ≳ 0.3 → `house`/`cottage`), so this is the
@@ -2200,8 +2293,8 @@ public final class PhasedPlanner {
             int innerR = Math.max(bandInnerR, reach + DISTRICT_GAP);
             int outerR = Math.min(bandOuterR, state.fmap.radius() - reach);
             outerR = Math.max(outerR, innerR);
-            Polygon.AABB gate = seatDistrict(
-                    state, anchor, startAngle, innerR, outerR, halfX, halfZ);
+            Polygon.AABB gate = seatDistrict(state, anchor, startAngle,
+                    innerR, outerR, halfX, halfZ, state.residentialGates);
             if (gate != null) { seatedOut[0] = want; return gate; }
             want = (want > RESIDENTIAL_BLOCK_TARGET)
                     ? RESIDENTIAL_BLOCK_TARGET : want - 1;
@@ -2223,7 +2316,8 @@ public final class PhasedPlanner {
         int attempts = directions.size() * rounds;
         for (int gd = 0; gd < attempts; gd++) {
             double a = directions.get(gd % directions.size());
-            Polygon.AABB g = seatDistrict(state, anchor, a, gInner, gOuter, half, half);
+            Polygon.AABB g = seatDistrict(state, anchor, a, gInner, gOuter,
+                    half, half, state.residentialGates);
             if (g != null) out.add(g);
         }
     }
@@ -2494,7 +2588,8 @@ public final class PhasedPlanner {
      *  empty corners). On success records the gate (no void reserved — houses
      *  FILL the block this pass) and returns it; null if nothing fits. */
     private static Polygon.AABB seatDistrict(State state, BlockPos anchor,
-            double startAngle, int innerR, int outerR, int halfX, int halfZ) {
+            double startAngle, int innerR, int outerR, int halfX, int halfZ,
+            List<Polygon.AABB> targetGates) {
         for (int a = 0; a < DISTRICT_ANGLE_STEPS; a++) {
             double angle = startAngle + (2 * Math.PI * a) / DISTRICT_ANGLE_STEPS;
             double cos = Math.cos(angle), sin = Math.sin(angle);
@@ -2509,12 +2604,14 @@ public final class PhasedPlanner {
                 Polygon.AABB gate = new Polygon.AABB(cx - halfX, cz - halfZ,
                         cx + halfX, cz + halfZ);
                 if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) continue;
+                // 4c-a — avoid BOTH district bands (residential + workshop) so the
+                // two never collide, regardless of which list this seat records into.
                 if (aabbOverlapsAny(gate, state.residentialGates)) continue;
-                // Record the gate for HOUSE inclusion + rural/farm exclusion. No
-                // void reservation: houses fill the block (the gate is NOT a
-                // Reservation, so houses can place inside it).
-                state.residentialGates.add(gate);
-                LOGGER.info("residential district seated: centre=({},{}) block={}x{} r={}",
+                if (aabbOverlapsAny(gate, state.workshopGates)) continue;
+                // Record the gate for inclusion-gating + rural/farm exclusion +
+                // connection. No void reservation (members fill the block).
+                targetGates.add(gate);
+                LOGGER.info("district seated: centre=({},{}) block={}x{} r={}",
                         cx, cz, 2 * halfX, 2 * halfZ, r);
                 return gate;
             }
@@ -2573,6 +2670,9 @@ public final class PhasedPlanner {
         BlockPos anchor = state.ctx.anchor();
         if (state.marketSquare != null) out.add(edgePointToward(state.marketSquare, anchor));
         for (Polygon.AABB gate : state.residentialGates) {
+            out.add(edgePointToward(gate, anchor));
+        }
+        for (Polygon.AABB gate : state.workshopGates) {   // 4c-a — connect workshops
             out.add(edgePointToward(gate, anchor));
         }
         return out;
@@ -2875,6 +2975,10 @@ public final class PhasedPlanner {
          *  interior); leftover open cells become a green via
          *  ParkCandidateFinder. Reserved after the civic core, before rural. */
         final List<Polygon.AABB> residentialGates = new ArrayList<>();
+        /** 4c-a — reserved WORKSHOP precinct AABBs (the craft set gates into
+         *  these). Kept separate from residentialGates for the per-type gate,
+         *  but both participate in seat-overlap / farm-exclusion / connection. */
+        final List<Polygon.AABB> workshopGates = new ArrayList<>();
         /** Centrality-band Part 1 — outer radius of the residential band; rural
          *  (farm) placement is kept BEYOND this so residential owns its ring.
          *  0 when no houses (farms then unconstrained). */
