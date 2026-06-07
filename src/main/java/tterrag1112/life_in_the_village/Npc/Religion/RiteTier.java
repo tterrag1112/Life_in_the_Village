@@ -52,9 +52,12 @@ public enum RiteTier {
      */
     public static RiteTier tierOf(Rite rite) {
         return switch (rite) {
-            case BLESSING, OFFERING, TITHE, CONFESSION        -> MINOR;
-            case NAMING, MARRIAGE, FUNERAL, COMING_OF_AGE     -> STANDARD;
-            case FEAST_DAY, HARVEST_THANKSGIVING              -> GRAND;
+            case BLESSING, OFFERING, TITHE, CONFESSION                 -> MINOR;
+            // ORDINATION (R1c): STANDARD — a seated village priest can ordain
+            // new clergy; it is a routine life-event-style ceremony, not a
+            // village-wide GRAND one.
+            case NAMING, MARRIAGE, FUNERAL, COMING_OF_AGE, ORDINATION  -> STANDARD;
+            case FEAST_DAY, HARVEST_THANKSGIVING                       -> GRAND;
         };
     }
 }

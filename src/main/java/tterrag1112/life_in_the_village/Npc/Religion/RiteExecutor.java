@@ -130,6 +130,7 @@ public final class RiteExecutor {
             case TITHE                -> handleTithe(rite, priest, level, now);
             case HARVEST_THANKSGIVING -> handleHarvestThanksgiving(rite, priest, level, now, village);
             case FEAST_DAY            -> handleFeastDay(rite, priest, level, now, village);
+            case ORDINATION           -> handleOrdination(rite, priest, level, now);
         };
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
@@ -145,6 +146,44 @@ public final class RiteExecutor {
     }
 
     // ── Per-rite handlers ─────────────────────────────────────────────────
+
+    private static RiteOutcome handleOrdination(RiteExecution rite, TownspersonMob priest,
+                                                ServerLevel level, long now) {
+        // Religion Rework R1c — the ceremony by which a PRIEST formally
+        // becomes clergy. The clergy specialization IS the ordained marker
+        // (no new persistent field): assigning it both records ordination
+        // and unlocks the order seam PriestBehavior reads.
+        UUID ordinandId = first(rite.participantIds());
+        TownspersonMob ordinand = ordinandId == null
+                ? null : TownspersonMob.findByUUID(level, ordinandId).orElse(null);
+        if (ordinand == null) return RiteOutcome.DISRUPTED;
+
+        // Assign the locked clergy spec via the canonical spawn-spec route —
+        // the SAME path the populator uses (idempotent: assign(force=true) +
+        // setLocked). No third assignment mechanism. This also closes the
+        // R1b gap: leader-hired priests, never run through the populator,
+        // become ordained here.
+        tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes
+                .assignInitialSpawnSpec(ordinand, ordinand.getProfession());
+
+        // Effects mirror COMING_OF_AGE in style + magnitude: piety +0.1,
+        // mood +20, OFFICIATED_BY memory + rel-with-officiant +10.
+        String religionId = ordinand.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
+        ordinand.getPiety().adjustBelief(religionId, 0.10f);
+        ordinand.getMood().applyWithRawMagnitude(MoodTrigger.GIFT_FAVORITE, 20, now);
+
+        // Self-ordination fallback (a lone capable priest with no separate
+        // senior present): still ordain, but skip the self-referential
+        // relationship/memory writes.
+        if (!priest.getUUID().equals(ordinand.getUUID())) {
+            ordinand.getNpcRelationships().adjust(priest.getUUID(), 10, now,
+                    tterrag1112.life_in_the_village.Npc.Relations.RelationshipOrigin.MET_SOCIALLY);
+            ordinand.getMemory().add(NpcMemory.create(MemoryType.OFFICIATED_BY,
+                    List.of(priest.getUUID()), now, 80,
+                    priest.getNpcName() + " ordained me into the clergy"));
+        }
+        return RiteOutcome.SUCCESSFUL;
+    }
 
     private static RiteOutcome handleComingOfAge(RiteExecution rite, TownspersonMob priest,
                                                  ServerLevel level, long now) {

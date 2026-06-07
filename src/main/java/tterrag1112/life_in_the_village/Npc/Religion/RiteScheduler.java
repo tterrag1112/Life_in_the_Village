@@ -4,12 +4,17 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -45,6 +50,77 @@ public final class RiteScheduler {
                 LOGGER.warn("[RiteScheduler] {} threw: {}", village.getName(), t.getMessage());
             }
         }
+
+        // 3. R1c — schedule ordinations for un-ordained priests (daily,
+        // one bounded pass over loaded NPCs).
+        try { scheduleOrdinations(level, vdata); }
+        catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] ordination pass threw: {}", t.getMessage());
+        }
+    }
+
+    // ── Ordination scheduling (R1c) ───────────────────────────────────────
+
+    /**
+     * Schedules an {@link Rite#ORDINATION} for every loaded PRIEST-profession
+     * NPC that is not yet ordained (lacks the clergy specialization) and has
+     * no pending ordination, provided their village has a priest qualified to
+     * officiate it. A vacant presider is left so the normal R1a/R1b claim
+     * path (a qualified senior priest) picks it up.
+     *
+     * <p>Gating on an available officiant (rather than scheduling
+     * unconditionally and relying on the no-priest SKIP edge) matters because
+     * the rite ledger is never pruned — a no-officiant ordination would SKIP
+     * and re-schedule every day, churning the ledger. Founders are
+     * pre-ordained by the populator, so the gap cases (leader hires,
+     * conversions) normally have a senior present.</p>
+     */
+    private static void scheduleOrdinations(ServerLevel level, VillageSavedData vdata) {
+        // One pass: group loaded PRIEST NPCs by their village.
+        Map<UUID, List<TownspersonMob>> priestsByVillage = new HashMap<>();
+        for (var e : level.getEntities().getAll()) {
+            if (!(e instanceof TownspersonMob npc)) continue;
+            if (npc.getProfession() != Profession.PRIEST) continue;
+            Village v = npc.getAssignedVillageName()
+                    .flatMap(vdata::getVillageByName).orElse(null);
+            if (v == null) continue;
+            priestsByVillage.computeIfAbsent(v.getId(), k -> new ArrayList<>()).add(npc);
+        }
+
+        for (Map.Entry<UUID, List<TownspersonMob>> entry : priestsByVillage.entrySet()) {
+            List<TownspersonMob> priests = entry.getValue();
+            // Need at least one priest who can officiate an ORDINATION
+            // (STANDARD tier) before scheduling — else it would only SKIP.
+            boolean officiantAvailable = priests.stream()
+                    .anyMatch(p -> RiteCapability.canOfficiate(p, Rite.ORDINATION));
+            if (!officiantAvailable) continue;
+
+            Village village = vdata.getVillageById(entry.getKey()).orElse(null);
+            if (village == null) continue;
+
+            for (TownspersonMob p : priests) {
+                if (isOrdained(p)) continue;
+                if (hasPendingOrdination(level, village.getId(), p.getUUID())) continue;
+                schedule(level, village, Rite.ORDINATION, List.of(p.getUUID()), 0L);
+            }
+        }
+    }
+
+    /** Ordained = carries any clergy (PRIEST-profession) specialization.
+     *  Forward-compatible with future religion orders, which are also
+     *  PRIEST specializations. */
+    private static boolean isOrdained(TownspersonMob npc) {
+        return npc.getSpecializationComponent().get()
+                .map(def -> def.profession() == Profession.PRIEST)
+                .orElse(false);
+    }
+
+    private static boolean hasPendingOrdination(ServerLevel level, UUID villageId,
+                                                UUID ordinandId) {
+        return RiteSavedData.get(level).ritesForVillage(villageId).stream()
+                .anyMatch(r -> r.type() == Rite.ORDINATION
+                        && r.outcome() == RiteOutcome.PENDING
+                        && r.participantIds().contains(ordinandId));
     }
 
     /** Schedule a one-shot rite for an external trigger (lifecycle event). */

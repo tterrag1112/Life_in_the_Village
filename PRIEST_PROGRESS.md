@@ -512,3 +512,195 @@ regression; no new brain memory; `RiteTier` import added, `Identifier`/
    priest still performs it — preference, not a gate.
 6. No movement freeze / brain-tick error (no new memory); `/tick` shows no
    per-tick regression (preference is a bounded scan behind `idleCooldown`).
+
+---
+
+## Religion Rework — Phase R1c: Ordination / initiation rite
+
+Adds the ordination rite — the officiated ceremony by which a PRIEST-
+profession NPC formally becomes clergy. Double duty: gives "joining the
+priesthood" a real on-theme ceremony, and becomes the canonical hook
+that assigns the clergy specialization, closing the R1b gap (leader-
+hired / non-populator priests never received the generalist spec). Scope
+is the rite + its handler + the daily trigger; no apprenticeship, no
+religion-specific orders, no player verb.
+
+### Disposition (investigation — tree verified, findings)
+
+- **Exhaustive `Rite` switches** = exactly three: `RiteTier.tierOf`,
+  `RiteExecutor.runOne` (`switch (rite.type())`), `PriestBehavior.riteLabel`.
+  All three updated. `ReligionDebugCommand` iterates `Rite.values()` for
+  its `/religion rite <type>` suggestions, so ORDINATION is auto-listed —
+  no command change. `RiteLifeEventProducer` is an `if/else if` chain on
+  *event* type (not a `Rite` switch) and is life-event-driven; ordination
+  is profession-driven, so it correctly needs no arm there. Switch
+  expressions are compiler-exhaustive, so a missed arm fails the build.
+- **`Religion.ritualises(Rite)`** filters per-religion rite sets, but only
+  `RiteLifeEventProducer` and `scheduleCalendarRites` consult it;
+  `RiteScheduler.schedule` does not. Scheduling ORDINATION directly
+  therefore bypasses the per-religion filter — correct, since ordination
+  is universal/profession-driven, not a per-religion ritual choice.
+  `ReligionRegistry` rite lists left untouched (no religion needs to
+  "opt in" to ordaining its own clergy).
+- **`RiteSavedData` is never pruned** — completed/SKIPPED rites accumulate
+  in the map forever. This shaped the trigger design (below): a
+  no-officiant ordination that resolves to SKIPPED would re-schedule daily
+  and churn the un-pruned ledger, so the trigger gates on a capable
+  officiant being present instead of scheduling unconditionally.
+- **How an NPC becomes `Profession.PRIEST`**: (a) the populator
+  (`assignInitialSpawnSpec` runs → spawns already-ordained), and (b)
+  `CareerTransitions.changeProfession` via `VillageLeaderBehavior`
+  leader-hire / career change (no spec assigned — the R1b gap). The
+  trigger covers (b).
+- Confirmed `NpcSpecializationTypes.assignInitialSpawnSpec` (opt-in set
+  `{PRIEST}`, assigns the locked `PRIEST_CLERIC` generalist via
+  `assign(force=true)`+`setLocked`) and `PriestBehavior.findClaimableRite`
+  (claims by tier preference within the R1a gate) / `readOrderSeam`.
+
+### What shipped
+
+**1. `Rite.ORDINATION`** — appended (codec round-trips by `name()`, so
+pre-R1c saves load clean). Tier = **STANDARD** in `RiteTier.tierOf` (a
+seated village priest can ordain new clergy; routine life-event-style
+ceremony, not a GRAND village-wide one). `PriestBehavior.riteLabel` →
+"an ordination".
+
+**2. `RiteExecutor.handleOrdination`** — on success, for the ordinand
+(first participant): assigns the locked clergy spec via the canonical
+route (`NpcSpecializationTypes.assignInitialSpawnSpec(ordinand,
+ordinand.getProfession())` — the SAME path the populator uses, idempotent,
+no third assignment mechanism); then piety +0.10 toward primary religion,
+mood +20 (`GIFT_FAVORITE`), an `OFFICIATED_BY` memory naming the
+officiant, and a +10 relationship with the officiant — mirroring
+`handleComingOfAge`. The officiant still earns tier-scaled SOCIAL XP
+(STANDARD → +10) through the unchanged R1a XP site. Self-ordination
+fallback: if officiant == ordinand, still ordain but skip the
+self-referential relationship/memory writes.
+
+**3. Daily ordination trigger (`RiteScheduler.scheduleOrdinations`)** —
+runs once per daily tick (after `runDue`/calendar). One bounded pass over
+loaded entities groups PRIEST NPCs by village; for each village that has
+at least one priest able to officiate an ORDINATION, every un-ordained
+priest (no clergy spec) with no pending ordination gets an ORDINATION
+scheduled with a vacant presider, performed through the normal R1a/R1b
+claim path. "Ordained" = presence of any PRIEST-profession specialization
+(no new persistent field — forward-compatible with future orders).
+
+### Tie-In Audit
+
+- **Upstream feeders** — both `Profession.PRIEST` paths covered: the
+  populator pre-ordains (spec assigned at spawn), and the trigger catches
+  the leader-hire / `changeProfession` gap (un-ordained → scheduled
+  ordination). The trigger reads profession + spec; it does not itself set
+  profession.
+- **Downstream callers** — the three `Rite` switch consumers updated;
+  `readOrderSeam` / `SpecializationGate` read the clergy spec (now set via
+  the ceremony as well as spawn) and are unaffected by the new value;
+  `RiteScheduler.dailyTick` is the sole driver and gained the pass;
+  `RiteScheduler.schedule` reused unchanged.
+- **Sibling systems** — Specialization: the assignment is idempotent
+  (`force=true`), so re-running on an already-specced NPC is a no-op-equiv;
+  the trigger excludes already-ordained NPCs anyway. Piety/mood/memory/
+  relationships: reuse the existing component APIs and `OFFICIATED_BY`
+  memory type — no new memory type, no new mood trigger.
+- **Exhaustive switches** — `Rite` (3, all updated, compiler-checked);
+  `RiteTier` unchanged (ORDINATION maps into the existing STANDARD arm).
+
+### Simplification Sweep
+
+Religion + specialization classes in scope: `Rite` (+1 value), `RiteTier`
+(+1 arm), `RiteExecutor` (+1 handler), `RiteScheduler` (+ trigger),
+`PriestBehavior` (+1 label). **Overlap noted and intentionally kept as two
+entry points to the same single assignment route**: the populator's
+`assignInitialSpawnSpec` (worldgen priests spawn pre-ordained, so a
+founding temple always has a senior officiant — avoids a bootstrap with no
+one to officiate) and `handleOrdination` (ceremony-ordained, for the gap
+cases). Both call the identical `assignInitialSpawnSpec` helper — one
+assignment mechanism, two triggers. They do not consolidate: pre-ordaining
+founders at spawn is deliberately not a scheduled ceremony (no senior
+would exist to perform it). No orphans introduced.
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The trigger writes only to the rite
+ledger (`RiteSavedData`) and reads entity state; the handler writes
+piety/mood/relationship/`NpcMemory` (the narrative memory ledger, not a
+brain memory module). No `brainMemories()` change → no freeze risk.
+
+### Deviations from prompt
+
+- **Trigger gates on a capable officiant present**, rather than scheduling
+  unconditionally and leaning on the no-priest SKIP edge. The prompt
+  endorses the SKIP-edge approach, but `RiteSavedData` never prunes, so an
+  unconditional schedule would churn the ledger with a fresh SKIPPED
+  ordination every day for any un-ordained priest with no officiant.
+  Gating yields the same user-visible behaviour ("waits until a senior is
+  present") without the leak.
+- **Self-ordination is allowed as a fallback** (a lone capable priest with
+  no separate senior ordains themselves), rather than forbidding it and
+  risking a never-ordained priest. The handler suppresses the self-
+  referential relationship/memory in that case. With populator pre-
+  ordination this path is rare. Forbidding self-claim would mean special-
+  casing the shared `findClaimableRite` path, which the constraints
+  discourage; left out.
+- **`ReligionRegistry` rite lists untouched** — ordination is universal,
+  not a per-religion opt-in, and `schedule` doesn't consult `ritualises`.
+
+### Out-of-scope but flagged
+
+- **Clergy apprenticeship** (mentor-accelerated training, initiate→
+  journeyman→master ladder, PRIEST masterpiece) — R1d; `Npc/Apprentice/`
+  untouched this phase.
+- **Religion-specific orders / multiple specializations** — content/multi-
+  religion phase; they register as gated `PRIEST_*` siblings and assign
+  over the locked generalist with `force=true`. `isOrdained` already treats
+  any PRIEST-profession spec as ordained, so it is forward-compatible.
+- **Player-commissioned ordination verb / GUI** — player phase.
+- **Senior-officiates-not-self preference**: when both a senior and a
+  capable un-ordained ordinand are loaded, whichever priest's
+  `PriestBehavior` runs first claims; the ordinand could self-officiate
+  (still correctly ordained, minus the self-skipped relationship/memory).
+  A claim-side "don't ordain yourself when a senior exists" preference is
+  deferred (would touch the shared claim path).
+- **Ledger pruning** of completed/SKIPPED rites is a pre-existing
+  `RiteSavedData` characteristic, not introduced here; flagged for a future
+  housekeeping pass (one SUCCESSFUL ordination per priest persists — small,
+  bounded).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (neoform-runtime POM 403,
+build fails before compilation). Static review: all three `Rite` switches
+carry an ORDINATION arm (compiler-exhaustive); `handleOrdination` reuses
+the canonical spec route + existing effect APIs; the trigger is a daily,
+bounded, single entity pass gated on an available officiant + pending-
+dedup; no new brain memory; no codec field added (ordained = spec
+presence); imports (`TownspersonMob`, `Profession`, `Map`/`HashMap`/
+`ArrayList`) added to `RiteScheduler`. Runtime-sensitive (spawn paths,
+claim timing) — wants an in-game check.
+
+### Smoke test
+
+1. Spawn a TEMPLE with a senior PRIEST (populator path). `/liv npc` (spec
+   readout) → confirm the senior already carries the **locked**
+   `lit:priest/cleric` spec (pre-ordained at spawn).
+2. Create a NEW priest in the same village via the leader-hire / career-
+   change path (e.g. let the village leader hire an unemployed adult into
+   a CHAPEL, or `/`-set their profession to PRIEST). Confirm they start
+   **without** the clergy spec (un-ordained).
+3. Advance ~1 day (`/time add 24000` or wait a daily tick). Confirm an
+   ORDINATION is scheduled for the new priest (e.g. `/religion`-side
+   inspection or the priest's brain showing "Officiating an ordination"
+   on the senior).
+4. Confirm the SENIOR priest claims + officiates it (capability-gated,
+   STANDARD tier). Afterward: the new priest carries the locked
+   `priest/cleric` spec, gained piety/mood, has an "ordained me into the
+   clergy" memory naming the senior, and a relationship bump with them.
+5. Manual fast-path: `/religion rite ORDINATION <newPriestUuid>` schedules
+   it immediately for a hands-on check.
+6. No-officiant case: in a village whose only priest is an un-ordained,
+   ORDINATION-incapable NPC (low SOCIAL/LITERACY, no seat), confirm NO
+   ordination is scheduled (no ledger churn) and nothing mis-applies; once
+   a qualified priest is present, the ordination schedules and completes.
+7. No movement freeze / brain-tick error (no new brain memory); `/tick`
+   shows no per-tick regression (the trigger is one bounded daily pass).
