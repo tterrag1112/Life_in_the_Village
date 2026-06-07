@@ -2530,8 +2530,10 @@ sampler is ≤6 block probes, once per TIDY pick. Honours L0's perf discipline.
   combat nav claims). Doesn't interrupt sleep.
 - **Siblings — wander reconciliation:** retired the legacy GOAL
   `WanderInBuildingGoal` (removed from `ProfessionGoalFactory`, class
-  deleted) — as a Goal holding MOVE it suppressed the brain director, and
-  the Goal→Brain migration already moved wanders to the brain. Kept
+  deleted) — a redundant footprint wander superseded by the brain wanders,
+  per the Goal→Brain migration. (Correction, see L1-fix2: it did NOT hold
+  the MOVE flag — it used `setFlags(EnumSet.noneOf(...))` — so it was not
+  suppressing the director; the deletion still stands as dedup.) Kept
   `InternalBuildingWanderBehavior` as the footprint-scoped special case.
   Three overlapping wanders → two (director anywhere + footprint special
   case).
@@ -2744,3 +2746,59 @@ set-not-erase so stop() can't wipe.
 4. A momentarily nav-blocked worker is NOT hijacked (temporary gates don't
    set the signal).
 5. No regression to farming/mining/shepherding work.
+
+---
+
+## Liveliness L1-fix2 — register the new brain memories (total movement freeze)
+
+**Critical regression:** after L1/L1-fix/L1b no NPC walked at all (any
+profession, any phase, all day); LOOK behaviors (greeting/conversation/
+head-turn) still worked.
+
+**Root cause:** the two memories added in L1 —
+`NpcMemoryTypes.IDLE_DIRECTOR_COOLDOWN` and `NO_ACTIONABLE_WORK` — were
+defined in `NpcMemoryTypes` but never added to
+`TownspersonMob.brainMemories()` (the list passed to `brainProvider()`).
+Writing an unregistered brain memory faults `brain.tick()`, which aborts
+`customServerAiStep` for that NPC — so the CORE `MoveToTargetSink` never
+ticks, `WALK_TARGET` is never consumed, and ALL walking dies globally. LOOK
+survived because it runs on the GoalSelector, not the brain. Fault sites:
+`IdleDirectorBehavior.start()` (arming `IDLE_DIRECTOR_COOLDOWN`) and
+`AbstractProductionBehavior.goIdle` / `FarmerBehavior.goIdle` /
+`MinerBehavior.goIdle` (setting `NO_ACTIONABLE_WORK`).
+
+**Fix (one edit):** added both `MemoryModuleType`s to the
+`brainMemories()` `ImmutableList.of(...)` (after `CONVERSATION_CANDIDATES`),
+matching the pattern every other cooldown memory already follows
+(SIT_COOLDOWN, HOBBY_COOLDOWN, MEAL_COOLDOWN, …).
+
+**Preflight done:** grepped every `setMemory`/`setMemoryWithExpiry` in the
+L1-touched behaviors — all targets (WALK_TARGET, CARGO_DESTINATION,
+WORK_PHASE, CARRYING_DISPLAY_ITEM, IDLE_DIRECTOR_COOLDOWN,
+NO_ACTIONABLE_WORK) are now in `brainMemories()`. Each new memory appears
+exactly once.
+
+**Rationale correction (no functional change):** the L1 note that
+`WanderInBuildingGoal` "held the MOVE flag and suppressed the director" was
+wrong — it used `setFlags(EnumSet.noneOf(...))` (no MOVE). Fixed the L1 log
+note and the `ProfessionGoalFactory` comment; the deletion still stands as
+dedup (redundant footprint wander superseded by the brain wanders).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. This is a RUNTIME fault
+(unregistered-memory crash in `brain.tick()`), not a compile error, so it
+**really needs the in-game check** below. Static review: both types now in
+`brainMemories()` exactly once; balance OK; no other unregistered brain
+memory written by the L1 behaviors.
+
+### Smoke test
+
+1. Load the village: NPCs walk again — profession movement returns
+   immediately; idle NPCs stroll/putter via the director.
+2. `/liv npc brain nearest` on an idle crafter: `IdleDirectorBehavior`
+   running ("Tidying the workshop"/"Strolling the village") AND the NPC
+   physically moves.
+3. No brain-tick errors in the server log (the fault is gone).
+4. The whole L1/L1-fix/L1b effort now actually manifests (idle NPCs active,
+   working NPCs working) — this unblocks it.
