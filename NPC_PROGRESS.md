@@ -2822,3 +2822,90 @@ restored in checkExtra; all touched memories registered.
    production resumes (no mid-work hijack).
 4. No movement freeze / brain-tick errors (L1-fix2 trap not reintroduced).
 5. Variety by trait; cooldown prevents thrashing.
+
+---
+
+## Liveliness L3 — ambient richness (gathering + props + jitter)
+
+Three independent parts, staged as two commits (C separately; A+B together
+since both use the shared `AmbientProps`).
+
+### Part C — per-NPC schedule jitter (committed first)
+
+NPCs flipped phases in lockstep (the activity table `NpcSchedules.activityAt`
+is village-synchronized). Added `ScheduleResolver.phaseJitter(npc)` — a
+deterministic ±300-tick offset from `UUID.hashCode()` (`Math.floorMod`,
+no allocation) — applied to the within-day lookup in `phaseAt` AND to
+`NpcSchedules.tick`'s activity lookup (same offset → consistent). `phaseAt`'s
+`resolveDaily` still uses the real tick, so day-of-week/day-off are
+unaffected; `isWorkTime` routes through `phaseAt` so it's jittered too.
+Bounded so work stays in its window and phases don't reorder. Perf: a hash +
+floorMod per call — does NOT worsen the known per-tick `resolveDaily`
+allocation caveat (that caching is the deferred real-opt pass, not done here).
+
+### Part A — social gathering points
+
+`GatherAtSquareBehavior` (new): during SOCIAL, an idle NPC with no
+higher-priority social task drifts to the town square
+(`HobbyLocationResolver.resolve(HobbyLocation.TOWN_SQUARE, …)`) and lingers
+within a small radius, so the pairing-based conversation behaviors
+(`Engage`/`Initiate`) — which were SOCIAL-only with nothing bringing NPCs
+together — now actually fire. Registered LOW in SOCIAL (above only
+PersonalSpace), so it yields to eat/converse/court/mentor/hobby. Gated on
+`WALK_TARGET` absent + `canSteerNavigation` + a new `GATHER_COOLDOWN`
+(120–400 ticks); resolves the square once per pick (no per-tick scan).
+New memory `GATHER_COOLDOWN` registered in `NpcMemoryTypes` AND
+`brainMemories()` (L1-fix2 trap honoured).
+
+### Part B — carry / props everywhere
+
+`AmbientProps` (new util): `displayItem(npc)` = first inventory item, else a
+small static profession→prop map (blacksmith→axe, farmer→hoe, miner→pickaxe,
+baker→bread, merchant→emerald, librarian→book, …), else empty;
+`applyDisplay(npc)` writes `CARRYING_DISPLAY_ITEM` (rendered by CORE
+`CarryHoldAnimationBehavior`). Wired into the idle director's STROLL + TIDY
+and the gathering walk (TIDY previously used a local first-item helper, now
+removed in favour of the shared util with the profession fallback).
+Cosmetic only — never touches real inventory; cleared on stop.
+
+### Tie-In / Coexistence
+
+- Gathering yields to real social tasks (priority) and to nav
+  (`canSteerNavigation`); production never runs in SOCIAL. Same nav-arbitration
+  alternation as the idle director — no flicker.
+- No per-tick world scans: gather/jitter are O(1)-ish; carry is one inventory
+  walk per pick.
+- Memory safety: the only new brain memory (`GATHER_COOLDOWN`) is registered
+  in `brainMemories()`; carry reuses `CARRYING_DISPLAY_ITEM` (already
+  registered). No L1-fix2 freeze risk.
+
+### Deviations / flagged
+
+- Jitter applied at BOTH `ScheduleResolver.phaseAt` and `NpcSchedules.tick`
+  (the prompt named only ScheduleResolver) — needed because the visible
+  Activity transitions come from `NpcSchedules`, not `phaseAt`. Same offset,
+  so consistent.
+- Profession→prop map is a small static code map (flag if it grows /
+  data-driven later).
+- Gathering walks to a random spot within 4 blocks of the square; if
+  occasionally unwalkable, pathfinding just gets the NPC close — acceptable.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: all files
+balanced (NpcSchedules paren "mismatch" is a pre-existing comment
+false-positive — interval `[0, 24000))`); `GATHER_COOLDOWN` registered in
+brainMemories; no unregistered-memory write; unused `ItemStack` import
+removed from the director.
+
+### Smoke test
+
+1. SOCIAL/leisure: idle NPCs walk to the square/well and linger; co-located
+   NPCs strike up conversations (`/liv npc brain` shows gathering/conversation).
+2. Strolling/gathering NPCs visibly hold an item (tool/goods); clears on stop;
+   no inventory change.
+3. At a phase boundary, NPCs start work/wake at staggered times, not all at
+   once.
+4. Work still happens in valid windows; no movement freeze / brain-tick error
+   (L1-fix2 clear); `/tick` no regression.
+5. Production/hobbies/greeting still work — gathering yields to real tasks.

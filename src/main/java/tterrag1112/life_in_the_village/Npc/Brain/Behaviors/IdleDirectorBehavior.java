@@ -8,7 +8,6 @@ import net.minecraft.world.entity.ai.behavior.Behavior;
 import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.util.DefaultRandomPos;
-import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.Vec3;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
@@ -130,11 +129,12 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
     }
 
     private boolean doStroll(TownspersonMob entity) {
-        entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         Vec3 dest = DefaultRandomPos.getPos(entity, STROLL_RADIUS, STROLL_VERT);
         if (dest == null) return false;
         NpcBehaviorHelpers.walkTo(entity, BlockPos.containing(dest), STROLL_SPEED);
         entity.setCurrentActivity("Strolling the village");
+        // L3 part B — carry a cosmetic prop while strolling (cleared on stop).
+        AmbientProps.applyDisplay(entity);
         return true;
     }
 
@@ -157,23 +157,10 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
         if (pick == null) return false;
         NpcBehaviorHelpers.walkTo(entity, pick, STROLL_SPEED);
         entity.setCurrentActivity("Tidying the workshop");
-        // Cosmetic carry overlay — show whatever the NPC already holds (cheap:
-        // no world scan). CarryHoldAnimationBehavior (CORE) renders it.
-        ItemStack display = firstInventoryItem(entity);
-        if (!display.isEmpty()) {
-            entity.getBrain().setMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get(),
-                    display.copyWithCount(1));
-        }
+        // Cosmetic carry overlay (held item / profession prop). CORE
+        // CarryHoldAnimationBehavior renders it; cleared on stop.
+        AmbientProps.applyDisplay(entity);
         return true;
-    }
-
-    private static ItemStack firstInventoryItem(TownspersonMob entity) {
-        var inv = entity.getPersonalInventory();
-        for (int i = 0; i < inv.getContainerSize(); i++) {
-            ItemStack s = inv.getItem(i);
-            if (!s.isEmpty()) return s;
-        }
-        return ItemStack.EMPTY;
     }
 
     /** Cheap footprint walkable sampler (mirrors InternalBuildingWanderBehavior). */

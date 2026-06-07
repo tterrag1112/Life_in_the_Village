@@ -1541,7 +1541,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_DIRECTOR_COOLDOWN.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
-                        .NO_ACTIONABLE_WORK.get()
+                        .NO_ACTIONABLE_WORK.get(),
+                // Liveliness L3 — social gathering cooldown (L1-fix2: registered).
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .GATHER_COOLDOWN.get()
         );
     }
 
@@ -1697,6 +1700,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .SitAtFurnitureBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .FollowEscortLeaderBehavior(),
+                        // Liveliness L3 — social gathering, low priority: below
+                        // every real social task (eat/converse/court/mentor/
+                        // hobby) so it only pulls otherwise-idle NPCs to the
+                        // square, where the conversation behaviors then pair them.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GatherAtSquareBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );
