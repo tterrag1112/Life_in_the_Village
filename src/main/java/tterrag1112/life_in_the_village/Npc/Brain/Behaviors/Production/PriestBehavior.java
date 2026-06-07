@@ -383,6 +383,8 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             case FEAST_DAY            -> "a feast day";
             case ORDINATION           -> "an ordination";
             case CONSECRATION         -> "a consecration";
+            case VIGIL                -> "a vigil";
+            case PURIFICATION         -> "a purification";
         };
     }
 }

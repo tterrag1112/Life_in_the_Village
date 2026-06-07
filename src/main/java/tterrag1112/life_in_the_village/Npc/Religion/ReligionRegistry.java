@@ -113,7 +113,10 @@ public final class ReligionRegistry {
                         "Speak truly to the cloth."),
                 List.of(Rite.CONFESSION, Rite.BLESSING, Rite.NAMING,
                         Rite.FUNERAL, Rite.OFFERING, Rite.TITHE,
-                        Rite.FEAST_DAY),
+                        Rite.FEAST_DAY,
+                        // R3b-2 — the confession-centric Loom observes communal
+                        // purification (group atonement).
+                        Rite.PURIFICATION),
                 List.of("loom_room", "household"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("First Threading",  30),
@@ -133,7 +136,10 @@ public final class ReligionRegistry {
                         "Salt remembers."),
                 List.of(Rite.BLESSING, Rite.FEAST_DAY, Rite.OFFERING,
                         Rite.NAMING, Rite.FUNERAL, Rite.MARRIAGE,
-                        Rite.HARVEST_THANKSGIVING),
+                        Rite.HARVEST_THANKSGIVING,
+                        // R3b-2 — Tidecall keeps the "Storm's Vigil" (a sea-
+                        // mourning vigil for those lost to the deep).
+                        Rite.VIGIL),
                 List.of("dock", "shore", "tidepool"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("Spring Tide",     45),
@@ -153,7 +159,10 @@ public final class ReligionRegistry {
                         "Stand for those behind you."),
                 List.of(Rite.COMING_OF_AGE, Rite.MARRIAGE, Rite.NAMING,
                         Rite.FUNERAL, Rite.BLESSING, Rite.OFFERING,
-                        Rite.TITHE, Rite.FEAST_DAY),
+                        Rite.TITHE, Rite.FEAST_DAY,
+                        // R3b-2 — the martial Forge Creed keeps the "Anvil
+                        // Vigil" (a vigil of resolve before the ancestors).
+                        Rite.VIGIL),
                 List.of("forge", "barracks", "ancestor_hall"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("Founding Day",     12),

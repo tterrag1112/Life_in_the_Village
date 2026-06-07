@@ -56,7 +56,10 @@ public enum RiteTier {
             // ORDINATION (R1c): STANDARD — a seated village priest can ordain
             // new clergy; it is a routine life-event-style ceremony, not a
             // village-wide GRAND one.
-            case NAMING, MARRIAGE, FUNERAL, COMING_OF_AGE, ORDINATION  -> STANDARD;
+            // VIGIL / PURIFICATION (R3b-2): STANDARD — pastoral community rites
+            // a seated village priest leads, not grand celebrations.
+            case NAMING, MARRIAGE, FUNERAL, COMING_OF_AGE, ORDINATION,
+                 VIGIL, PURIFICATION                                  -> STANDARD;
             // CONSECRATION (R3b-1): GRAND — consecrating a sacred site is a
             // village-wide spiritual act, on par with the great ceremonies, so
             // it requires a competent officiant (seated priest or high skill).

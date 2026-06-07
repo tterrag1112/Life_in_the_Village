@@ -31,7 +31,18 @@ public enum Rite {
      *  building field), which grants the village a small ongoing blessing while
      *  the building stands. The rite's first participant is the BUILDING's id,
      *  not an NPC. */
-    CONSECRATION;
+    CONSECRATION,
+    // ── Religion Rework R3b-2 ────────────────────────────────────────────
+    /** Communal vigil — a solemn village-wide observance of resolve / shared
+     *  mourning (the somber counterpart to a feast). Gathering-route rite
+     *  (EventType.VIGIL); scheduled off the religion calendar's Vigil-named
+     *  days. Village-wide effect (no participants). */
+    VIGIL,
+    /** Communal purification / atonement — the group form of confession:
+     *  eases distress and clears MELANCHOLY for the afflicted participants
+     *  WITHOUT the per-confessor knowledge ledger entry. Gathering-route rite
+     *  (EventType.PURIFICATION); distress-triggered. */
+    PURIFICATION;
 
     public static final Codec<Rite> CODEC =
             Codec.STRING.xmap(Rite::valueOf, Rite::name);

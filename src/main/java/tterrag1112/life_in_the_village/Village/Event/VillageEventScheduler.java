@@ -8,11 +8,19 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Health.HealthCondition;
+import tterrag1112.life_in_the_village.Npc.Religion.Religion;
+import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
+import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
+import tterrag1112.life_in_the_village.Npc.Religion.ReligiousCalendar;
+import tterrag1112.life_in_the_village.Npc.Religion.Rite;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteScheduler;
 import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -49,6 +57,8 @@ public class VillageEventScheduler {
         // the scheduler tolerates concurrent events of different
         // categories from Phase 5 onward.
         checkCulturalHolyDay(level, village, data, currentTick);
+        checkCalendarVigil(level, village, data, currentTick);   // R3b-2
+        checkPurification(level, village, data, currentTick);    // R3b-2
         checkCrises(level, village, data, currentTick);
 
         // Don't pile up Phase-3-style ambient events — wait until the
@@ -139,6 +149,93 @@ public class VillageEventScheduler {
         if (already) return;
 
         scheduleEvent(level, village, data, type, currentTick);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Religion Rework R3b-2: Vigil (calendar) + Purification (distress)
+    // ─────────────────────────────────────────────────────────────────
+
+    /** Number of MELANCHOLY villagers that triggers a communal purification. */
+    private static final int PURIFICATION_DISTRESS_THRESHOLD = 3;
+    /** Re-trigger lockout for purification (mirrors the crisis lockout). */
+    private static final long PURIFICATION_LOCKOUT_TICKS = 14L * 24000L;
+
+    /**
+     * R3b-2 — schedules a VIGIL gathering when today (in the religion's 365-day
+     * liturgical calendar) matches one of the village religion's "Vigil"-named
+     * holy days (Forge Creed "Anvil Vigil", Tidecall "Storm's Vigil"). Revives
+     * the religion calendar's named days, which nothing has consumed since R2a
+     * removed the calendar-rite path. The liturgical calendar (365-day,
+     * {@link ReligiousCalendar#DAYS_PER_YEAR}) is distinct from the 96-day
+     * seasonal cycle, so it uses its own day-of-year here.
+     */
+    private static void checkCalendarVigil(ServerLevel level, Village village,
+                                           VillageSavedData data, long currentTick) {
+        if ((currentTick % 24000L) != 0L) return;   // once per day
+        Religion religion = ReligionRegistry.get(
+                ReligionContent.villageReligionId(level, village));
+        if (religion == null) return;
+
+        int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
+        boolean vigilToday = false;
+        for (Map.Entry<String, Integer> e : religion.calendar().holyDaysByName().entrySet()) {
+            if (!e.getKey().toLowerCase(java.util.Locale.ROOT).contains("vigil")) continue;
+            Integer eff = religion.calendar().effectiveDayOfYear(e.getKey());
+            if (eff != null && eff == litDay) { vigilToday = true; break; }
+        }
+        if (!vigilToday) return;
+
+        // De-dupe: one VIGIL per village per day.
+        boolean already = data.getAllEvents().stream()
+                .filter(ev -> ev.getVillageId().equals(village.getId()))
+                .anyMatch(ev -> ev.getType() == VillageEvent.EventType.VIGIL
+                        && currentTick - ev.getStartTick() < 24000L);
+        if (already) return;
+
+        scheduleEvent(level, village, data, VillageEvent.EventType.VIGIL, currentTick);
+    }
+
+    /**
+     * R3b-2 — distress-driven communal purification. When enough villagers carry
+     * MELANCHOLY and the village religion ritualises PURIFICATION, schedules a
+     * PURIFICATION gathering with the afflicted as required attendees (they flow
+     * into the blessing rite's participants, which clears their MELANCHOLY). A
+     * lockout bounds re-scheduling (the unpruned ledger / event store); not
+     * officiant-gated (mirrors the crisis path — the gathering is the
+     * observance, the rite is its best-effort blessing).
+     */
+    private static void checkPurification(ServerLevel level, Village village,
+                                          VillageSavedData data, long currentTick) {
+        if ((currentTick % 24000L) != 0L) return;   // once per day
+        if (!RiteScheduler.villageRitualises(level, village, Rite.PURIFICATION)) return;
+
+        // Lockout: skip if a recent PURIFICATION already ran for this village.
+        boolean recent = data.getAllEvents().stream()
+                .filter(ev -> ev.getVillageId().equals(village.getId()))
+                .anyMatch(ev -> ev.getType() == VillageEvent.EventType.PURIFICATION
+                        && currentTick - ev.getStartTick() < PURIFICATION_LOCKOUT_TICKS);
+        if (recent) return;
+
+        List<UUID> afflicted = afflictedVillagers(level, village, data);
+        if (afflicted.size() < PURIFICATION_DISTRESS_THRESHOLD) return;
+
+        List<UUID> invited = EventAttendance.villageNpcIds(level, village, data);
+        VillageEventScheduler.scheduleLifeEvent(level, village,
+                VillageEvent.EventType.PURIFICATION, currentTick + 1200L,
+                null, afflicted, invited);
+    }
+
+    /** Loaded village NPCs currently carrying MELANCHOLY. */
+    private static List<UUID> afflictedVillagers(ServerLevel level, Village village,
+                                                 VillageSavedData data) {
+        List<UUID> out = new ArrayList<>();
+        village.getBounds(data).ifPresent(bounds ->
+                level.getEntitiesOfClass(TownspersonMob.class, bounds.inflate(32),
+                                m -> m.getAssignedVillageName()
+                                        .map(n -> n.equals(village.getName())).orElse(false)
+                                        && m.getHealthComponent().hasCondition(HealthCondition.MELANCHOLY))
+                        .forEach(m -> out.add(m.getUUID())));
+        return out;
     }
 
     private static VillageEvent.EventType holyDayTypeFor(String cultureId) {

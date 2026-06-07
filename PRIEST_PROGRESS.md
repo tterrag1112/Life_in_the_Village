@@ -1712,3 +1712,202 @@ same-package (no imports); `Set`/`HashSet` imports added. Runtime-sensitive
    priest is present.
 6. Confirm a sparse/unprofiled case (a faith with no CONSECRATION profile, if
    added later) falls back to DEFAULT (×1.0, no flavor) with no error.
+
+---
+
+## Religion Rework — Phase R3b-2: Vigil + Purification/Atonement
+
+Second of the R3b new-ceremony mini-arc. Adds two communal, attendee-
+affecting ceremonies — both via the **gathering route** of the R3b-1
+"Add-a-ceremony pattern".
+
+### Disposition (verified; key findings)
+
+- **Followed the R3b-1 pattern doc.** Consecration (standalone new-rite +
+  daily scan) and the holy-day route (EventType → existing rite via
+  `CeremonyBlessings`) are the worked examples. Vigil/Purification are
+  *communal + attendee-affecting*, so both take the **gathering route** (new
+  `EventType` + new `Rite`).
+- **EventType exhaustive switches a new value MUST satisfy** (no default):
+  `VillageEvent.category()`, `VillageEvent.getDurationTicks()`,
+  `EventAttendance.baseline()`. The rest (`isAnnual`/`annualDay`/
+  `minProsperity`/`randomChance`, `EventEffects.onEventStart`/`applyPlayerBuff`/
+  `formatEventName`, `VillageEventScheduler` histType, `CeremonyBlessings
+  .blessingRiteFor`) all have `default`s — safe. `EventEffects.dispatchStart`
+  no-ops for unregistered types (`if (handler == null) return;`), so a new
+  RELIGIOUS_RITE EventType's effect correctly comes from its blessing rite,
+  exactly like the existing holy-day types.
+- **MISMATCH — "reuse the Anvil Vigil holy day" needs the calendar revived.**
+  The religion calendar's named days (`religion.calendar().holyDaysByName()`,
+  incl. Forge Creed "Anvil Vigil" @150, Tidecall "Storm's Vigil" @200) are
+  **dead** — only `/religion calendar` display reads them. R2a removed the
+  `scheduleCalendarRites` path that consumed them; holy-day scheduling now uses
+  the *Culture's* `holyDayInterval` (one EventType per culture). So Vigil's
+  trigger had to RE-WIRE the religion-calendar named-day path.
+- **MISMATCH — two year-lengths.** `ReligiousCalendar.DAYS_PER_YEAR = 365`
+  (the liturgical calendar's space, what the old calendar-rite code used) but
+  `SeasonTracker.DAYS_PER_YEAR = 96` (the seasonal cycle). The calendar entries
+  (150, 200…) only make sense in the 365-day space, so the Vigil trigger uses
+  `(tick/24000) % 365`, NOT `SeasonTracker.dayOfYear`.
+- **Group-effect target.** A gathering's `actualAttendees` is populated at
+  ACTIVE time (after scheduling), so it can't be the rite's participant list at
+  schedule time. Resolved without a Religion→Village.Event reverse lookup: the
+  PURIFICATION gathering is scheduled with the afflicted as **requiredAttendees**,
+  which `CeremonyBlessings.participantsFor` flows into the blessing rite's
+  participants — so the rite handler targets exactly the afflicted. Vigil is
+  village-wide (no participants), like FEAST_DAY.
+- **`handleConfession`** clears MELANCHOLY (`HealthComponent.remove`) + a HEALED
+  mood bump AND writes a sensitive priest `KnowledgeEntry` — the latter is the
+  confession-specific side effect a group rite must NOT replicate.
+- **Health API**: `HealthComponent.hasCondition` / `.remove(HealthCondition)`.
+
+### Route + design (each ceremony)
+
+**Vigil — gathering route, new `EventType.VIGIL` + new `Rite.VIGIL`.**
+A new rite (not reusing FUNERAL: FUNERAL is participant/deceased-scoped and
+writes an "attended funeral" memory — wrong for a village-wide vigil; not
+FEAST_DAY: wrong celebratory tone). Tier STANDARD (a seated priest leads it).
+Effect: village-wide steadying/comforting mood (resolve/shared mourning),
+religion-scaled. **Trigger: revives the religion calendar** — a daily
+`checkCalendarVigil` schedules a VIGIL gathering when today (365-day liturgical
+space) matches any "Vigil"-named holy day → naturally Forge Creed (Anvil Vigil)
++ Tidecall (Storm's Vigil).
+
+**Purification — gathering route, new `EventType.PURIFICATION` + new
+`Rite.PURIFICATION`.** Tier STANDARD. Effect: for each afflicted participant,
+ease distress + clear MELANCHOLY via a **shared `easeAndClearMelancholy`
+helper** that confession and purification both call — WITHOUT the confession
+knowledge entry. **Trigger: distress-driven** — a daily `checkPurification`
+schedules a PURIFICATION gathering (afflicted as required attendees) when a
+village has ≥ `PURIFICATION_DISTRESS_THRESHOLD` (3) MELANCHOLY villagers and its
+religion ritualises PURIFICATION; a 14-day lockout bounds re-scheduling (the
+crisis-path pattern), not officiant-gated (the gathering is the observance, the
+rite its best-effort blessing).
+
+**Ritualises gating** (each faith only holds what it observes): added VIGIL to
+Forge Creed + Tidecall, PURIFICATION to The Loom; Sunstead auto-includes both
+(`Rite.values()`). Tidecall/Forge Creed don't ritualise PURIFICATION (no group
+atonement); Sunstead/Loom have no "Vigil" calendar day (no VIGIL fires).
+
+### What shipped
+
+- `Rite` +VIGIL +PURIFICATION; swept all 3 exhaustive `Rite` switches
+  (`RiteExecutor`, `RiteTier`→STANDARD, `PriestBehavior.riteLabel`).
+- `VillageEvent.EventType` +VIGIL +PURIFICATION; the 3 mandatory EventType
+  arms (`category`→RELIGIOUS_RITE, `getDurationTicks`→6000, baseline→0.55);
+  `CeremonyBlessings.blessingRiteFor` maps each to its rite.
+- `RiteExecutor`: `handleVigil` (village-wide) + `handlePurification`
+  (participant-targeted) + the shared `easeAndClearMelancholy` helper
+  (`handleConfession` refactored to call it, keeping its knowledge entry).
+- `VillageEventScheduler`: `checkCalendarVigil` (revives the religion calendar)
+  + `checkPurification` (distress scan) wired into `tick`.
+- `ReligionRegistry`: VIGIL → Forge Creed + Tidecall; PURIFICATION → The Loom.
+- `ReligionContent`: VIGIL profiles (Forge Creed ×1.3 martial-resolve, Tidecall
+  sea-mourning) + PURIFICATION profiles (Loom ×1.3, Sunstead) with flavor.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `checkCalendarVigil` (religion calendar, revived);
+  `checkPurification` (MELANCHOLY scan); both schedule via the existing
+  gathering path → `CeremonyBlessings.attach` → `scheduleBlessingRite` (gated by
+  `villageRitualises`).
+- **Downstream callers** — `VillageEvent`/`EventAttendance`/`CeremonyBlessings`
+  switches updated; `EventEffects.onEventStart` routes the new RELIGIOUS_RITE
+  types to the R2b village-wide override (VIGIL: empty attendees → village-wide;
+  PURIFICATION: required/invited populated → normal override) and to a no-op
+  `dispatchStart`; `RiteExecutor` handlers; the health system (`MELANCHOLY`
+  clear) and mood system reused. `CommunityGatherings` surfaces both as
+  gatherings (R2b attend behavior will populate them once merged).
+- **Sibling systems** — CONFESSION: refactored onto the shared helper with NO
+  behavior change (still writes its knowledge entry); FUNERAL grief-ease
+  untouched (Vigil is a distinct rite, not a reuse). The R3b-1 Consecration scan
+  and R1c ordination scan are unaffected (these triggers live on the
+  VillageEventScheduler side).
+- **Exhaustive switches** — `Rite` (3, all swept) and `EventType` (3 mandatory,
+  all swept); no other enum.
+
+### Simplification Sweep
+
+Classes in scope: `RiteExecutor` (+2 handlers, +1 shared helper — confession &
+purification share `easeAndClearMelancholy` rather than copy-pasting the
+MELANCHOLY-clear), `VillageEventScheduler` (+2 triggers), `Rite`/`RiteTier`/
+`PriestBehavior`/`VillageEvent`/`EventAttendance`/`CeremonyBlessings` (+arms),
+`ReligionRegistry`/`ReligionContent` (+content). Vigil reuses the existing Anvil
+Vigil **calendar entry** (revived) rather than a parallel trigger. No new scan
+mechanism for purification beyond the existing per-village `tick` (alongside
+`checkCulturalHolyDay`/`checkCrises`).
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The triggers write the event store + the rite
+ledger; handlers touch mood/health/piety. No `brainMemories()` change → no
+freeze risk.
+
+### Deviations from prompt
+
+- **Both ceremonies took the gathering route with a NEW `Rite` each** (not
+  reusing an existing rite's blessing). FUNERAL's grief-ease was close for Vigil
+  but its participant/deceased scope + "attended funeral" memory are wrong for a
+  village-wide vigil; confession's clear fit Purification but its knowledge entry
+  is wrong for a group rite — so new rites + a shared clear-helper, per the
+  prompt's own "shared helper without the knowledge side effect" option.
+- **The Anvil Vigil calendar had to be REVIVED**, not merely reused — the
+  religion-calendar named days have been dead since R2a. `checkCalendarVigil`
+  brings them back (in their 365-day liturgical space), a bonus consumption of
+  dead content. Flagged as a deviation since the prompt assumed the entry was
+  live.
+- **Purification is distress-driven, not calendar-driven** (no "Purification"
+  named day exists). Distress is the meaningful, testable trigger (give NPCs
+  MELANCHOLY → atonement fires); officiant-gating is replaced by a 14-day
+  lockout (the crisis-path pattern) to keep it churn-safe without a priest scan
+  on the event side.
+
+### Out-of-scope but flagged
+
+- Per-faith signature rites (R3b-3), orders (R3c), festivals/processions (R3d),
+  multi-faith (late R3) — untouched.
+- The 365-day liturgical calendar vs the 96-day seasonal cycle: Vigil fires on
+  the liturgical day; reconciling the two calendars is a broader content-calendar
+  concern, not religion's to solve here. Anvil Vigil @150 / Storm's Vigil @200
+  fire once per 365 game-days (testable via `/time`).
+- Purification targeting the gathering's live `actualAttendees` (vs the
+  scheduled afflicted participants) — would need a rite→gathering reverse lookup
+  + Religion→Village.Event coupling that R2a deliberately avoided; the
+  required-attendee flow reaches the same group without it.
+- Vigil/Purification attendance (villagers physically walking there) arrives
+  with R2b (already merged provides the override; the attend behavior populates
+  these RELIGIOUS_RITE gatherings).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: all 3 `Rite` switches + the 3 mandatory `EventType` switches
+carry VIGIL+PURIFICATION (compiler-exhaustive); `scheduleLifeEvent` /
+`EventAttendance.villageNpcIds` / `HealthComponent.hasCondition` /
+`religion.calendar().effectiveDayOfYear` signatures confirmed; confession keeps
+its knowledge entry via the shared helper (no regression); ritualises gating
+restricts each ceremony to the right faiths; lockout + threshold bound
+purification churn. Runtime-sensitive (calendar day match, distress count, claim
+path) — wants an in-game check.
+
+### Smoke test
+
+1. Forge Creed (Highmarch) village with a priest: `/time` to the Anvil Vigil
+   liturgical day (game-day 150 → tick 150×24000). Confirm a VIGIL gathering
+   fires, the priest officiates "a vigil", villagers get the steadying mood, and
+   the text reads the Anvil-Vigil martial-resolve flavor.
+2. Tidecall village: confirm the Storm's Vigil (day 200) fires with sea-mourning
+   flavor; a Sunstead/Loom village (no Vigil calendar day) fires no vigil.
+3. Give ≥3 villagers MELANCHOLY (e.g. `/health` or via events) in a Sunstead or
+   Loom village with a priest; advance a day. Confirm a PURIFICATION gathering is
+   scheduled with the afflicted as attendees, the priest officiates, and the
+   afflicted attendees' MELANCHOLY clears + mood eases — WITHOUT the priest
+   accruing per-attendee confession knowledge entries (`/npc` knowledge ledger
+   unchanged in size).
+4. Confirm a Tidecall/Forge Creed village (doesn't ritualise PURIFICATION) never
+   schedules one even when distressed.
+5. Confirm the 14-day lockout: a second purification doesn't schedule the next
+   day even if distress persists.
+6. Confirm a sparse/unprofiled case (a faith without a VIGIL/PURIFICATION
+   profile that still ritualises it) falls back to DEFAULT (×1.0, no flavor),
+   no error. Confirm no ledger churn (gated scheduling).

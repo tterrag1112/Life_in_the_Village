@@ -45,6 +45,11 @@ public class VillageEvent implements CommunityGathering {
         LOOM_THREADING,
         TIDECALL_FULL_MOON,
         FORGE_CREED_KINGDOM_DAY,
+        // ── Religious (Religion Rework R3b-2) ────────────────────────
+        /** Solemn communal vigil (resolve / shared mourning). */
+        VIGIL,
+        /** Communal purification / atonement (clears distress). */
+        PURIFICATION,
 
         // ── Life-stage ────────────────────────────────────────────────
         COMING_OF_AGE,
@@ -89,7 +94,7 @@ public class VillageEvent implements CommunityGathering {
                      SPRING_EQUINOX, WINTER_FEAST, SUMMER_MARKET
                         -> EventCategory.SEASONAL_FESTIVAL;
                 case SUNSTEAD_EQUINOX, LOOM_THREADING, TIDECALL_FULL_MOON,
-                     FORGE_CREED_KINGDOM_DAY
+                     FORGE_CREED_KINGDOM_DAY, VIGIL, PURIFICATION
                         -> EventCategory.RELIGIOUS_RITE;
                 case COMING_OF_AGE, WEDDING, FUNERAL, NAMING_CEREMONY
                         -> EventCategory.LIFE_STAGE_RITE;
@@ -117,8 +122,8 @@ public class VillageEvent implements CommunityGathering {
                 case WINTER_FEAST                   -> 36000L;
                 case SPRING_EQUINOX                 -> 12000L;
                 case SUNSTEAD_EQUINOX, LOOM_THREADING,
-                     TIDECALL_FULL_MOON, FORGE_CREED_KINGDOM_DAY
-                                                    -> 6000L;
+                     TIDECALL_FULL_MOON, FORGE_CREED_KINGDOM_DAY,
+                     VIGIL, PURIFICATION            -> 6000L;
                 case WEDDING                        -> 1200L;
                 case FUNERAL                        -> 800L;
                 case NAMING_CEREMONY                -> 600L;

@@ -99,7 +99,10 @@ public final class ReligionContent {
                 Map.entry(Rite.FEAST_DAY,
                         RiteProfile.flavored("a day of sun and plenty")),
                 Map.entry(Rite.CONSECRATION,
-                        RiteProfile.of(1.2f, 1.2f, "this ground is given to the Sun-Mother's light"))));
+                        RiteProfile.of(1.2f, 1.2f, "this ground is given to the Sun-Mother's light")),
+                // R3b-2 — Sunstead atones communally under the open sky.
+                Map.entry(Rite.PURIFICATION,
+                        RiteProfile.of(1.0f, 1.0f, "let the sun burn away the shadow on your heart"))));
 
         // The Loom — abstract fate, no deity. Confession-centric, pattern flavor.
         m.put(ReligionRegistry.THE_LOOM, profiles(
@@ -113,7 +116,10 @@ public final class ReligionContent {
                 Map.entry(Rite.FEAST_DAY,
                         RiteProfile.tuned(0.8f, 1.0f)),
                 Map.entry(Rite.CONSECRATION,
-                        RiteProfile.of(1.0f, 1.0f, "this loom-room is woven into the pattern"))));
+                        RiteProfile.of(1.0f, 1.0f, "this loom-room is woven into the pattern")),
+                // R3b-2 — the confession-centric Loom's group atonement runs deep.
+                Map.entry(Rite.PURIFICATION,
+                        RiteProfile.of(1.3f, 1.0f, "the snarled threads are combed straight again"))));
 
         // Tidecall — sea-spirits, the Sea-Mother. Voyage blessings, tide feasts.
         m.put(ReligionRegistry.TIDECALL, profiles(
@@ -126,7 +132,10 @@ public final class ReligionContent {
                 Map.entry(Rite.HARVEST_THANKSGIVING,
                         RiteProfile.flavored("thanks for the sea's harvest")),
                 Map.entry(Rite.CONSECRATION,
-                        RiteProfile.of(1.1f, 1.1f, "the Sea-Mother claims this shore"))));
+                        RiteProfile.of(1.1f, 1.1f, "the Sea-Mother claims this shore")),
+                // R3b-2 — Storm's Vigil: a sea-mourning for those lost to the deep.
+                Map.entry(Rite.VIGIL,
+                        RiteProfile.of(1.0f, 1.0f, "we keep the watch for those the sea has taken"))));
 
         // The Forge Creed — ancestor / martial. Honor funerals, martial coming-of-age.
         m.put(ReligionRegistry.FORGE_CREED, profiles(
@@ -143,7 +152,11 @@ public final class ReligionContent {
                 Map.entry(Rite.FEAST_DAY,
                         RiteProfile.of(1.1f, 1.0f, "we feast for the ancestors who held the line")),
                 Map.entry(Rite.CONSECRATION,
-                        RiteProfile.of(1.3f, 1.2f, "this hall is forged into the ancestors' keeping"))));
+                        RiteProfile.of(1.3f, 1.2f, "this hall is forged into the ancestors' keeping")),
+                // R3b-2 — Anvil Vigil: a vigil of martial resolve before the
+                // ancestors (a stronger, steadying observance).
+                Map.entry(Rite.VIGIL,
+                        RiteProfile.of(1.3f, 1.0f, "we stand the Anvil Vigil; the line will hold"))));
 
         return Map.copyOf(m);
     }

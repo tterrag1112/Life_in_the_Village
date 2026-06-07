@@ -139,6 +139,8 @@ public final class RiteExecutor {
             case FEAST_DAY            -> handleFeastDay(rite, priest, level, now, village, religionId);
             case ORDINATION           -> handleOrdination(rite, priest, level, now);
             case CONSECRATION         -> handleConsecration(rite, priest, level, now, village, religionId);
+            case VIGIL                -> handleVigil(rite, priest, level, now, village, religionId);
+            case PURIFICATION         -> handlePurification(rite, priest, level, now, religionId);
         };
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
@@ -339,20 +341,15 @@ public final class RiteExecutor {
         if (confessor == null) return RiteOutcome.DISRUPTED;
         // R3a — confession weight varies by faith (the Loom is confession-
         // centric); a core tenet surfaces in the priest's ledger note.
+        // Phase 3 doc 21 — confession resolves MELANCHOLY directly (shared with
+        // R3b-2 PURIFICATION via easeAndClearMelancholy). NERVOUS_BREAKDOWN is
+        // too severe to clear this way (needs healer + time).
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.CONFESSION);
-        confessor.getMood().applyWithRawMagnitude(MoodTrigger.LETTER_FROM_FRIEND,
-                profile.scaleMood(12), now);
-        // Phase 3 doc 21 — confession resolves MELANCHOLY directly per
-        // spec "Open decisions" #4. NERVOUS_BREAKDOWN is too severe
-        // to clear via confession alone (needs healer + time).
-        if (confessor.getHealthComponent().remove(
-                tterrag1112.life_in_the_village.Npc.Health.HealthCondition.MELANCHOLY)) {
-            confessor.getMood().applyWithRawMagnitude(
-                    tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger.HEALED,
-                    tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger.HEALED.defaultMagnitude(),
-                    now);
-        }
-        // Sensitive knowledge entry — flag the priest's ledger.
+        easeAndClearMelancholy(confessor, profile.scaleMood(12), now);
+        // Sensitive knowledge entry — flag the priest's ledger. This is the
+        // confession-SPECIFIC side effect; the shared helper above deliberately
+        // omits it so PURIFICATION (a group rite) doesn't accrue per-attendee
+        // confession knowledge.
         priest.getKnowledge().add(
                 tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeEntry.create(
                         "confession:" + confessor.getNpcName(),
@@ -469,10 +466,65 @@ public final class RiteExecutor {
         return RiteOutcome.SUCCESSFUL;
     }
 
+    private static RiteOutcome handleVigil(RiteExecution rite, TownspersonMob priest,
+                                           ServerLevel level, long now,
+                                           Village village, String religionId) {
+        // R3b-2 — a solemn village-wide observance. A steadying, comforting mood
+        // shift (resolve / shared mourning), religion-scaled. Village-wide (no
+        // participants), like FEAST_DAY but somber in tone (Forge Creed leans
+        // martial-resolve via a higher profile scale, others mourning-comfort).
+        if (village == null) return RiteOutcome.DISRUPTED;
+        RiteProfile profile = ReligionContent.profileFor(religionId, Rite.VIGIL);
+        String name = village.getName();
+        for (var entity : level.getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob npc)) continue;
+            if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
+            npc.getMood().applyWithRawMagnitude(MoodTrigger.LETTER_FROM_FRIEND, profile.scaleMood(8), now);
+            npc.getPiety().recordRiteAttendance(now);
+        }
+        return RiteOutcome.SUCCESSFUL;
+    }
+
+    private static RiteOutcome handlePurification(RiteExecution rite, TownspersonMob priest,
+                                                  ServerLevel level, long now, String religionId) {
+        // R3b-2 — the group form of confession. For each afflicted participant
+        // (the gathering's required attendees flow in as the rite participants),
+        // ease distress + clear MELANCHOLY via the SAME helper confession uses —
+        // but WITHOUT the per-confessor knowledge ledger entry (wrong for a
+        // group rite). Religion-scaled.
+        RiteProfile profile = ReligionContent.profileFor(religionId, Rite.PURIFICATION);
+        if (rite.participantIds().isEmpty()) return RiteOutcome.DISRUPTED;
+        int eased = 0;
+        for (UUID id : rite.participantIds()) {
+            TownspersonMob npc = TownspersonMob.findByUUID(level, id).orElse(null);
+            if (npc == null) continue;
+            easeAndClearMelancholy(npc, profile.scaleMood(10), now);
+            eased++;
+        }
+        return eased > 0 ? RiteOutcome.SUCCESSFUL : RiteOutcome.DISRUPTED;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static UUID first(List<UUID> list) {
         return list == null || list.isEmpty() ? null : list.get(0);
+    }
+
+    /**
+     * R3b-2 — shared distress-ease used by CONFESSION and PURIFICATION: a
+     * comforting mood shift, and if it clears a MELANCHOLY condition, a HEALED
+     * mood bump. Deliberately does NOT write the confession knowledge entry —
+     * that is confession's own side effect, applied by {@code handleConfession}.
+     */
+    private static void easeAndClearMelancholy(TownspersonMob npc, int moodMagnitude, long now) {
+        npc.getMood().applyWithRawMagnitude(MoodTrigger.LETTER_FROM_FRIEND, moodMagnitude, now);
+        if (npc.getHealthComponent().remove(
+                tterrag1112.life_in_the_village.Npc.Health.HealthCondition.MELANCHOLY)) {
+            npc.getMood().applyWithRawMagnitude(
+                    tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger.HEALED,
+                    tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger.HEALED.defaultMagnitude(),
+                    now);
+        }
     }
 
     /** R3a — a rite's flavor line for a religion as a memory-text suffix, plus

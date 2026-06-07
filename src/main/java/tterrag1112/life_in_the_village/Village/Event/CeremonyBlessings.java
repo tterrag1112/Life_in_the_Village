@@ -61,6 +61,9 @@ public final class CeremonyBlessings {
             case SUNSTEAD_EQUINOX -> Optional.of(Rite.HARVEST_THANKSGIVING);
             case LOOM_THREADING, TIDECALL_FULL_MOON, FORGE_CREED_KINGDOM_DAY
                                   -> Optional.of(Rite.FEAST_DAY);
+            // R3b-2 — communal gatherings whose blessing is their own rite.
+            case VIGIL            -> Optional.of(Rite.VIGIL);
+            case PURIFICATION     -> Optional.of(Rite.PURIFICATION);
             default               -> Optional.empty();
         };
     }
