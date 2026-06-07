@@ -3,6 +3,8 @@ package tterrag1112.life_in_the_village.Village.Event;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Village.Gathering.CommunityGathering;
+import tterrag1112.life_in_the_village.Village.Gathering.GatheringStatus;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -23,7 +25,7 @@ import java.util.UUID;
  *
  * <p>Spec: {@code docs/npc_redesign/32-events-expanded.md}.</p>
  */
-public class VillageEvent {
+public class VillageEvent implements CommunityGathering {
 
     public enum EventType {
         // ── Phase 3 originals (Seasonal / Cultural) ──────────────────
@@ -380,5 +382,29 @@ public class VillageEvent {
         if (!isActive()) return 0;
         long span = Math.max(1L, endTick - startTick);
         return (double)(tick - startTick) / (double) span;
+    }
+
+    // ── CommunityGathering (R2a) ─────────────────────────────────────────
+    // New interface methods delegating to the existing accessors — no
+    // existing getter is renamed. A VillageEvent IS the gathering.
+
+    @Override public UUID gatheringId()                  { return id; }
+    @Override public UUID villageId()                    { return villageId; }
+    @Override public Optional<BlockPos> gatheringLocation() { return getLocation(); }
+    @Override public long startTick()                    { return startTick; }
+    @Override public long endTick()                      { return endTick; }
+    @Override public List<UUID> requiredAttendees()      { return requiredAttendees; }
+    @Override public List<UUID> invitedAttendees()       { return invitedAttendees; }
+    @Override public List<UUID> actualAttendees()        { return actualAttendees; }
+    @Override public Optional<UUID> primarySubjectId()   { return getPrimarySubjectId(); }
+
+    @Override
+    public GatheringStatus gatheringStatus() {
+        return switch (status) {
+            case ANNOUNCED            -> GatheringStatus.SCHEDULED;
+            case ACTIVE               -> GatheringStatus.ACTIVE;
+            case ENDED                -> GatheringStatus.COMPLETED;
+            case CANCELLED, DISRUPTED -> GatheringStatus.CANCELLED;
+        };
     }
 }

@@ -218,6 +218,8 @@ public class VillageEventScheduler {
                 requiredAttendees == null ? List.of() : requiredAttendees,
                 invitedAttendees  == null ? List.of() : invitedAttendees);
         VillageSavedData.get(level).addEvent(event);
+        // R2a — attach the coordinated blessing rite (life-event ceremonies).
+        CeremonyBlessings.attach(level, village, event);
         return event;
     }
 
@@ -281,6 +283,9 @@ public class VillageEventScheduler {
                                       long currentTick) {
         VillageEvent event = VillageEvent.create(village.getId(), type, currentTick);
         data.addEvent(event);
+        // R2a — attach the coordinated blessing rite (seasonal harvest +
+        // per-culture holy days map to a rite; festivals/markets/crises don't).
+        CeremonyBlessings.attach(level, village, event);
 
         // Record in kingdom history
         data.getKingdomForVillage(village.getId()).ifPresent(k -> {

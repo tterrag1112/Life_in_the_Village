@@ -4,6 +4,8 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
+import tterrag1112.life_in_the_village.Village.Gathering.CommunityGathering;
+import tterrag1112.life_in_the_village.Village.Gathering.GatheringStatus;
 
 import java.util.List;
 import java.util.Optional;
@@ -42,7 +44,13 @@ public record RiteExecution(
         long completedTick,
         RiteOutcome outcome,
         UUID villageId
-) {
+) implements CommunityGathering {
+
+    /** R2a — derived gathering window for a rite. A rite is an officiated
+     *  moment rather than a spanning event; this is the window during which
+     *  {@link CommunityGathering#isActiveAt} treats a due-but-unresolved rite
+     *  as under way. Not persisted — purely derived from {@link #scheduledTick}. */
+    public static final long GATHERING_DURATION_TICKS = 1200L; // ~1 minute
     public RiteExecution {
         if (riteId == null) riteId = UUID.randomUUID();
         if (type == null) throw new IllegalArgumentException("type required");
@@ -63,6 +71,45 @@ public record RiteExecution(
         return new RiteExecution(riteId, type, presidingPriestId,
                 participantIds, location, scheduledTick, completed,
                 o, villageId);
+    }
+
+    // ── CommunityGathering (R2a) ─────────────────────────────────────────
+    // Everything is derived from existing fields — no new persisted field,
+    // so the codec is unchanged. A rite is the blessing-extension of a
+    // gathering; standalone rites (calendar/personal) are gatherings too.
+    // Note: villageId() is already the record accessor and satisfies the
+    // interface directly.
+
+    @Override public UUID gatheringId() { return riteId; }
+
+    @Override
+    public Optional<BlockPos> gatheringLocation() {
+        // BlockPos.ZERO is the record's "unset" sentinel.
+        return BlockPos.ZERO.equals(location) ? Optional.empty() : Optional.of(location);
+    }
+
+    @Override public long startTick() { return scheduledTick; }
+    @Override public long endTick()   { return scheduledTick + GATHERING_DURATION_TICKS; }
+
+    /** Required attendees of a rite are its participants; invited/actual are
+     *  not tracked on the rite record (a rite borrows its gathering's lists,
+     *  or — for village-wide rites — attendance is computed at execute time). */
+    @Override public List<UUID> requiredAttendees() { return participantIds; }
+    @Override public List<UUID> invitedAttendees()  { return List.of(); }
+    @Override public List<UUID> actualAttendees()   { return List.of(); }
+
+    @Override
+    public Optional<UUID> primarySubjectId() {
+        return participantIds.isEmpty() ? Optional.empty() : Optional.of(participantIds.get(0));
+    }
+
+    @Override
+    public GatheringStatus gatheringStatus() {
+        return switch (outcome) {
+            case PENDING             -> GatheringStatus.SCHEDULED;
+            case SUCCESSFUL          -> GatheringStatus.COMPLETED;
+            case DISRUPTED, SKIPPED  -> GatheringStatus.CANCELLED;
+        };
     }
 
     public static final Codec<RiteExecution> CODEC = RecordCodecBuilder.create(i -> i.group(

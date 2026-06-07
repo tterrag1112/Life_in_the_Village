@@ -918,3 +918,224 @@ check.
    "Graduated under ..." memory.
 8. No movement freeze / brain-tick error (no new brain memory); `/tick`
    shows no per-tick regression (the trigger runs once at ordination).
+
+---
+
+## Religion Rework — Phase R2a: Shared event abstraction + ceremony dedup
+
+R2's foundation: make ceremonies located, attended community events, and
+first reconcile the TWO parallel systems that currently model the same
+ceremonies (so R2b's attend behavior can be built against one contract).
+
+### Disposition (the two systems, verified end to end)
+
+- **`Npc/Religion/`** — `RiteExecution` (record: riteId, type,
+  presidingPriestId, participantIds, location, scheduledTick,
+  completedTick, outcome, villageId; 9 codec fields), stored in
+  `RiteSavedData` (a `Map<UUID,RiteExecution>`, never pruned), scheduled by
+  `RiteScheduler` (calendar holy-day rites via `scheduleCalendarRites`) and
+  formerly by `RiteLifeEventProducer` (life-event rites), effects applied by
+  `RiteExecutor`.
+- **`Village/Event/`** — `VillageEvent` (class: id, villageId, EventType[33],
+  EventStatus ANNOUNCED→ACTIVE→ENDED/CANCELLED/DISRUPTED, start/end ticks,
+  location, primarySubjectId, required/invited/actual attendees, eventData
+  String-map, decorations; 14 codec fields), stored in
+  `VillageSavedData.events`, ticked by `VillageEventScheduler.tickEvents`
+  (→ `EventEffects` → `EventAttendance` sets/clears `eventOverride`),
+  scheduled by `VillageEventScheduler` (cultural holy days via
+  `checkCulturalHolyDay`; life events via `EventLifeEventProducer`).
+
+**Confirmed double-firing.** Both `RiteLifeEventProducer` (bus line 68) and
+`EventLifeEventProducer` (bus line 85) listen to the SAME `NpcLifeEvent`s:
+a marriage fired BOTH a `Rite.MARRIAGE` and a `VillageEvent.WEDDING`,
+uncoordinated (EventLifeEventProducer's own javadoc admitted it). Holy days
+likewise: `checkCulturalHolyDay` made a cultural `VillageEvent` while
+`scheduleCalendarRites` independently made a `FEAST_DAY`/`HARVEST` rite off
+the religion calendar.
+
+**Grounded facts that shaped the design:**
+- All four religions ritualise `FEAST_DAY`; HARVEST_THANKSGIVING / MARRIAGE
+  / COMING_OF_AGE are religion-specific. So a uniform `ritualises` gate on
+  blessing rites reproduces both old producers' gating.
+- `RiteSavedData` is never pruned → avoid any path that re-creates churn.
+- `Village.Event` already depends on `Npc.Religion` (EventHandlerRegistry);
+  `Npc.Religion` does NOT depend on `Village.Event` — so the abstraction
+  must NOT introduce a `Religion → Event` import (cycle), which dictated a
+  neutral package.
+
+### Design (presented before implementation)
+
+**1. Abstraction shape — an interface, in a neutral package.**
+`Village/Gathering/CommunityGathering` (+ `GatheringStatus`
+SCHEDULED/ACTIVE/COMPLETED/CANCELLED) depends on neither subsystem, so both
+implement it with no package cycle and future kingdom/military gatherings
+can adopt it. Contract: `gatheringId, villageId, gatheringLocation
+(Optional), startTick, endTick, gatheringStatus, required/invited/actual
+Attendees, primarySubjectId`, plus a default `isActiveAt(tick)` (covers a
+rite's derived active window, since rites have no explicit ACTIVE state).
+- `VillageEvent implements CommunityGathering` via NEW delegating methods
+  alongside the existing getters (no getter renamed). Status maps
+  ANNOUNCED→SCHEDULED, ACTIVE→ACTIVE, ENDED→COMPLETED, CANCELLED/DISRUPTED→
+  CANCELLED.
+- `RiteExecution implements CommunityGathering` with everything DERIVED from
+  existing fields — **no new persisted field, codec unchanged**: location
+  (ZERO→empty), startTick=scheduledTick, endTick=scheduledTick+1200 (derived
+  window), required=participantIds, invited/actual=empty, primarySubject=
+  first participant, status PENDING→SCHEDULED / SUCCESSFUL→COMPLETED /
+  DISRUPTED|SKIPPED→CANCELLED. (`villageId()` is already the record accessor
+  and satisfies the interface directly.)
+
+**2. Registries stay separate; one query helper unions them.**
+`Village/Event/CommunityGatherings` (`inVillage` / `activeInVillage` /
+`activeNear`) walks BOTH stores and returns `List<CommunityGathering>`.
+R2b builds the attend behavior against this — it never touches either store
+directly. The helper lives on the event side (it depends on both stores);
+the INTERFACE stays dependency-free.
+
+**3. Dedup — the gathering owns; the rite is its blessing-extension.**
+A single coordination point, `Village/Event/CeremonyBlessings.attach`,
+maps a gathering type → its blessing `Rite` (WEDDING→MARRIAGE, FUNERAL→
+FUNERAL, NAMING_CEREMONY→NAMING, COMING_OF_AGE→COMING_OF_AGE, HARVEST_
+FESTIVAL→HARVEST_THANKSGIVING, the four cultural holy-day types→FEAST_DAY,
+everything else→none), and on gathering creation schedules that rite
+(vacant presider, co-timed to the gathering start, gated by
+`RiteScheduler.villageRitualises`) and links it into the gathering's
+`eventData["riteId"]`. It is wired into the TWO `VillageEventScheduler`
+creation methods (`scheduleEvent` + `scheduleLifeEvent`), so EVERY gathering
+is blessed at creation through one path. The two independent rite producers
+are then removed (below).
+
+### What shipped
+
+- **New** `Village/Gathering/CommunityGathering` + `GatheringStatus`
+  (neutral, dependency-free).
+- `VillageEvent` and `RiteExecution` now `implement CommunityGathering`
+  (delegating / derived; no renames, no codec change).
+- **New** `Village/Event/CommunityGatherings` union query helper.
+- **New** `Village/Event/CeremonyBlessings` coordination point; hooked into
+  `VillageEventScheduler.scheduleEvent` and `.scheduleLifeEvent`.
+- `RiteScheduler`: added `scheduleBlessingRite` (returns the rite id for the
+  link) + `villageRitualises`; **removed** `scheduleCalendarRites` and its
+  daily-tick call (holy-day rites now flow through `CeremonyBlessings`).
+- **Deleted** `RiteLifeEventProducer` and removed its `NpcLifeEventBus`
+  registration (life-event rites now flow through `CeremonyBlessings`).
+- Updated the two stale javadocs that referenced the deleted producer.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `EventLifeEventProducer` (unchanged: it calls
+  `scheduleLifeEvent`, which now also attaches the blessing) is the sole
+  life-event ceremony creator; `checkCulturalHolyDay` + the seasonal /
+  random / crisis rolls all funnel through `scheduleEvent`, which attaches.
+  `RiteLifeEventProducer` (deleted) and `scheduleCalendarRites` (deleted) no
+  longer create independent rites. Each ceremony is created once now.
+- **Downstream callers** — readers of `VillageEvent` (`EventEffects`,
+  `EventAttendance`, `eventOverride`, dialogue, plague) and `RiteExecution`
+  (`RiteExecutor`, `PriestBehavior.findClaimableRite`) are UNCHANGED: the
+  interface only ADDS methods; no existing accessor or field changed. The
+  rite still has a vacant presider, still gets claimed/officiated, still
+  applies `RiteExecutor` effects. `/religion rite` debug still uses the
+  unchanged `RiteScheduler.schedule`.
+- **Sibling systems** — the holy-day overlap is resolved by making the
+  cultural-holy-day / seasonal-harvest gathering the owner and attaching the
+  rite (religion-calendar independent rites removed). `eventOverride`
+  schedule resolution is untouched (R2b adds the attend behavior).
+- **Exhaustive switches** — new `GatheringStatus` has only the two mapping
+  switches I added (over `EventStatus` 5-arm and `RiteOutcome` 4-arm, both
+  exhaustive). `blessingRiteFor` switches over `EventType` with a `default`
+  (new event types safely map to no blessing). No `Rite`/`EventType` value
+  added.
+
+### Simplification Sweep
+
+In scope: `RiteScheduler` (−`scheduleCalendarRites`, +blessing helpers),
+`VillageEventScheduler` (+2 attach calls), `EventLifeEventProducer`
+(unchanged behavior; doc updated), `RiteLifeEventProducer` (DELETED),
+`VillageEvent` / `RiteExecution` (+interface), plus new
+`CommunityGathering` / `GatheringStatus` / `CommunityGatherings` /
+`CeremonyBlessings`. **Consolidated:** the two life-event producers → one
+(EventLifeEventProducer + CeremonyBlessings); the two holy-day paths → one
+(gathering creation + CeremonyBlessings). **Stays separate (by design):**
+`RiteSavedData` and the `VillageSavedData` event store. No orphans left
+(deleted producer fully removed, including its bus line).
+
+### Memory safety
+
+No new brain `MemoryModuleType` (the attend behavior is R2b). The link is a
+plain `eventData` string entry; no `brainMemories()` change → no freeze risk.
+
+### Deviations from prompt
+
+- **Interface placed in a NEW neutral package** `Village/Gathering/` rather
+  than in `Village/Event/`. Required to avoid a `Npc.Religion → Village.Event`
+  package cycle (RiteExecution would otherwise import the event package while
+  the event package imports religion). The neutral home also matches the
+  prompt's "clean enough to serve future kingdom/military gatherings."
+- **`RiteExecution` gained NO new field.** The prompt allowed optional new
+  fields (end/duration, invited/actual) under the codec cap; none were
+  needed — all are derivable, so the most surgical choice (zero codec change)
+  was taken. Invited/actual attendees for a rite return empty (a rite borrows
+  its gathering's lists; village-wide rites compute attendance at execute
+  time) — R2b decides how rite-gatherings populate live attendees.
+- **Holy-day timing re-sourced.** Holy-day rites were previously driven by
+  the religion calendar (`isHolyDay`, named days like "Harvest Equinox");
+  they are now the blessing of the cultural-holy-day `VillageEvent` (culture
+  `holyDayInterval`) and the seasonal HARVEST_FESTIVAL. This is the
+  consolidation the prompt asked for (one coordinated holy-day path), but it
+  does shift WHEN holy observances fire (culture cadence, not religion
+  calendar). Flagged as an intentional behavior change.
+- **Dedup is "linked + coordinated," not "single artifact."** A wedding still
+  yields a WEDDING gathering AND a MARRIAGE rite — but now coordinated (the
+  rite is the gathering's blessing, co-timed, linked by id, created through
+  one path), which is exactly what the prompt's smoke test asks for ("not a
+  separate event AND a separate rite running uncoordinated").
+
+### Out-of-scope but flagged
+
+- The physical **attend-event behavior** (walk to venue, linger) → R2b, built
+  on `CommunityGatherings` + `CommunityGathering`.
+- Attendance-affects-outcome tuning, festivals/processions → later phases.
+- `RiteExecutor` effect handlers untouched (the rite keeps its officiant /
+  effect layer).
+- `RiteSavedData` still never prunes completed rites (pre-existing); the
+  linked blessing rites add to that ledger like any rite. Flagged for a
+  future housekeeping pass; not introduced here.
+- A rite→gathering BACK-link (rite carrying its gathering id) was not added
+  (no R2a consumer needs it; the gathering→rite `eventData` link suffices).
+  R2b can add it if the attend behavior needs reverse lookup.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (neoform-runtime POM 403;
+build fails before javac). Static review: both types implement every
+interface method (records auto-satisfy `villageId()`); status maps are
+enum-exhaustive; `blessingRiteFor` has a `default`; no `Religion → Event`
+import (neutral interface package, verified); deleted producer has no
+remaining code references (only historical comments); `distSqr(Vec3i)`,
+`getVillageCentre`, `RiteSavedData.all()` confirmed against existing usage.
+Runtime-sensitive (scheduler timing, claim path) — wants an in-game check.
+
+### Smoke test
+
+1. Marry two NPCs in a village with a temple + priest. Confirm exactly ONE
+   coordinated ceremony: a `WEDDING` gathering whose `eventData["riteId"]`
+   points at a `MARRIAGE` rite (check `/event` + rite debug) — NOT a separate
+   uncoordinated WEDDING event and MARRIAGE rite. The MARRIAGE rite's
+   scheduledTick equals the gathering's startTick.
+2. Confirm the priest still claims + officiates the MARRIAGE rite and
+   `RiteExecutor` effects still apply (mood/memory/relationship as before).
+3. Advance to a cultural holy day (or seasonal autumn for HARVEST_FESTIVAL).
+   Confirm ONE coordinated observance: the holy-day / harvest `VillageEvent`
+   with a linked `FEAST_DAY` / `HARVEST_THANKSGIVING` rite — not a duplicate
+   event + independent calendar rite.
+4. Confirm a religion that doesn't ritualise the rite (e.g. The Loom +
+   COMING_OF_AGE) produces the gathering but NO blessing rite (no
+   `eventData["riteId"]`).
+5. Confirm both kinds expose location + attendees through the interface: a
+   debug union (`CommunityGatherings.activeInVillage`) lists the active
+   WEDDING gathering AND any active rite with their `gatheringStatus`,
+   `gatheringLocation`, `requiredAttendees`.
+6. Confirm pure `VillageEvent`s are unaffected: a MARKET_DAY / VILLAGE_FAIR
+   schedules and runs with no attached rite, no error.
+7. No movement freeze / brain-tick error (no new brain memory); `/tick` shows
+   no per-tick regression.

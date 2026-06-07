@@ -64,8 +64,11 @@ public final class NpcLifeEventBus {
         register(new tterrag1112.life_in_the_village.Npc.Relations.RelationshipSeeder());
         // Phase 2 task 14: seed hobby preferences on ADULT transition.
         register(new tterrag1112.life_in_the_village.Npc.Hobby.HobbyPreferenceGenerator());
-        // Phase 3 task 20: schedule religious rites on lifecycle events.
-        register(new tterrag1112.life_in_the_village.Npc.Religion.RiteLifeEventProducer());
+        // Phase 3 task 20 / Religion R2a: life-event rites are no longer
+        // scheduled by a separate RiteLifeEventProducer (now deleted). They are
+        // attached as the blessing-extension of their gathering by
+        // CeremonyBlessings when EventLifeEventProducer creates the gathering,
+        // so each ceremony flows through one coordinated path.
         // Phase 2 task 16: apprenticeship discovery on ADULT transition.
         register(new tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipDispatcher());
         // Phase 2 task 15: child / coming-of-age / retirement arcs.

@@ -18,10 +18,12 @@ import java.util.UUID;
  * whenever the bus fires a Married / BirthInFamily / FamilyDeath /
  * LifeStageAdvanced (TEEN→ADULT) / OfficeChange event.
  *
- * <p>The actual rite (MARRIAGE / NAMING / FUNERAL / COMING_OF_AGE) is
- * still scheduled by {@code RiteLifeEventProducer}; this producer
- * adds the public ceremony around the rite — the rite is the
- * religious core, the event is the social envelope.</p>
+ * <p>Religion R2a: the matching rite (MARRIAGE / NAMING / FUNERAL /
+ * COMING_OF_AGE) is now attached automatically as the gathering's
+ * blessing-extension by {@link CeremonyBlessings} when
+ * {@code VillageEventScheduler.scheduleLifeEvent} creates the gathering —
+ * there is no separate rite producer. The gathering is the ceremony; the
+ * rite is its religious blessing.</p>
  */
 public final class EventLifeEventProducer implements EventDispatcher {
 

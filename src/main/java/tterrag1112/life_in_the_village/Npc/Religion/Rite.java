@@ -20,7 +20,7 @@ public enum Rite {
     /** Officiated ceremony by which a PRIEST-profession NPC formally
      *  becomes clergy (assigns the locked clergy specialization). Profession-
      *  driven, not a life-stage event — scheduled by {@code RiteScheduler}'s
-     *  daily ordination pass, not by {@code RiteLifeEventProducer}. */
+     *  daily ordination pass, not by a life-event gathering. */
     ORDINATION;
 
     public static final Codec<Rite> CODEC =

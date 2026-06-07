@@ -21,10 +21,16 @@ import java.util.UUID;
  * Daily-tick driver that:
  * <ol>
  *   <li>Runs every due rite via {@link RiteExecutor#runDue}.</li>
- *   <li>Schedules calendar rites (HARVEST_THANKSGIVING, FEAST_DAY) on
- *   the matching day-of-year per village's culture-derived
- *   {@link Religion#calendar()}.</li>
+ *   <li>R1c — schedules clergy ordinations.</li>
  * </ol>
+ *
+ * <p>R2a — the old calendar holy-day rite path was removed: holy-day and
+ * life-event rites are now created as the blessing-extension of their
+ * gathering ({@code VillageEvent}) via {@code CeremonyBlessings}, so each
+ * ceremony flows through one coordinated path instead of a rite and an
+ * event being scheduled independently. This class still owns standalone /
+ * debug rite scheduling ({@link #schedule}) and the blessing-rite helper
+ * ({@link #scheduleBlessingRite}) the event side calls.</p>
  *
  * <p>Spec line 215-222.</p>
  */
@@ -39,24 +45,54 @@ public final class RiteScheduler {
         // 1. Run due rites first.
         RiteExecutor.runDue(level);
 
-        // 2. Schedule calendar rites for villages whose religion has a
-        // holy day matching today.
-        VillageSavedData vdata = VillageSavedData.get(level);
-        long now = level.getGameTime();
-        int dayOfYear = (int) ((now / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
-        for (Village village : vdata.getAllVillages()) {
-            try { scheduleCalendarRites(village, vdata, level, now, dayOfYear); }
-            catch (Throwable t) {
-                LOGGER.warn("[RiteScheduler] {} threw: {}", village.getName(), t.getMessage());
-            }
-        }
-
-        // 3. R1c — schedule ordinations for un-ordained priests (daily,
+        // 2. R1c — schedule ordinations for un-ordained priests (daily,
         // one bounded pass over loaded NPCs).
+        VillageSavedData vdata = VillageSavedData.get(level);
         try { scheduleOrdinations(level, vdata); }
         catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] ordination pass threw: {}", t.getMessage());
         }
+    }
+
+    // ── Blessing-rite scheduling (R2a) ────────────────────────────────────
+
+    /**
+     * Schedules a ceremony's blessing rite (vacant presider), linked to a
+     * gathering by the caller via the gathering's {@code eventData}. Gated by
+     * the village religion's {@code ritualises} filter so a religion that
+     * doesn't ritualise this rite produces no blessing — the same gate the
+     * old life-event / calendar producers applied. Returns the new rite id
+     * (for the gathering link), or empty when not ritualised / inputs invalid.
+     *
+     * <p>The rite is located at the village temple (its officiant works
+     * there); the surrounding gathering is village-wide. R2b refines venue /
+     * physical attendance.</p>
+     */
+    public static java.util.Optional<UUID> scheduleBlessingRite(
+            ServerLevel level, Village village, Rite rite,
+            List<UUID> participants, long scheduledTick) {
+        if (level == null || village == null || rite == null) return java.util.Optional.empty();
+        if (!villageRitualises(level, village, rite)) return java.util.Optional.empty();
+        BlockPos location = templeLocation(village, VillageSavedData.get(level))
+                .orElseGet(() -> village.getVillageCentre() != null
+                        ? village.getVillageCentre()
+                        : BlockPos.ZERO);
+        RiteExecution exec = new RiteExecution(UUID.randomUUID(), rite,
+                java.util.Optional.empty(),
+                participants == null ? List.of() : participants,
+                location, scheduledTick, 0L,
+                RiteOutcome.PENDING, village.getId());
+        RiteSavedData.get(level).putRite(exec);
+        return java.util.Optional.of(exec.riteId());
+    }
+
+    /** Whether the village's dominant religion ritualises {@code rite}. */
+    public static boolean villageRitualises(ServerLevel level, Village village, Rite rite) {
+        String culture = VillageSavedData.get(level).getKingdomForVillage(village.getId())
+                .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
+                .orElse("default");
+        Religion religion = ReligionRegistry.get(ReligionRegistry.dominantReligionFor(culture));
+        return religion != null && religion.ritualises(rite);
     }
 
     // ── Ordination scheduling (R1c) ───────────────────────────────────────
@@ -140,41 +176,10 @@ public final class RiteScheduler {
         RiteSavedData.get(level).putRite(exec);
     }
 
-    // ── Calendar scheduling ───────────────────────────────────────────────
-
-    private static void scheduleCalendarRites(Village village, VillageSavedData vdata,
-                                              ServerLevel level, long now, int dayOfYear) {
-        String culture = vdata.getKingdomForVillage(village.getId())
-                .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
-                .orElse("default");
-        String religionId = ReligionRegistry.dominantReligionFor(culture);
-        Religion religion = ReligionRegistry.get(religionId);
-        if (religion == null) return;
-        if (!religion.calendar().isHolyDay(dayOfYear)) return;
-
-        // Don't double-schedule: skip if a calendar rite was already
-        // queued for today.
-        long todayStart = (now / 24000L) * 24000L;
-        long todayEnd   = todayStart + 24000L;
-        boolean alreadyQueued = RiteSavedData.get(level).ritesForVillage(village.getId()).stream()
-                .anyMatch(r -> (r.type() == Rite.HARVEST_THANKSGIVING
-                                || r.type() == Rite.FEAST_DAY)
-                        && r.scheduledTick() >= todayStart
-                        && r.scheduledTick() <  todayEnd);
-        if (alreadyQueued) return;
-
-        // Pick a sensible rite for the religion. If today matches the
-        // religion's named "Harvest Equinox" / "Last Catch" entry and
-        // the religion ritualises HARVEST_THANKSGIVING, fire that;
-        // otherwise FEAST_DAY covers any other holy day.
-        Integer harvestDay = religion.calendar().holyDaysByName().get("Harvest Equinox");
-        if (harvestDay == null) harvestDay = religion.calendar().holyDaysByName().get("Last Catch");
-        boolean isHarvestToday = harvestDay != null && harvestDay == dayOfYear;
-        Rite rite = (isHarvestToday && religion.ritualises(Rite.HARVEST_THANKSGIVING))
-                ? Rite.HARVEST_THANKSGIVING
-                : Rite.FEAST_DAY;
-        schedule(level, village, rite, List.of(), 0L);
-    }
+    // R2a — scheduleCalendarRites removed. Holy-day rites are now attached to
+    // their gathering (the seasonal HARVEST_FESTIVAL / cultural holy-day
+    // VillageEvent) by CeremonyBlessings, co-ordinated with the event rather
+    // than scheduled independently off the religion calendar.
 
     private static java.util.Optional<BlockPos> templeLocation(Village village,
                                                                VillageSavedData data) {
