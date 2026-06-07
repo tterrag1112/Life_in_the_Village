@@ -9088,3 +9088,97 @@ review only.
 runtime). Static review: `Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.PERSISTENT,
 Boolean.TRUE)` — `PERSISTENT=true` stops decay regardless of `DISTANCE`; the only leaf-STAMP site;
 no other change.
+
+### 2026-06-06 — 4c-b: the craft row (smith's row)
+
+4c-a/#2/#3 gave workshops a band of bare single-craft lots. 4c-b gives them a STYLE: a
+**craft row** — all crafts arranged in two rows fronting a shared internal lane (a "smith's
+row") — reusing the residential `STREET_ROW` arranger for the craft set.
+
+**Reuse seam (minimal):** `ResidentialArranger.arrange` is already type-agnostic — it returns
+`HousePlacement` positions + lane centerlines for a given block, not HOUSE-specific geometry.
+So 4c-b feeds it the **craft block + craft count + craft footprint** and places each craft at a
+row position via `materializeBuilding` (the generic placer from #3). No arranger duplication;
+no `districtType` enum needed (the arranger doesn't care what fills the positions).
+
+**What shipped:** `reserveWorkshopDistricts` now:
+1. Sizes the row from the largest available craft footprint (`cellPitch` along-lane,
+   `craftDepth` radial).
+2. Seats **one STREET_ROW block** holding all crafts via `seatDistrict` — at a free band
+   bearing the same way a residential street-row seats (reach-based range, overlap-rejected to
+   a clear bearing), **not** the thin outer ring.
+3. If it seats: `arrange(STREET_ROW)` → places every craft at a row position (`materializeBuilding`,
+   facing the lane) + renders the lane (`InternalPath` FOOTPATH → `realizePaths`, connected via
+   the workshop gate's district node). **All crafts place by construction.**
+4. **Fallback** (no clear bearing for the row block): the per-craft lots from #3 (one small
+   gate per craft, explicit 1:1) — so crafts always place.
+
+**Surface area:** 1 edit (`reserveWorkshopDistricts` rewrite + removed unused `WORKSHOP_TARGET`).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (craft-row arrangement reusing
+  `arrange(STREET_ROW)` + `materializeBuilding` + the lane carry; per-craft-lot fallback;
+  removed `WORKSHOP_TARGET`).
+
+**Tie-In Audit:**
+- *Touched surface:* `reserveWorkshopDistricts` (swept lots → row + lane, lots fallback).
+- *Downstream:* `arrange`/`districtDims`/`InternalPath`/`materializeBuilding` reused unchanged
+  — **residential street-row/courtyard untouched** (the arranger is shared read-only; no
+  signature change). The craft lane joins `state.internalLanes` → `realizePaths` (same render as
+  residential lanes); the workshop gate → `districtConnectionNodes` → router-connected.
+  `OverlapAuditor` — the row block + lane reserve via `seatDistrict`'s dual-band overlap reject.
+  Economy/NPC — crafts still place (row or lots) → businesses/inhabitants register.
+  `workshopGated` was already removed in #3 (no vestige). `DISTRICT_ONLY_MODE` — craft set still
+  kept.
+- *Exhaustive switches:* none (no new enum; reused `ResidentialVariant.STREET_ROW`).
+
+**Simplification Sweep:** reused the residential arranger + `materializeBuilding` (no parallel
+arranger/placer); removed the unused `WORKSHOP_TARGET`. The #3 per-precinct placement is
+**repurposed as the fallback**, not duplicated. Net flat/negative.
+
+**Deviations from prompt:**
+- **Supersedes #70/#3 by REPURPOSING, not removing.** The prompt described #70 as a
+  "scorer-gating patch (occupied-gate logic)"; what actually shipped (#3) was *explicit* 1:1
+  lot placement (the `workshopGated` gate was already deleted then). 4c-b keeps that explicit
+  placement as the **fallback** when the row block can't seat — so crafts always place.
+- **Two-sided STREET_ROW row (reused as-is); may fall back to lots at tight cap-120 bands.**
+  The row block is reach≈46 (two rows + lane, ~40 radial); it seats only where a band bearing
+  is clear of the dense residential precincts/greens. Where it can't, it falls back to per-craft
+  lots (crafts still place, just not as a row). A **one-sided row** (~half the radial depth) or
+  **4c-c's cap bump (~132)** is the deeper lever to make the two-sided row show reliably —
+  flagged, not built (4c-c is explicitly out of scope).
+- **Green-commons workshop-ring leftover fill (Fork 3) deferred.** The residential band
+  green-fill (`seatGreenRound`) already fills the band where the workshop row/lots seat; a
+  *dedicated* workshop-ring green-fill belongs with 4c-c's outer ring (when workshops get their
+  own ring beyond residential). Flagged.
+- **Could not build/spawn** (sandbox 403 + no runtime) — static review only; whether the row
+  seats vs falls back at CITY needs an in-world dump.
+
+**Out-of-scope but flagged:**
+- **4c-c** — grouped craft cluster (shared courtyard/well) + the cap bump (~132) that lets the
+  two-sided row + a dedicated workshop ring + a workshop green-fill all fit. A **one-sided row**
+  arranger (fits the current band) is the lighter alternative if 4c-c is deferred.
+- Work-yards / craft props / signs (minimal chosen); craft NBT props; MILLER/WAREHOUSE/WELL NBT
+  (content gap); flag-OFF farm payoff (pending).
+
+**Cumulative pending verification:** all prior phases + 4c-a/#2/#3 + now 4c-b. **Needs an
+in-world spawn** to confirm the craft row reads (or the lots fallback) + all crafts place + the
+lane connects + no overlap.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY (flag on) → `workshop craft row: N/N crafts placed` (row reads as a smith's
+   row fronting a lane) OR `workshop lots (row fallback): N/N` (lots, if no clear bearing); all
+   crafts place (blacksmith + bakery); lane connects; civic/residential/parks/market unchanged;
+   no overlap/abort; lane Y on the surface.
+3. `/litv spawn` TOWN → fewer crafts → shorter row / lots; coherent.
+4. Residential street-rows + courtyards still arrange/render (no regression).
+5. Economy: blacksmith/bakery register.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: `arrange(STREET_ROW)` is type-agnostic (returns positions + lane), so
+feeding it the craft set + `materializeBuilding` places every craft at a row position; the row
+block seats via the existing `seatDistrict` (reach-based band range, dual-band overlap reject)
+with a per-craft-lot fallback so crafts always place; the lane reuses `snapPathToSurface` +
+`InternalPath` FOOTPATH → `state.internalLanes` → `realizePaths`; residential paths untouched;
+`WORKSHOP_TARGET` removed (no refs); no new enum/codec/switch.

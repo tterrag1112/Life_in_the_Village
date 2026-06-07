@@ -1935,12 +1935,6 @@ public final class PhasedPlanner {
     /** 4c-a — batch the craft set runs in (after the batch-3 hook reserves the
      *  workshop precincts; NOT batch 3, so they leave the civic precinct). */
     private static final int WORKSHOP_BATCH = 4;
-    /** 4c-a — craft buildings per workshop precinct. 4c-a fix-up: 1, so a
-     *  workshop block (~one craft footprint) is shallow enough to fit the OUTER
-     *  ring beyond the residential band (which caps at ~courtyard depth) at the
-     *  relaxed CITY extent. Multi-craft precincts (and the craft-quarter look)
-     *  are 4c-b. */
-    private static final int WORKSHOP_TARGET = 1;
 
     /** Houses per residential district. Kept SMALL (4) so a block holding the
      *  big HOUSE footprint (≈20×11) stays a compact ~44×44 — small enough to
@@ -2212,19 +2206,18 @@ public final class PhasedPlanner {
         // StructureSizeCache returns the 32×32 fallback, which inflated the block
         // ~2× (36×36) so it never fit the band — and spammed the resolver ERROR.
         // Authored crafts are 20×16 → a 24×24 block that can seat.
-        int wMaxDim = 0;
+        // Size from the largest AVAILABLE craft footprint (CRAFT_SET ∩ selection;
+        // no-NBT types would give the 32×32 fallback). cellPitch = along-lane
+        // spacing; craftDepth = radial depth of a craft row.
+        int wMaxDim = 0, wMaxDepth = 0;
         for (BuildingType t : selection) {
             if (!CRAFT_SET.contains(t)) continue;
             StructureSizeCache.FootprintInfo f = defaultFootprint(state, t);
             wMaxDim = Math.max(wMaxDim, Math.max(f.width(), f.length()));
+            wMaxDepth = Math.max(wMaxDepth, f.length());
         }
-        int wPitch = Math.max(1, wMaxDim) + HOUSE_GAP;
-        int per = Math.min(WORKSHOP_TARGET, workshopCount);
-        int cols = (int) Math.ceil(Math.sqrt(Math.max(1, per)));
-        int rows = (per + cols - 1) / cols;
-        int whalfX = Math.max(MIN_PLAZA_HALF, (cols * wPitch + HOUSE_GAP) / 2);
-        int whalfZ = Math.max(MIN_PLAZA_HALF, (rows * wPitch + HOUSE_GAP) / 2);
-        int reach = Math.max(whalfX, whalfZ);
+        int cellPitch = Math.max(1, wMaxDim) + HOUSE_GAP;
+        int craftDepth = Math.max(1, wMaxDepth);
 
         int civicReach = 0;
         if (state.civicPrecinct != null) {
@@ -2232,36 +2225,64 @@ public final class PhasedPlanner {
                     (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
                     (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
         }
-        // Match residential's radial range (center lower-bound = clear of civic;
-        // overlap reject pushes the actual seat out past civic/residential), so
-        // the sweep range is non-empty (adding +reach to innerR emptied it).
-        int innerR = Math.max(civicReach + DISTRICT_GAP, reach + DISTRICT_GAP);
-        int outerR = Math.max(innerR, state.villageRadius - reach);
-
         java.util.List<Double> dirs = residentialDirections(state, anchor);
-        int n = Math.max(1,
-                (workshopCount + WORKSHOP_TARGET - 1) / WORKSHOP_TARGET);
-        int seated = 0;
-        for (int k = 0; k < n; k++) {
-            // Offset from the residential bearings so workshops interleave into
-            // the sectors residential didn't take (overlap reject guarantees it).
-            double a = dirs.get(k % dirs.size()) + Math.PI / 8.0;
-            Polygon.AABB g = seatDistrict(state, anchor, a, innerR, outerR,
-                    whalfX, whalfZ, state.workshopGates);
-            if (g != null) seated++;
-        }
-
-        // 4c-a fix-up #3 — place ONE craft per seated precinct EXPLICITLY (centre,
-        // facing the core), bypassing the scorer. Crafts were purely scorer-gated
-        // into the gate UNION with no per-precinct assignment, so global-best-greedy
-        // left 4 CIVIC-affinity crafts (blacksmith/bakery) with no admissible cell →
-        // they dropped, leaving bare reserved lots. The precinct centre is already
-        // terrain-validated (seatDistrict), so explicit placement seats every craft.
         java.util.List<BuildingType> craftList = new ArrayList<>();
         for (BuildingType t : selection) if (CRAFT_SET.contains(t)) craftList.add(t);
+
+        // 4c-b — the CRAFT ROW (a "smith's row"): one STREET_ROW block holding all
+        // crafts in two rows fronting a shared internal lane, reusing the
+        // residential arranger. It seats at a free band bearing the same way a
+        // residential street-row does (reach-based range, overlap-rejected to a
+        // clear bearing — NOT the thin outer ring). The arranger places each craft
+        // at a row position, so all crafts place. Falls back to per-craft lots if
+        // no clear bearing fits the row block (tight band → 4c-c cap bump / a
+        // one-sided row is the deeper lever).
+        int[] rd = districtDims(ResidentialVariant.STREET_ROW, workshopCount,
+                cellPitch, craftDepth, false);
+        int rowHalfX = rd[0], rowHalfZ = rd[1];
+        int rowReach = Math.max(rowHalfX, rowHalfZ);
+        int rowInner = Math.max(civicReach + DISTRICT_GAP, rowReach + DISTRICT_GAP);
+        int rowOuter = Math.max(rowInner, state.villageRadius - rowReach);
+        Polygon.AABB rowGate = seatDistrict(state, anchor,
+                dirs.get(0) + Math.PI / 8.0, rowInner, rowOuter,
+                rowHalfX, rowHalfZ, state.workshopGates);
+
+        if (rowGate != null) {
+            BlockPos edgeNode = edgePointToward(rowGate, anchor);
+            ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
+                    rowGate, workshopCount, cellPitch, craftDepth, edgeNode,
+                    ResidentialVariant.STREET_ROW);
+            int placed = 0;
+            for (int i = 0; i < craftList.size() && i < arr.houses().size(); i++) {
+                ResidentialArranger.HousePlacement hp = arr.houses().get(i);
+                if (materializeBuilding(state, craftList.get(i),
+                        hp.centre(), hp.faceTarget()) != null) placed++;
+            }
+            // Lane fronting the row → FOOTPATH (connects via the workshop gate's
+            // district node, same as residential street-row lanes).
+            for (List<BlockPos> lane : arr.lanes()) {
+                List<BlockPos> snapped = snapPathToSurface(state, lane);
+                if (snapped.size() >= 2) {
+                    state.internalLanes.add(new InternalPath(snapped,
+                            RoadShape.RoadTier.FOOTPATH));
+                }
+            }
+            LOGGER.info("workshop craft row: {}/{} crafts placed (block={}x{})",
+                    placed, workshopCount, 2 * rowHalfX, 2 * rowHalfZ);
+            return;
+        }
+
+        // Fallback — per-craft lots (one small gate per craft, explicit 1:1).
+        int lotHalf = Math.max(MIN_PLAZA_HALF, (cellPitch + HOUSE_GAP) / 2);
+        int lotInner = Math.max(civicReach + DISTRICT_GAP, lotHalf + DISTRICT_GAP);
+        int lotOuter = Math.max(lotInner, state.villageRadius - lotHalf);
+        for (int k = 0; k < workshopCount; k++) {
+            seatDistrict(state, anchor, dirs.get(k % dirs.size()) + Math.PI / 8.0,
+                    lotInner, lotOuter, lotHalf, lotHalf, state.workshopGates);
+        }
         int placed = 0, dropped = 0;
         for (int i = 0; i < craftList.size(); i++) {
-            if (i >= state.workshopGates.size()) { dropped++; continue; }  // surplus
+            if (i >= state.workshopGates.size()) { dropped++; continue; }
             Polygon.AABB gate = state.workshopGates.get(i);
             BlockPos centre = new BlockPos((gate.minX() + gate.maxX()) / 2, 0,
                     (gate.minZ() + gate.maxZ()) / 2);
@@ -2271,9 +2292,8 @@ public final class PhasedPlanner {
                 dropped++;
             }
         }
-        LOGGER.info("workshop districts: {} requested / {} seated; {} crafts placed"
-                + " / {} dropped (per={}, block={}x{})",
-                n, seated, placed, dropped, per, 2 * whalfX, 2 * whalfZ);
+        LOGGER.info("workshop lots (row fallback): {}/{} crafts placed, {} dropped",
+                placed, workshopCount, dropped);
     }
 
     /** Phase 2 fix-up — fraction of the village radius at which to resolve the
