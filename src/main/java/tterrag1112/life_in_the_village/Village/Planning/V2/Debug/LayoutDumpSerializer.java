@@ -107,7 +107,7 @@ public final class LayoutDumpSerializer {
     private static final Logger LOGGER = LogUtils.getLogger();
 
     public static final int SCHEMA_VERSION = 4;
-    public static final int FEATURE_MAP_RADIUS = 96;
+    public static final int FEATURE_MAP_RADIUS = 150;   // 4c-a — sync with the spawn scan grid
     public static final int DEFAULT_DUMP_AT_RADIUS = FEATURE_MAP_RADIUS;
 
     private LayoutDumpSerializer() {}

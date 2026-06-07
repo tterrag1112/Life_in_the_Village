@@ -8789,3 +8789,109 @@ empty +reach range) recording into `workshopGates`; `seatDistrict`'s `targetGate
 passed at all 3 call sites + rejects overlap vs both gate lists; `workshopGated` mirrors
 `houseGated`; farms + connection now include `workshopGates`; `DISTRICT_TYPES` += crafts;
 no new enum/codec/switch.
+
+### 2026-06-06 — 4c-a fix-up: relax CITY extent cap so the workshop band seats
+
+4c-a's keystone worked in-world (civic precinct 64×85 from ~94×96, residential band
+`active=true [46,80] civicReach=42`, courtyards+greens seat, economy intact, the blind pass
+compiled + ran) — but the workshop band seated **0/3** (`block=46×46`) and crafts fell to the
+scorer as scattered "resource". Root: a **46×46 craft block can't fit the ~38-deep annulus**
+the residential band already fully claimed at `extentCap=80`. Garrett's lever: relax the CITY
+extent cap so workshops get a ring beyond residential.
+
+**Prompt-premise correction (reported):** the prompt's coupling (2) cited `bandOuterR =
+max(bandInnerR + MIN, extentCap)` (residential "eats the whole radius"). On HEAD that's the
+**INACTIVE** branch (band disabled); the **ACTIVE** branch caps residential at `min(bandInnerR
++ courtyardDepth + gap, bandCap)` ≈ **86**, NOT `extentCap`. So residential does **not** eat
+the new room — bumping the cap to 120 naturally leaves `[86,120]` free for workshops. **No
+explicit residential outer-bound was needed** (and bounding it would have regressed courtyards
+below their depth). The real fix is the cap + scan bump + sizing workshop precincts to fit the
+ring.
+
+**What shipped:**
+1. **CITY extent cap 80 → 120** (`VillageExtent.radiusFor`, CITY-only). Residential still caps
+   at ~86 (courtyardDepth) → `[86,120]` is a real outer ring residential doesn't claim.
+2. **Scan-grid bump (the forced coupling) 100 → 150** (`V2VillageSpawnerAdapter.FEATURE_MAP_
+   RADIUS`; dumper `LayoutDumpSerializer.FEATURE_MAP_RADIUS` 96 → 150 to match). Covers the
+   relaxed extent × the rural zone factor (120·1.0625 ≈ 127.5) + a footprint margin, so
+   buildings/farms never plan onto un-scanned terrain. **`StrategySelector` has no
+   `FEATURE_MAP_RADIUS` reference** (the prompt's concern is moot on HEAD). Perf: scan is
+   ~quadratic → ~2.25× cells (~2× the ~1s CITY spawn); acceptable, noted.
+3. **Workshop precincts sized to fit the ring.** `WORKSHOP_TARGET` 4 → **1** (one craft per
+   precinct → a ~28-deep block, vs the 46-deep that couldn't fit), and sized from the **largest
+   craft footprint** (not just BLACKSMITH) so any craft fits. At civicReach≈42: workshop sweep
+   `innerR=46, outerR=106`, overlap-rejected outward past residential(→86) → seats centered
+   ~`[100,106]` in the `[86,120]` ring. Many small craft precincts ring the outer band
+   (multi-craft precincts + the look are 4c-b).
+
+**Surface area:** 4 edits (no new files).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer2/VillageExtent.java` (CITY 80→120).
+- `.../Village/Planning/V2/V2VillageSpawnerAdapter.java` (FEATURE_MAP_RADIUS 100→150).
+- `.../Village/Planning/V2/Debug/LayoutDumpSerializer.java` (FEATURE_MAP_RADIUS 96→150).
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`WORKSHOP_TARGET` 4→1; workshop
+  precinct sized from the max craft footprint).
+
+**Tie-In Audit:**
+- *Touched surface:* `radiusFor(CITY)`; `FEATURE_MAP_RADIUS` (adapter + dumper); workshop
+  precinct sizing.
+- *Downstream:* `ZonePartition` bounds zoning to `villageRadius` (120) — within the 150 scan
+  (more cells zoned, within budget). **Scoring** (centrality/terrain/sizing/farm-seed normalize
+  by `villageRadius`) — gradients flatten at 120 vs the 80 they were tuned at; **flagged, NOT
+  retuned blind** (observe in-world; nothing statically resolves outside the village).
+  **Residential band** — unchanged (caps at courtyardDepth; the `[86,120]` ring is new free
+  space, not taken from residential). Greens stay inside `[46,86]` (band-scoped). **Farms
+  (flag-off)** — a bigger radius + smaller civic = *more* field room (the deferred squeeze
+  easing further); the flag-OFF farm payoff is **still pending an in-world spawn**. `OverlapAuditor`
+  / router — workshops now seat in the ring + connect via their nodes. NPC/economy — unchanged
+  (4c-a already showed business registration working).
+- *Exhaustive switches:* `radiusFor` switch — only the CITY arm changed.
+
+**Simplification Sweep:** No new machinery — three constant bumps + workshop sizing from the
+max craft footprint (reusing `defaultFootprint`). Net flat.
+
+**Deviations from prompt:**
+- **No explicit residential outer-bound** (the prompt's coupling 2): on HEAD residential is
+  already courtyardDepth-bounded (~86, the ACTIVE branch), not extentCap-bounded — so the
+  `[86,120]` ring exists naturally and bounding residential was unnecessary (and would regress
+  courtyards). Reported the branch mismatch.
+- **`WORKSHOP_TARGET` = 1 (one craft per precinct), not multi-craft precincts.** Keeps the
+  workshop block shallow enough to fit the ring at extentCap=120 (Garrett's number) without a
+  larger radius; multi-craft precincts need extentCap ≥ ~132 and are deferred to 4c-b with the
+  craft-quarter look.
+- **CITY-only extent bump.** TOWN/HAMLET left (no workshop-ring pressure at that scale); the
+  smaller per=1 blocks also help TOWN seat workshops — **TOWN workshop seating still needs an
+  in-world check** (flagged).
+- **Could not build/spawn** (sandbox 403 + no runtime) — static review only; the workshop-seated
+  count, civic/band/farm numbers, spawn time, and edge-terrain integrity all need an in-world
+  dump.
+
+**Out-of-scope but flagged:**
+- **4c-b** — craft-quarter look (multi-craft precincts, arrangement, shared yard) + tighter
+  residential↔workshop sector-sharing.
+- Scoring-constant retune for the larger radius (only if in-world shows breakage); farm
+  complex-region reservation; spawner over-provisioning; tiled variants (Phase 4).
+
+**Cumulative pending verification:** all prior phases + 4c-a + now the cap relax. **Needs an
+in-world spawn** (flag on: workshops seat > 0 in the outer ring, spawn time ~2×; flag OFF: the
+still-pending farm payoff — `rural N` ≫ 1, no edge glitches past the old radius).
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY (flag on) → `workshop districts: N seated > 0` in an outer ring (NOT
+   scattered "resource"); civic still ~64×85; `residential band active=true`; no overlap/abort;
+   note spawn time (~2×).
+3. `/litv spawn` CITY (flag OFF) → farms recover materially (`rural N` ≫ 1, fewer
+   `NO_VIABLE_COMPLEX_PARCEL`); buildings/farms stay inside the 150 scan (no edge terrain
+   glitches past the old radius 100).
+4. `/litv spawn` TOWN → sane; report workshop seating.
+5. No overlap/abort; blacksmith/bakery businesses still register.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: residential caps at courtyardDepth (~86), so extent 120 leaves
+`[86,120]` free; workshop block (per=1, max-craft footprint ≈ 28 deep, reach ≈ 14) fits via the
+overlap-rejected sweep (center ~`[100,106]`); scan 150 covers villageRadius 120 × zone factor
+1.0625 (≈127.5) + footprint; dumper synced; `StrategySelector` has no scan-radius ref; no new
+enum/codec/switch. The `villageRadius`-normalized scoring is flagged for in-world observation,
+not retuned.

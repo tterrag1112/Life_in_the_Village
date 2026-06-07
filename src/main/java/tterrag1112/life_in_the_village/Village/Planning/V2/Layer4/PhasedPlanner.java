@@ -1940,8 +1940,12 @@ public final class PhasedPlanner {
     /** 4c-a — batch the craft set runs in (after the batch-3 hook reserves the
      *  workshop precincts; NOT batch 3, so they leave the civic precinct). */
     private static final int WORKSHOP_BATCH = 4;
-    /** 4c-a — target craft buildings per workshop precinct (sizing + count). */
-    private static final int WORKSHOP_TARGET = 4;
+    /** 4c-a — craft buildings per workshop precinct. 4c-a fix-up: 1, so a
+     *  workshop block (~one craft footprint) is shallow enough to fit the OUTER
+     *  ring beyond the residential band (which caps at ~courtyard depth) at the
+     *  relaxed CITY extent. Multi-craft precincts (and the craft-quarter look)
+     *  are 4c-b. */
+    private static final int WORKSHOP_TARGET = 1;
 
     /** Houses per residential district. Kept SMALL (4) so a block holding the
      *  big HOUSE footprint (≈20×11) stays a compact ~44×44 — small enough to
@@ -2208,9 +2212,13 @@ public final class PhasedPlanner {
             return;
         }
         BlockPos anchor = state.ctx.anchor();
-        StructureSizeCache.FootprintInfo wf =
-                defaultFootprint(state, BuildingType.BLACKSMITH);   // representative craft
-        int wPitch = Math.max(wf.width(), wf.length()) + HOUSE_GAP;
+        // Size from the LARGEST craft footprint so any craft fits its precinct.
+        int wMaxDim = 0;
+        for (BuildingType t : CRAFT_SET) {
+            StructureSizeCache.FootprintInfo f = defaultFootprint(state, t);
+            wMaxDim = Math.max(wMaxDim, Math.max(f.width(), f.length()));
+        }
+        int wPitch = Math.max(1, wMaxDim) + HOUSE_GAP;
         int per = Math.min(WORKSHOP_TARGET, workshopCount);
         int cols = (int) Math.ceil(Math.sqrt(Math.max(1, per)));
         int rows = (per + cols - 1) / cols;

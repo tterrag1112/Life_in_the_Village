@@ -85,7 +85,11 @@ public final class V2VillageSpawnerAdapter {
 
     private static final Logger LOGGER =
             LoggerFactory.getLogger(V2VillageSpawnerAdapter.class);
-    private static final int FEATURE_MAP_RADIUS = 100;
+    // 4c-a fix-up — raised 100 → 150 to cover the relaxed CITY extent (120) ×
+    // the rural zone factor (~127) plus a building/footprint margin, so buildings
+    // + farms never plan onto un-scanned terrain at the larger radius. Scan cost
+    // is ~quadratic (≈2.25× the old grid → ~2× spawn time at CITY; acceptable).
+    private static final int FEATURE_MAP_RADIUS = 150;
     private static final int BUILDING_LEVEL = 1;
     private static final int BUILDING_VEGETATION_BUFFER = 2;
     private static final int ROAD_VEGETATION_BUFFER = 1;
