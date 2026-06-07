@@ -182,7 +182,54 @@ public final class RiteExecutor {
                     List.of(priest.getUUID()), now, 80,
                     priest.getNpcName() + " ordained me into the clergy"));
         }
+
+        // R1d — start the mentored clergy training arc. The ADULT-transition
+        // dispatcher misses mid-life ordination (leader hires / conversions),
+        // so an initiate is matched to a senior here.
+        tryFormClergyApprenticeship(level, ordinand);
         return RiteOutcome.SUCCESSFUL;
+    }
+
+    /**
+     * Religion Rework R1d — forms a clergy apprenticeship for a freshly
+     * ordained initiate. Reuses the generic matcher + manager verbatim (the
+     * same calls {@code ApprenticeshipDispatcher} makes at ADULT) — no forked
+     * contract path. Only juniors apprentice, and only when forming the
+     * contract will not de-staff a building the ordinand already works.
+     */
+    private static void tryFormClergyApprenticeship(ServerLevel level, TownspersonMob ordinand) {
+        // Only an APPRENTICE-rank junior (SOCIAL < 40) needs mentoring; a
+        // priest who is already JOURNEYMAN+ qualifies via the R1a gate solo.
+        int social = ordinand.getSkills().getLevel(
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.SOCIAL);
+        if (tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeRank
+                .fromSkillLevel(social)
+                != tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeRank.APPRENTICE) {
+            return;
+        }
+
+        var reg = tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipSavedData.get(level);
+        if (reg.getByApprentice(ordinand.getUUID()).isPresent()) return; // already in a contract
+
+        TownspersonMob master = tterrag1112.life_in_the_village.Npc.Apprentice
+                .ApprenticeshipMatcher.findMaster(ordinand, level).orElse(null);
+        if (master == null) return;
+        if (!tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipMatcher
+                .masterAccepts(master, ordinand, reg)) return;
+
+        // De-staffing guard: startContract reassigns the apprentice to the
+        // master's building. Skip if that would yank the ordinand off a
+        // building they already staff (e.g. a chapel/shrine priest). Allowed
+        // when the ordinand has no building yet or already shares the
+        // master's. The un-mentored junior still grows solo under the R1a gate.
+        UUID masterBuilding = master.getAssignedBuildingId().orElse(null);
+        UUID ordinandBuilding = ordinand.getAssignedBuildingId().orElse(null);
+        if (ordinandBuilding != null && !ordinandBuilding.equals(masterBuilding)) return;
+
+        var contract = tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipManager
+                .startContract(level, master, ordinand, "Clergy initiation. 2 years.");
+        tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeshipContractFactory
+                .queueViaScribe(level, contract, master, ordinand);
     }
 
     private static RiteOutcome handleComingOfAge(RiteExecution rite, TownspersonMob priest,

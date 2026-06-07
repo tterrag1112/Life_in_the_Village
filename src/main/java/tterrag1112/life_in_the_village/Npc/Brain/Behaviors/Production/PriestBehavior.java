@@ -22,6 +22,7 @@ import tterrag1112.life_in_the_village.Npc.Religion.Rite;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteCapability;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecution;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecutor;
+import tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeRank;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteOutcome;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteTier;
@@ -163,7 +164,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             rdata.putRite(claimedRite);
             phase = Phase.WALKING_TO_RITE;
             entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get()); // real work
-            entity.setCurrentActivity("Officiating " + riteLabel(rite.type()));
+            entity.setCurrentActivity(clergyTitle() + ": Officiating " + riteLabel(rite.type()));
             entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
                     new WalkTarget(claimedRite.location(), WALK_SPEED, 1));
             return;
@@ -171,7 +172,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         if (canProduce(level)) {
             phase = Phase.PRODUCING;
             entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
-            entity.setCurrentActivity("Preparing temple goods");
+            entity.setCurrentActivity(clergyTitle() + ": Preparing temple goods");
             BlockPos origin = building.getShape().getOrigin();
             if (origin != null) {
                 entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
@@ -259,9 +260,21 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         if (id != null && !id.equals(lastOrderId)) {
             lastOrderId = id;
             org.slf4j.LoggerFactory.getLogger(PriestBehavior.class)
-                    .debug("[PriestBehavior] {} officiates as order {}",
-                            entity.getNpcName(), id);
+                    .debug("[PriestBehavior] {} officiates as order {} ({})",
+                            entity.getNpcName(), id, clergyTitle());
         }
+    }
+
+    /** R1d — cosmetic clergy rank, derived from SOCIAL via the shared
+     *  {@link ApprenticeRank} ladder (no persistent rank field). Surfaced in
+     *  the priest's activity text so progression is player-visible. */
+    private String clergyTitle() {
+        int social = entity.getSkills().getLevel(Skill.SOCIAL);
+        return switch (ApprenticeRank.fromSkillLevel(social)) {
+            case APPRENTICE -> "Initiate";
+            case JOURNEYMAN -> "Priest";
+            case MASTER     -> "Senior Priest";
+        };
     }
 
     private void tickWalkToRite(ServerLevel level) {

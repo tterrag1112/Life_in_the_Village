@@ -704,3 +704,217 @@ claim timing) — wants an in-game check.
    a qualified priest is present, the ordination schedules and completes.
 7. No movement freeze / brain-tick error (no new brain memory); `/tick`
    shows no per-tick regression (the trigger is one bounded daily pass).
+
+---
+
+## Religion Rework — Phase R1d: Clergy apprenticeship (the initiate→priest arc)
+
+Final R1 sub-phase. Makes the mentored training arc real for clergy: a
+freshly-ordained low-skill priest trains under a senior, learning faster
+and climbing the `ApprenticeRank` ladder until qualified (via the R1a
+gate) for higher-tier rites. Wiring + content + surfacing only — the
+apprenticeship machinery (`Npc/Apprentice/`) is already profession-
+agnostic.
+
+### Disposition (investigation — tree verified; one premise was already satisfied)
+
+- **`ApprenticeshipManager.startContract`** seeds the +30 mutual relation,
+  calls `CareerTransitions.changeProfession(apprentice → master's
+  profession)`, **reassigns the apprentice to the master's building**
+  (`apprentice.assignToBuilding(masterBuilding, ...)`), and assigns
+  MASTER_OF / APPRENTICE_TO role projections. The building reassignment is
+  the de-staffing risk the guard addresses.
+- **`changeProfession` is a verified no-op for same→same**: `if (from ==
+  to) return Accepted // no-op` (CareerTransitions:65). The ordinand is
+  already PRIEST and `findMaster` only returns PRIEST masters, so the
+  profession-change side effect is inert; only the building reassignment +
+  relationship/roles fire. It also does NOT touch the specialization, so
+  the R1c clergy spec survives the contract start.
+- **`ApprenticeshipDispatcher` fires only on `LifeStageAdvanced` → ADULT**
+  (Dispatcher:26-27). A mid-life ordination (leader hire / conversion of
+  an already-adult NPC) never re-emits ADULT, so those priests are missed
+  — exactly the gap this trigger fills.
+- **`findMaster`** filters villagers to `profession == preferred` (the
+  candidate's own PRIEST), `skill(primary=SOCIAL) ≥ MASTER_SKILL_THRESHOLD`
+  (70), same village, assigned-building present, under the
+  MAX_APPRENTICES_PER_MASTER (2) cap; ranks by relationship + skill +
+  LifeGoal. The R1c ordination already bumps ordinand→officiant +10
+  relationship, which biases `findMaster` toward the ordaining senior —
+  so "the ordaining senior is the natural mentor" emerges without forcing
+  a specific master.
+- **`ApprenticeRank.fromSkillLevel`**: APPRENTICE 0–40, JOURNEYMAN 40–75,
+  MASTER 75+.
+- **`PriestBehavior` does NOT extend `AbstractProductionBehavior`** (it is
+  `extends Behavior<TownspersonMob>`), so it doesn't inherit that base
+  class's XP hook. **But task 2's premise is already satisfied another
+  way**: the mentorship multiplier is NOT applied in
+  `AbstractProductionBehavior` — that base class's `awardProductionXp`
+  simply calls `SkillXp.award`. The multiplier lives **inside the single
+  `SkillXp.award` funnel** (Phase 6.3.2.b), which calls
+  `MentorshipBonus.npcMentorshipFor` → `ApprenticeshipManager
+  .mentorshipMultiplierFor`. Since every PriestBehavior XP grant
+  (production `SkillXp.award`, and officiation via `RiteExecutor.runOne`'s
+  `SkillXp.award`) already flows through that funnel, **the mentorship
+  bonus already reaches the apprentice priest**. Multiplying again in
+  PriestBehavior would double-apply (1.5×1.5) and violate "no parallel
+  XP-bonus path." See Deviations.
+
+### What shipped
+
+**1. Clergy-apprenticeship trigger (`RiteExecutor.tryFormClergyApprenticeship`,
+called from `handleOrdination`).** Mirrors the ADULT dispatcher's exact
+orchestration — `ApprenticeshipSavedData.getByApprentice` dedup →
+`ApprenticeshipMatcher.findMaster` → `masterAccepts` →
+`ApprenticeshipManager.startContract` → `ApprenticeshipContractFactory
+.queueViaScribe` — with two religion-specific gates:
+- **Junior-only**: skip unless the ordinand is APPRENTICE rank (SOCIAL <
+  40). A JOURNEYMAN+ priest qualifies solo via the R1a gate.
+- **De-staffing guard**: skip when `ordinand.getAssignedBuildingId()` is
+  present and differs from the master's building (forming would yank the
+  ordinand off a chapel/shrine they staff). Allowed when the ordinand has
+  no building yet or already shares the master's. The un-mentored junior
+  still grows solo. No forked contract path.
+
+**2. Mentorship XP — already applied; no code (see Disposition).** Task 2
+is satisfied by the existing single `SkillXp.award` funnel, which both of
+PriestBehavior's XP sites already use. Deliberately did NOT add a second
+multiplier (would double-apply).
+
+**3. PRIEST masterpiece** — `masterpieceTargetFor` PRIEST →
+`minecraft:golden_apple` (was the "emerald" default). A blessed priest-
+supply-chain output reading as a consecration piece, distinct from the
+scribes' written book. Descriptor only; the pass condition stays skill-
+based (SOCIAL at `MASTERPIECE_PASS_SKILL`).
+
+**4. Rank surfacing** — `PriestBehavior.clergyTitle()` derives a cosmetic
+label from SOCIAL via `ApprenticeRank.fromSkillLevel` (Initiate / Priest
+/ Senior Priest) and prefixes the priest's activity text ("Initiate:
+Officiating a marriage", "Senior Priest: Preparing temple goods"); also
+appended to the `readOrderSeam` DEBUG-on-change line. No persistent rank
+field — derived from skill, computed for display only.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `handleOrdination` is the hook (event-driven, not
+  per-tick); `findMaster` eligibility filters to PRIEST masters via
+  `ProfessionSkills.PRIEST = (SOCIAL, LITERACY)` → primary SOCIAL, matching
+  the rank gate's axis.
+- **Downstream callers** — `startContract` side effects: profession-change
+  is a confirmed no-op (PRIEST→PRIEST); building reassignment is guarded;
+  relationship seed / role projections / scribe commission fire as for any
+  contract. The weekly tick (`ApprenticeshipManager.weeklyTick`) and
+  graduation path already handle clergy generically (primary skill SOCIAL
+  via `ProfessionSkills`), so milestones/masterpiece/graduation work with
+  no religion-specific change. Graduation's mood/history broadcast
+  (`fireApprenticeshipGraduation`) is profession-agnostic.
+- **Sibling systems** — Specialization: the locked clergy spec assigned in
+  R1c is untouched by `changeProfession` (same→same no-op) and does not
+  block the apprentice path (the apprentice path reads skills/roles, not
+  the spec). Roles: MASTER_OF/APPRENTICE_TO projections assigned/cleared by
+  the existing manager. R1a gate: the accelerated SOCIAL growth feeds
+  `RiteCapability` so a trained priest naturally unlocks higher tiers — the
+  intended arc.
+- **Exhaustive switches** — no new enum. New switch over the *existing*
+  `ApprenticeRank` (3 arms, exhaustive, compiler-checked) in `clergyTitle`.
+  The `masterpieceTargetFor` switch over `Profession` has a `default`, so
+  adding the PRIEST arm is safe. No `Rite`/`RiteTier` change.
+
+### Simplification Sweep
+
+Classes in scope: `RiteExecutor` (+ trigger helper), `ApprenticeshipManager`
+(+1 masterpiece arm), `PriestBehavior` (+ rank label). The new clergy
+trigger does **not** overlap the ADULT-transition dispatcher — different
+life moment (ordination vs. coming-of-age), and both guard with the same
+`getByApprentice` dedup so a priest can't double-contract. Both call the
+identical `startContract`/`findMaster`/`queueViaScribe` path — one
+mechanism, two entry points (ADULT for cradle-raised, ordination for
+mid-life clergy). No orphans; no parallel XP/contract path introduced
+(task 2 explicitly reused the existing funnel rather than adding one).
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The trigger writes the apprenticeship
+ledger + `NpcMemory`/relationships/roles via existing manager APIs;
+`clergyTitle` is display-only. No `brainMemories()` change → no freeze
+risk.
+
+### Deviations from prompt
+
+- **Task 2 (apply `mentorshipMultiplierFor` in PriestBehavior) shipped as
+  a no-op with justification.** The prompt's premise — that PriestBehavior
+  lacks the multiplier because it doesn't extend `AbstractProductionBehavior`
+  — does not hold in the current tree: the multiplier is applied centrally
+  inside `SkillXp.award` (the single funnel), which both PriestBehavior XP
+  sites already use. Adding the multiplier in PriestBehavior would
+  double-apply it. The requested outcome ("apprentice priest learns faster
+  near master") is already in effect. Verified `AbstractProductionBehavior
+  .awardProductionXp` also just delegates to `SkillXp.award` (it does not
+  multiply), confirming the single-funnel model.
+- **Master selection via `findMaster`, not the literal officiant.** The
+  prompt called the ordaining senior "the natural mentor"; `findMaster`
+  reuses the full matcher (correct skill bar, crowd cap, village filter)
+  and — thanks to the R1c +10 ordination relationship bump — preferentially
+  returns that same senior. This is stronger reuse than hard-coding the
+  officiant (who might officiate via office-seat below the
+  MASTER_SKILL_THRESHOLD and not qualify as a master).
+
+### Out-of-scope but flagged
+
+- Religion-specific orders / multiple specializations — content phase.
+- No change to R1c ordination effects or the R1a gate — this layers on top.
+- Player-as-apprentice clergy flows / GUI — player phase.
+- Apprenticeship graduation-placement (where a graduate is re-assigned) —
+  pre-existing system concern, deliberately not redesigned here.
+- De-staffing guard is conservative: a chapel/shrine priest who ordains is
+  simply not mentored (grows solo) rather than relocating the building's
+  staffing. A future "visiting mentor" model (mentor without relocation)
+  could lift this, but that needs the apprenticeship system to support a
+  non-co-located contract — out of scope.
+- `MASTER_SKILL_THRESHOLD` (70) means a village needs a genuinely senior
+  priest before any initiate can be mentored; founders are pre-ordained
+  (R1c populator path) and grow into that role. Lone-young-temple villages
+  simply have un-mentored initiates until a senior emerges — acceptable.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (neoform-runtime POM 403;
+build fails before compilation). Static review: trigger reuses the
+matcher/manager verbatim (same calls as `ApprenticeshipDispatcher`) with a
+junior-rank gate + de-staffing guard; `changeProfession` same→same no-op
+confirmed in source; `clergyTitle` switch is `ApprenticeRank`-exhaustive;
+PRIEST masterpiece arm sits under an existing `default`; mentorship is the
+pre-existing single-funnel path (no double-apply); `ApprenticeRank`
+imported in PriestBehavior, Apprentice classes fully-qualified in
+RiteExecutor; no new brain memory, no new persistent field, no enum added.
+Runtime-sensitive (master co-location, contract timing) — wants an in-game
+check.
+
+### Smoke test
+
+1. Spawn a TEMPLE with a senior PRIEST: high SOCIAL (≥ 70, MASTER rank).
+   `/liv npc` → activity text reads "Senior Priest: ..."; confirm they
+   carry the locked clergy spec (pre-ordained at spawn).
+2. Create a NEW low-SOCIAL priest (< 40) in the same village via leader-
+   hire / career-change (un-ordained, no clergy spec, no building or the
+   temple's building).
+3. Trigger their ordination (R1c daily pass, or `/religion rite ORDINATION
+   <newUuid>`). On completion confirm: the new priest gains the clergy spec
+   AND an apprenticeship contract forms with the senior as master (server
+   log "[Apprenticeship] ... apprentice of ..."; `/liv npc` shows
+   APPRENTICE_TO role).
+4. With the apprentice working near the master (same temple), confirm its
+   officiation/production SOCIAL XP is multiplied ~1.5× vs. a priest with
+   no master present (the existing `SkillXp.award` mentorship funnel).
+5. Confirm the rank label: "Initiate" while SOCIAL < 40, advancing to
+   "Priest" at 40 and "Senior Priest" at 75.
+6. De-staffing guard: give a CHAPEL its own priest (staffing that chapel),
+   then ordain them while the temple senior is present — confirm NO
+   contract forms (they are not yanked to the temple; the chapel stays
+   staffed) and they still officiate solo.
+7. Graduation: raise the apprentice's SOCIAL across 40/55/70/75 (or let it
+   grow); confirm the existing weekly tick advances milestones, assigns the
+   golden-apple masterpiece at milestone 4, and graduates at
+   MASTERPIECE_PASS_SKILL — contract COMPLETED, +20 relationship, pinned
+   "Graduated under ..." memory.
+8. No movement freeze / brain-tick error (no new brain memory); `/tick`
+   shows no per-tick regression (the trigger runs once at ordination).
