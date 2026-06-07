@@ -1636,7 +1636,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .Homestead.HomeCandlemakingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .PersonalSpaceBehavior()
+                                .PersonalSpaceBehavior(),
+                        // Liveliness L1 — idle director (anywhere-stroll / light
+                        // rest), lowest IDLE priority: the catch-all so an NPC
+                        // with nothing else to do still moves.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .IdleDirectorBehavior(false)
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
@@ -1689,7 +1694,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         ImmutableList<BehaviorControl<? super TownspersonMob>> restBehaviors =
                 ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .ReturnHomeBehavior()
+                                .ReturnHomeBehavior(),
+                        // Liveliness L1 — light idle when ReturnHome can't run
+                        // (e.g. no bed): a breather near home, not dead-standing.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .IdleDirectorBehavior(false)
                 );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .REST.get(), 0, restBehaviors);
@@ -1712,6 +1721,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 1, workBehaviors);
+
+        // Liveliness L1 — idle director in WORK at the LOWEST priority (2),
+        // below per-profession production (0) and the universal WORK entries
+        // (1). The WORK instance self-gates on the NO_ACTIONABLE_WORK signal,
+        // so it only putters/strolls when production has no actionable task.
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 2, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .IdleDirectorBehavior(true)));
 
         brain.setCoreActivities(java.util.Set.of(Activity.CORE));
         brain.setDefaultActivity(Activity.IDLE);

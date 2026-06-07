@@ -459,6 +459,10 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     // ANALYZE
     // =========================================================================
     protected void analyze(ServerLevel level) {
+        // Liveliness L1 — optimistic clear of the work-satisfied signal; if
+        // this analyze ends in a structural goIdle it is re-set there, and a
+        // successful start (GATHERING / sell hand-off) leaves it cleared.
+        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
         if (workBuilding == null) { goIdle("no assigned work building"); return; }
         market = findMarket(level);
         String idleReason = "no viable recipe"; // refined below if a recipe exists but is blocked
@@ -1046,8 +1050,16 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected void goIdle(String blockingReason) {
         if (blockingReason == null) {
             entity.clearCurrentActivity();
+            // Clean idle (work done) — clear the work-satisfied signal.
+            entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
         } else {
             entity.setActivityState(ActivityState.IDLE.withBlocking(blockingReason));
+            // Liveliness L1 — structural idle (no inputs / output full / no
+            // recipe): flag "no actionable work" so the idle director fills
+            // the gap during WORK. TTL ≈ the production idle cooldown.
+            entity.getBrain().setMemoryWithExpiry(
+                    NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE,
+                    IDLE_COOLDOWN_TICKS);
         }
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());

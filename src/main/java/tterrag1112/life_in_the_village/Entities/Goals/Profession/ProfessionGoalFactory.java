@@ -114,7 +114,10 @@ public final class ProfessionGoalFactory {
         // INVESTIGATE_CRIME power short-circuit still applies — the
         // behavior's checkExtraStartConditions calls the same
         // PowerGrant.hasPower check the goal did.
-        npc.goalSelector.addGoal(P_IDLE,      new WanderInBuildingGoal(npc));
+        // Liveliness L1 — WanderInBuildingGoal retired: the brain-based
+        // IdleDirectorBehavior (anywhere-stroll) + InternalBuildingWanderBehavior
+        // (footprint) supersede it, and as a Goal holding MOVE it suppressed the
+        // brain director via BrainNavGuard. (Goal→Brain migration continuation.)
         npc.goalSelector.addGoal(P_AMBIENT,   new LookAtPlayerGoal(npc, Player.class, 8.0f));
         npc.goalSelector.addGoal(P_AMBIENT,   new NpcRandomLookAroundGoal(npc));
     }

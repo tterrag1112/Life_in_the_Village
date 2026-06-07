@@ -2321,3 +2321,139 @@ balanced; no raw `System.out` left; APIs matched to call sites
    inputs", "output full", "off work hours", "no assigned work building").
 4. A working NPC → blockingReason = "(none — working or cleanly idle)".
 5. No regressions: guards, conversation/social (sensor kept), production.
+
+---
+
+## Liveliness L1 — the idle director (anywhere-stroll + workshop tidy)
+
+The heart of the rework: a single idle director that fills the "brain
+selection returns nothing → NPC stands still" gap, gated on a work-
+satisfied signal. Read the `litv-npc-behavior` skill first (registration
+contract).
+
+### Work-satisfied signal
+
+New transient memory `NpcMemoryTypes.NO_ACTIONABLE_WORK` (no-codec
+Boolean). Set in `AbstractProductionBehavior.goIdle(reason)` when the
+reason is non-null — i.e. a STRUCTURAL idle (no inputs / output full / no
+viable recipe / no work building), with a TTL of `IDLE_COOLDOWN_TICKS`
+(600). Cleared on a clean idle (`goIdle(null)`), and optimistically erased
+at the top of `analyze()` so a successful start (GATHERING / sell hand-off)
+leaves it absent. Reuses L0's structural-vs-temporary reason split (the
+temporary gates — off-work / nav-denied / role / work-blocked — return
+false in `checkExtraStartConditions` and never set the signal).
+
+### Director registration & gating
+
+`IdleDirectorBehavior` (one class) registered **universally in makeBrain**
+(not per-profession REGISTRARS — it's for every NPC):
+- IDLE — lowest priority (after PersonalSpace), `IdleDirectorBehavior(false)`.
+- REST — after ReturnHome, `(false)`.
+- WORK — a dedicated `addActivity(WORK, 2, …)` with `(true)`, below
+  per-profession production (0) and the universal WORK entries (1).
+
+Gating (CORE-with-gating rejected — per-bucket low-priority matches the
+existing universal-behavior pattern and lets schedule/activity drive it):
+- Memory requirements (superclass-enforced): `WALK_TARGET` ABSENT (never
+  starts while anything — incl. production — is navigating, so it can't
+  clobber a working path) + `IDLE_DIRECTOR_COOLDOWN` ABSENT (per-pick
+  throttle). WORK instance additionally requires `NO_ACTIONABLE_WORK`
+  PRESENT (acts only when production has no task).
+- `checkExtraStartConditions`: `!isSleeping()` (don't pull a sleeping NPC
+  out of bed — ReturnHome holds no WALK_TARGET while sleeping) +
+  `BrainNavGuard.canSteerNavigation`.
+- `canStillUse` = navigation in progress (mirrors InternalBuildingWander);
+  stale-nav self-heals via BrainNavGuard's 200-tick escape.
+
+**Why no flicker:** `canSteerNavigation` is false while the director's own
+walk is in progress, so production's gate fails (`BLOCKED_NO_NAV`) and it
+can't start/clobber mid-stroll; when the stroll ends, production reclaims
+the slot. Clean alternation. (No production-cooldown change needed — the
+prompt's "600-tick cooldown" constant existed but was unused; the nav
+arbitration is what actually serialises them.)
+
+### Action set (weighted pick + cooldown)
+
+`DirectorAction { STROLL, TIDY, REST }` — exhaustive switch.
+- **STROLL** (anywhere): `DefaultRandomPos.getPos(entity,16,8)` →
+  `NpcBehaviorHelpers.walkTo`. Text "Strolling the village". The key
+  missing behavior — works in the street/plaza, not just the footprint.
+- **TIDY** (WORK putter): walk a sampled walkable spot in the assigned
+  building footprint, set `CARRYING_DISPLAY_ITEM` to the NPC's first
+  inventory item (cheap, cosmetic; CORE `CarryHoldAnimationBehavior`
+  renders it). Text "Tidying the workshop".
+- **REST** (light idle): small-radius `DefaultRandomPos` + a LOOK_AROUND
+  gesture. Text "Taking a breather".
+
+WORK-mode picks TIDY 70% / STROLL 30%; off-duty picks STROLL 70% / REST
+30%. Per-pick cooldown 100-300 ticks (`IDLE_DIRECTOR_COOLDOWN`). All set
+descriptive `ActivityState` text (never blank). `stop()` drops the carry
+overlay.
+
+### Cost
+
+No per-tick wide scans: each run picks one destination then walks; re-picks
+only after the cooldown + after the previous walk finishes. The footprint
+sampler is ≤6 block probes, once per TIDY pick. Honours L0's perf discipline.
+
+### Tie-In Audit
+
+- **Upstream:** work-satisfied signal (production goIdle), building
+  footprint (TIDY destinations) + `DefaultRandomPos` (stroll), nav helpers,
+  carry overlay.
+- **Downstream / coexistence:** yields to production (WORK gate +
+  WALK_TARGET-absent + nav arbitration); fills the idle gap incl. the
+  inter-cycle pause; production reclaims when runnable (signal cleared,
+  director requires nav free). Respects `BrainNavGuard` (Goals/homestead/
+  combat nav claims). Doesn't interrupt sleep.
+- **Siblings — wander reconciliation:** retired the legacy GOAL
+  `WanderInBuildingGoal` (removed from `ProfessionGoalFactory`, class
+  deleted) — as a Goal holding MOVE it suppressed the brain director, and
+  the Goal→Brain migration already moved wanders to the brain. Kept
+  `InternalBuildingWanderBehavior` as the footprint-scoped special case.
+  Three overlapping wanders → two (director anywhere + footprint special
+  case).
+- **Exhaustive switch:** `DirectorAction` — all three arms handled.
+
+### Simplification Sweep
+
+`WanderInBuildingGoal` deleted (dead after retire). InternalBuildingWander
+kept; fully unifying it into the director is a candidate once TIDY/STROLL
+prove out (noted, not done).
+
+### Deviations
+
+- Work-satisfied signal wired in `AbstractProductionBehavior` only (covers
+  crafters/workshops — the main "stand at the workstation" case).
+  `FarmerBehavior` is a separate class with its own idle path; its WORK-gap
+  isn't signalled yet, so the WORK-mode director won't fill for a farmer
+  with no field work (farmers still get the IDLE/REST director). Follow-up.
+- TIDY's carry item is whatever the NPC already holds (cheap, may be empty
+  → walk without carry); a profession-appropriate display item is L3 polish.
+- The unused `IDLE_COOLDOWN_TICKS` constant is now used as the signal TTL.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: 5 touched
++ 1 new file brace/paren-balanced; director registered 3× via makeBrain
+(the skill's #1 trap); APIs matched to call sites (`Behavior` ctor,
+`DefaultRandomPos.getPos`, `BlockPos.containing(Vec3)`,
+`setMemoryWithExpiry`, `BuildingShape` accessors, `triggerGesture`,
+`copyWithCount`, `canSteerNavigation`); exhaustive switch; no per-tick
+scans.
+
+### Smoke test
+
+1. NPC whose profession has no work (no inputs / off-cycle): it now
+   putters/strolls instead of standing at the workstation.
+2. `/liv npc brain nearest`: the running behavior is `IdleDirectorBehavior`
+   and the text reads "Tidying the workshop" / "Strolling the village".
+3. A working NPC still works — director yields (no interruption; fills only
+   the idle gap).
+4. NPCs in the street/plaza now wander (anywhere-stroll), where the old
+   footprint wander couldn't.
+5. REST NPCs do light idle (breather + look) when they can't sleep;
+   sleeping NPCs are NOT pulled out of bed.
+6. `/tick`: no regression (cheap pick-then-walk).
+7. No nav stutter between strolling and real tasks; guards/social/homestead
+   unaffected.
