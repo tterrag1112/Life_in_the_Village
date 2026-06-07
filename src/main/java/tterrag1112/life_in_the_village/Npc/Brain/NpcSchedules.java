@@ -44,7 +44,12 @@ public final class NpcSchedules {
      *  {@link TownspersonMob#customServerAiStep}. Cheap — only flips the
      *  active activity when the table-derived activity changes. */
     public static void tick(TownspersonMob npc, long dayTime) {
-        Activity expected = activityAt(dayTime);
+        // Liveliness L3 — same per-NPC jitter as ScheduleResolver so the brain
+        // Activity transitions (WORK/SOCIAL/REST/IDLE) stagger across the
+        // village instead of flipping at the same tick for everyone.
+        long jittered = dayTime + tterrag1112.life_in_the_village.Npc.Schedule
+                .ScheduleResolver.phaseJitter(npc);
+        Activity expected = activityAt(jittered);
         Brain<TownspersonMob> brain = npc.getBrain();
         if (!brain.isActive(expected)) {
             brain.setActiveActivityIfPossible(expected);
