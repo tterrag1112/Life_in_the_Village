@@ -65,7 +65,7 @@ public class GatherAtSquareBehavior extends Behavior<TownspersonMob> {
                 rng.nextInt(2 * LINGER_RADIUS + 1) - LINGER_RADIUS, 0,
                 rng.nextInt(2 * LINGER_RADIUS + 1) - LINGER_RADIUS);
         NpcBehaviorHelpers.walkTo(entity, spot, WALK_SPEED);
-        entity.setCurrentActivity("Gathering at the square");
+        entity.setCurrentActivity(ActivityFlavor.pick("square", entity.getRandom()));
         // Cosmetic prop while milling about (L3 part B). Cleared on stop.
         AmbientProps.applyDisplay(entity);
         armCooldown(entity);

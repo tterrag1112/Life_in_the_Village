@@ -310,6 +310,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
+        applyPhaseFlavor();
 
         switch (phase) {
             case IDLE               -> { /* no-op */ }
@@ -324,6 +325,36 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             case COMPOSTING         -> compost(level);
             case ACQUIRING_TOOL     -> acquireTool(level);
         }
+    }
+
+    // Liveliness L4 — flavour text picked ONCE per phase change (not per tick;
+    // held by setActivityState's equals short-circuit). Replaces the fixed
+    // per-tick strings the visible work-phase handlers used to set. Phases not
+    // listed keep their handler's own text (analyze/buying/composting).
+    private Phase flavorPhase = null;
+    private String phaseFlavor = null;
+
+    private void applyPhaseFlavor() {
+        if (phase != flavorPhase) {
+            phaseFlavor = flavorFor(phase);
+            flavorPhase = phase;
+        }
+        if (phaseFlavor != null) entity.setCurrentActivity(phaseFlavor);
+    }
+
+    private String flavorFor(Phase p) {
+        var rng = entity.getRandom();
+        return switch (p) {
+            case HARVESTING      -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.pick("farm.harvest", rng);
+            case REPLANTING      -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.pick("farm.replant", rng);
+            case TENDING_ANIMALS -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.pick("farm.animals", rng);
+            case DEPOSITING      -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.pick("farm.deposit", rng);
+            default              -> null;
+        };
     }
 
     @Override
@@ -719,8 +750,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     // =========================================================================
 
     private void harvest(ServerLevel level) {
-        entity.setCurrentActivity("Harvesting crops");
-
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
         actionTimer++;
         if (actionTimer < TICKS_PER_ACTION) return;
         actionTimer = 0;
@@ -964,8 +994,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     // =========================================================================
 
     private void deposit(ServerLevel level) {
-        entity.setCurrentActivity("Depositing harvest");
-
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
         if (farmhouse == null) { goIdle(); return; }
 
         SimpleContainer inv = entity.getPersonalInventory();
@@ -994,8 +1023,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     // =========================================================================
 
     private void replant(ServerLevel level) {
-        entity.setCurrentActivity("Replanting crops");
-
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
         actionTimer++;
         if (actionTimer < TICKS_PER_ACTION) return;
         actionTimer = 0;
@@ -1366,7 +1394,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     private void tendAnimals(ServerLevel level) {
         if (farmhouse == null) { goIdle(); return; }
 
-        entity.setCurrentActivity("Tending animals");
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
 
         // Phase 6.3.3.h.6 — anchor selection:
         //   - Storm in progress → retreat to farmhouse anchor (livestock pen).

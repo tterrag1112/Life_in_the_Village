@@ -2909,3 +2909,75 @@ removed from the director.
 4. Work still happens in valid windows; no movement freeze / brain-tick error
    (L1-fix2 clear); `/tick` no regression.
 5. Production/hobbies/greeting still work — gathering yields to real tasks.
+
+---
+
+## Liveliness L4 — activity-text polish
+
+Final liveliness step: varied, flavourful nameplate text instead of fixed
+phase-level strings, so the village reads as alive. Polish only — no
+behaviour/selection change, only the label.
+
+### Flavour mechanism
+
+`ActivityFlavor` (new, static): string pools keyed by an action key
+(`stroll`/`rest`/`tidy`/`square`/`prod.gather`/`prod.deposit`/`farm.*`) plus
+a per-profession crafting map (baker→"Kneading dough"/"Tending the oven"/…,
+blacksmith→"Hammering at the forge"/…, etc.). `pick(key, rng)` / `craft(prof,
+rng)` return one string. Code map for v1 (data-driven JSON flagged as a later
+option). No new memory (text only).
+
+### Pick-once discipline (no nameplate churn)
+
+Strings are picked ONCE per action/phase entry, never per tick — relying on
+`setActivityState`'s `equals` short-circuit to hold the label steady:
+- **IdleDirector** (STROLL/REST/TIDY) + **GatherAtSquare**: the activity is
+  set once in the action method (called once per action pick), so the literal
+  was replaced directly with `ActivityFlavor.pick(...)`.
+- **AbstractProductionBehavior** + **FarmerBehavior**: added an
+  `applyPhaseFlavor()` called at the top of `tick()` that re-picks ONLY when
+  the phase changes (`phase != flavorPhase`) and otherwise re-sets the cached
+  string (a no-op via the short-circuit). Removed the per-tick literal
+  set-sites from the phase handlers (production: gather/craft/deposit;
+  farmer: harvest/replant/tend-animals/deposit). Crafting flavour is
+  per-profession via `ActivityFlavor.craft(profession, rng)`.
+
+So a baker now shows "Kneading dough" / "Tending the oven" / "Baking bread"
+across cycles; a stroller varies its wander text; different NPCs of a
+profession differ; the same NPC varies across actions.
+
+### L0 semantics preserved
+
+`blockingReason` / `IDLE.withBlocking(...)` idle states are untouched —
+flavour applies only to ACTIVE (non-blocked) states (`goIdle` still owns the
+idle text and the `/liv npc brain` "why idle" reason).
+
+### Deviations / flagged (long tail not converted)
+
+- Converted the prominent/visible sites only (production phases, farmer work
+  phases, director, gathering). The long tail of less-visible literals is
+  flagged as opportunistic follow-up:
+  - Farmer: "Planning farm work…", "Buying seeds", "Buying tools",
+    "Composting" (+ the transient analyze-time "Tending animals" at the
+    commit point, harmlessly overridden by the central flavour next tick).
+  - `MerchantBehavior` has no `setCurrentActivity` sites (manning text comes
+    from elsewhere) — nothing to convert.
+  - `HobbyBehavior` already shows per-hobby names (varied) — left as-is.
+- Data-driven JSON pools: not built (code map v1).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (confirmed neoform-runtime
+offline). Static review: all touched files balanced; converted literals
+removed from per-tick handlers and re-homed in `applyPhaseFlavor` (pick on
+phase change only); flavour switches use `default`; no new memory.
+
+### Smoke test
+
+1. Watch a baker over several cycles: varied crafting text, not the same
+   string each time.
+2. Different NPCs of a profession show different flavour; same NPC varies
+   across actions.
+3. Strollers/gatherers show varied text; `/liv npc brain` reflects it.
+4. No nameplate flicker (text changes per action/phase, not per tick).
+5. Idle "why" debug unchanged; no perf regression.

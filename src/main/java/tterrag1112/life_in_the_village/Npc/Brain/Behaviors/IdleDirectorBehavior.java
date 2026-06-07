@@ -132,7 +132,7 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
         Vec3 dest = DefaultRandomPos.getPos(entity, STROLL_RADIUS, STROLL_VERT);
         if (dest == null) return false;
         NpcBehaviorHelpers.walkTo(entity, BlockPos.containing(dest), STROLL_SPEED);
-        entity.setCurrentActivity("Strolling the village");
+        entity.setCurrentActivity(ActivityFlavor.pick("stroll", entity.getRandom()));
         // L3 part B — carry a cosmetic prop while strolling (cleared on stop).
         AmbientProps.applyDisplay(entity);
         return true;
@@ -143,7 +143,7 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
         Vec3 dest = DefaultRandomPos.getPos(entity, REST_RADIUS, REST_VERT);
         if (dest == null) return false;
         NpcBehaviorHelpers.walkTo(entity, BlockPos.containing(dest), REST_SPEED);
-        entity.setCurrentActivity("Taking a breather");
+        entity.setCurrentActivity(ActivityFlavor.pick("rest", entity.getRandom()));
         entity.triggerGesture(Gesture.LOOK_AROUND);
         return true;
     }
@@ -156,7 +156,7 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
         BlockPos pick = sampleWalkable(level, shapeOpt.get(), entity.getRandom());
         if (pick == null) return false;
         NpcBehaviorHelpers.walkTo(entity, pick, STROLL_SPEED);
-        entity.setCurrentActivity("Tidying the workshop");
+        entity.setCurrentActivity(ActivityFlavor.pick("tidy", entity.getRandom()));
         // Cosmetic carry overlay (held item / profession prop). CORE
         // CarryHoldAnimationBehavior renders it; cleared on stop.
         AmbientProps.applyDisplay(entity);
