@@ -150,19 +150,7 @@ public final class PhasedPlanner {
                 StructureAvailabilityRegistry.INSTANCE,
                 tradeFulfilledTypes, forcedResidentialVariant);
     }
-        // Live path: build the cache here so the warn-once state and
-        // NBT-fallback semantics live where they always have. The
-        // resulting StructureSizeCache implements FootprintProvider
-        // so the synthetic-friendly overload below sees the same
-        // object shape. Availability is the production singleton —
-        // the same one the call site at findBestCandidate hardcoded
-        // pre-seam, so the live spawn path's variant-resolution
-        // behaviour is unchanged.
-        return run(ctx, fmap, sortedSelection, unavailable,
-                new StructureSizeCache(level),
-                StructureAvailabilityRegistry.INSTANCE,
-                tradeFulfilledTypes);
-    }
+
 
     /**
      * Track E1 — headless overload. The {@link

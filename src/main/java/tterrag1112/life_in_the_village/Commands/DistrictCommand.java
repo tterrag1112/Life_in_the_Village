@@ -47,7 +47,6 @@ public final class DistrictCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("litv")
                 .then(Commands.literal("district")
-                        .requires(src -> src.hasPermission(2))
                         .then(Commands.literal("residential")
                                 .then(Commands.argument("count",
                                                 IntegerArgumentType.integer(1, 64))

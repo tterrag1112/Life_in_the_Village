@@ -101,7 +101,7 @@ public final class NpcSchedules {
         // village instead of flipping at the same tick for everyone.
         long jittered = dayTime + tterrag1112.life_in_the_village.Npc.Schedule
                 .ScheduleResolver.phaseJitter(npc);
-        Activity expected = activityAt(jittered);
+        Activity expected = activityAt(npc, jittered);
         Brain<TownspersonMob> brain = npc.getBrain();
         if (!brain.isActive(expected)) {
             brain.setActiveActivityIfPossible(expected);

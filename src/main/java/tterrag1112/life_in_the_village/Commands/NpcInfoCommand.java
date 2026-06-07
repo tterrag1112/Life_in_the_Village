@@ -68,7 +68,6 @@ public final class NpcInfoCommand {
                                 // DayPhase + active Activity + running behaviors
                                 // + the recorded blockingReason.
                                 .then(Commands.literal("brain")
-                                        .requires(src -> src.hasPermission(2))
                                         .then(Commands.argument("target",
                                                         StringArgumentType.string())
                                                 .executes(ctx -> brain(ctx,
