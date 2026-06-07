@@ -39,6 +39,12 @@ public final class RiteExecutor {
      *  (spec line 252: "defer up to 14d"). */
     public static final long MARRIAGE_DEFER_LIMIT_TICKS = 14L * 24000L;
 
+    /** Grace (ticks) a realized priest gets to physically officiate a due rite
+     *  before {@code runDue} falls back to applying it abstractly — so a
+     *  loaded-but-unable priest (off-work / unreachable venue) can't starve a
+     *  rite indefinitely. */
+    public static final long OFFICIATE_GRACE_TICKS = 24000L;
+
     private RiteExecutor() {}
 
     /** Daily entry point — runs every due rite in the level. */
@@ -47,19 +53,24 @@ public final class RiteExecutor {
         RiteSavedData rdata = RiteSavedData.get(level);
         long now = level.getGameTime();
         for (RiteExecution rite : rdata.dueRites(now)) {
-            try { runOne(rite, rdata, level); }
+            // deferToRealizedPriest=true: leave rites whose priest is a loaded
+            // PRIEST entity PENDING so PriestBehavior officiates them physically.
+            try { runOne(rite, rdata, level, true); }
             catch (Throwable t) {
                 LOGGER.warn("[RiteExecutor] Rite {} threw: {}", rite.type(), t.getMessage());
             }
         }
     }
 
-    /** Public entry point for the {@code /religion rite} debug command. */
+    /** Public entry point for the {@code /religion rite} debug command AND for
+     *  {@code PriestBehavior} when it finishes officiating physically. Bypasses
+     *  the realized-priest defer (the caller IS performing the rite). */
     public static RiteOutcome runImmediate(RiteExecution rite, ServerLevel level) {
-        return runOne(rite, RiteSavedData.get(level), level);
+        return runOne(rite, RiteSavedData.get(level), level, false);
     }
 
-    private static RiteOutcome runOne(RiteExecution rite, RiteSavedData rdata, ServerLevel level) {
+    private static RiteOutcome runOne(RiteExecution rite, RiteSavedData rdata,
+                                      ServerLevel level, boolean deferToRealizedPriest) {
         long now = level.getGameTime();
         VillageSavedData vdata = VillageSavedData.get(level);
         Village village = vdata.getVillageById(rite.villageId()).orElse(null);
@@ -68,6 +79,17 @@ public final class RiteExecutor {
         UUID priestId = rite.presidingPriestId().orElseGet(() -> findPriest(village));
         TownspersonMob priest = priestId == null
                 ? null : TownspersonMob.findByUUID(level, priestId).orElse(null);
+
+        // Physical-officiation gate: defer to a realized (loaded) PRIEST entity
+        // — PriestBehavior will walk to the venue and call runImmediate (which
+        // passes deferToRealizedPriest=false and applies). No double-apply: the
+        // abstract path here is skipped while the priest is loaded and within
+        // the grace window. runImmediate bypasses this gate entirely.
+        if (deferToRealizedPriest && priest != null
+                && priest.getProfession() == Profession.PRIEST
+                && now - rite.scheduledTick() < OFFICIATE_GRACE_TICKS) {
+            return RiteOutcome.PENDING;
+        }
 
         if (priest == null) {
             // Spec line 252: skip COMING_OF_AGE; defer MARRIAGE up to 14d.

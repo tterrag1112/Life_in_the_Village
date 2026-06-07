@@ -191,6 +191,13 @@ public final class ProfessionBrainFactory {
                 brain.addActivity(NpcActivities.WORK.get(), 0,
                         ImmutableList.of(new InnkeeperBehavior())));
 
+        // PRIEST — officiate rites / produce temple goods / bless (foundation).
+        REGISTRARS.put(Profession.PRIEST, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(
+                                new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                        .Production.PriestBehavior())));
+
         // Phase 6.2.d.4 — civic + guard cluster.
         REGISTRARS.put(Profession.VILLAGE_LEADER, (npc, brain) ->
                 brain.addActivity(NpcActivities.WORK.get(), 0,
