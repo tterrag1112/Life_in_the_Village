@@ -452,17 +452,22 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
 
     @Override
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
-        goIdle();
+        // L1-fix — a stop caused by going idle (phase==IDLE → canStillUse
+        // false) must NOT wipe NO_ACTIONABLE_WORK or the blocking reason that
+        // analyze()/goIdle() just recorded (the original bare goIdle() here did,
+        // the same cycle it was set, so the WORK idle director never fired).
+        // Only do the transient reset a clean next start() needs.
+        this.entity = entity;
+        resetTransient();
     }
 
     // =========================================================================
     // ANALYZE
     // =========================================================================
     protected void analyze(ServerLevel level) {
-        // Liveliness L1 — optimistic clear of the work-satisfied signal; if
-        // this analyze ends in a structural goIdle it is re-set there, and a
-        // successful start (GATHERING / sell hand-off) leaves it cleared.
-        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+        // L1-fix — no optimistic clear here; the work-start transitions
+        // (GATHERING / sell hand-off) own the clear, so the signal can't be
+        // wrongly absent for a tick.
         if (workBuilding == null) { goIdle("no assigned work building"); return; }
         market = findMarket(level);
         String idleReason = "no viable recipe"; // refined below if a recipe exists but is blocked
@@ -486,6 +491,8 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     currentBatchSize = batchSize;
                     currentSteps = steps;
                     currentStepIndex = 0;
+                    // L1-fix — real work starting: clear the work-satisfied signal.
+                    entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
                     phase = Phase.GATHERING;
                     return;
                 }
@@ -710,6 +717,8 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     }
 
     private void handOffToSell(ServerLevel level) {
+        // L1-fix — selling is real work: clear the work-satisfied signal.
+        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
         BlockPos marketOrigin = market.getShape().getOrigin();
         entity.getBrain().setMemory(NpcMemoryTypes.CARGO_DESTINATION.get(),
                 GlobalPos.of(level.dimension(), marketOrigin));
@@ -1049,18 +1058,30 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
      */
     protected void goIdle(String blockingReason) {
         if (blockingReason == null) {
+            // L1-fix — a null reason means "nothing to surface", NOT "work
+            // resumed": clear the display text but do NOT erase the
+            // work-satisfied signal. Clearing NO_ACTIONABLE_WORK is reserved
+            // for the real-work-start transitions (GATHERING / sell hand-off).
             entity.clearCurrentActivity();
-            // Clean idle (work done) — clear the work-satisfied signal.
-            entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
         } else {
             entity.setActivityState(ActivityState.IDLE.withBlocking(blockingReason));
-            // Liveliness L1 — structural idle (no inputs / output full / no
-            // recipe): flag "no actionable work" so the idle director fills
-            // the gap during WORK. TTL ≈ the production idle cooldown.
-            entity.getBrain().setMemoryWithExpiry(
-                    NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE,
-                    IDLE_COOLDOWN_TICKS);
+            // Liveliness L1 — idle for lack of runnable work: hold the
+            // work-satisfied signal so the WORK-mode idle director fills the
+            // gap. No expiry — it stays PRESENT while idle and is cleared only
+            // when real work starts, so it can't lapse mid-idle.
+            entity.getBrain().setMemory(
+                    NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
         }
+        resetTransient();
+    }
+
+    /**
+     * L1-fix — the transient per-idle/per-stop reset, WITHOUT touching the
+     * work-satisfied signal or the blocking reason. Shared by {@link #goIdle}
+     * and {@link #stop} so a stop caused by going idle can't wipe what
+     * {@code analyze()} just recorded.
+     */
+    private void resetTransient() {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);

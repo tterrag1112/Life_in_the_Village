@@ -2457,3 +2457,70 @@ scans.
 6. `/tick`: no regression (cheap pick-then-walk).
 7. No nav stutter between strolling and real tasks; guards/social/homestead
    unaffected.
+
+---
+
+## Liveliness L1-fix — work-satisfied signal was wiped by stop()
+
+**Bug (from `/liv npc brain`):** the WORK idle director never fired; idle
+blacksmiths showed `blockingReason=(none)`, no production behavior, no
+director.
+
+**Root cause:** in `AbstractProductionBehavior`, an idle cycle is
+`start()` → `phase=IDLE` → `analyze()` → `goIdle(idleReason)` (sets the
+blocking reason AND `NO_ACTIONABLE_WORK`). But `canStillUse()` returns
+false immediately (`phase==IDLE`), so the behavior `stop()`s the same
+cycle, and `stop()` called bare `goIdle()` → `goIdle(null)`, whose null
+branch erased `NO_ACTIONABLE_WORK` and cleared the activity reason. The
+signal was wiped the same cycle it was set → the WORK director's
+`NO_ACTIONABLE_WORK PRESENT` gate never held.
+
+**Fix — corrected signal lifecycle (PRESENT⇔idle, ABSENT⇔working):**
+- `stop()` no longer calls `goIdle()`; it calls a new `resetTransient()`
+  (clears WALK_TARGET/carry/hand, resets phase/recipe) that does NOT touch
+  `NO_ACTIONABLE_WORK` or the blocking reason.
+- `goIdle(null)` no longer erases the signal — a null reason is "nothing to
+  surface", not "work resumed". It only clears the display text.
+- `goIdle(reason)` still SETS the signal on idle, now via `setMemory`
+  (no expiry) so it stays present while idle and can't lapse mid-idle.
+- The signal is CLEARED only at the real-work-start transitions: the
+  `GATHERING` transition and `handOffToSell` (covers all sell call sites).
+- Removed the optimistic analyze-top clear (the work-start transitions own
+  the clear now).
+- `goIdle()`/`resetTransient` share the transient reset (no duplication).
+- TTL choice: dropped the expiry (was `IDLE_COOLDOWN_TICKS`) in favour of
+  explicit work-start clearing — robustly PRESENT while idle.
+
+### Tie-In
+
+- The WORK `IdleDirectorBehavior` consumes `NO_ACTIONABLE_WORK` unchanged;
+  it now holds while a crafter is idle, so the director fires. Nav
+  arbitration still serializes them (director strolls → `canSteerNavigation`
+  false → production can't re-analyze/clear mid-stroll) → no flicker.
+- One fix covers all `AbstractProductionBehavior` crafters (BAKER/MILLER/
+  BLACKSMITH/CARPENTER/STONEMASON/WEAVER/CANDLEMAKER).
+- **L1b pattern:** Farmer/Shepherd/Miner (own behavior classes) must adopt
+  the SAME lifecycle — set on idle, clear on work-start, never wipe in
+  their own `stop()`.
+
+### Deviations
+
+- `IDLE_COOLDOWN_TICKS` is unused again (as before L1) — left in place.
+- The brief post-work-cycle `goIdle(null)` (deposit-done, nothing to sell)
+  leaves the signal absent for ~1 analyze cycle before the next idle
+  analyze re-sets it — harmless transient.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: file
+brace/paren-balanced; signal SET on idle (goIdle reason), CLEARED only at
+GATHERING + handOffToSell, never wiped in stop().
+
+### Smoke test
+
+1. BLACKSMITH with no ore: `/liv npc brain nearest` now shows the
+   `IdleDirectorBehavior` running ("Tidying the workshop"/"Strolling") and
+   the blocking reason ("no inputs"/"no viable recipe"), not "(none)".
+2. Supply inputs → resumes crafting; director yields at GATHERING; no
+   flicker.
+3. Spot-check baker/weaver — same fix (shared base).
