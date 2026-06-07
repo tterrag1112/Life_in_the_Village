@@ -1534,7 +1534,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .RECENT_INTERACTION_PARTNERS.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
-                        .CONVERSATION_CANDIDATES.get()
+                        .CONVERSATION_CANDIDATES.get(),
+                // Liveliness L1/L1b — MUST be registered here; writing an
+                // unregistered brain memory faults brain.tick() and freezes ALL
+                // movement (MoveToTargetSink never consumes WALK_TARGET).
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .IDLE_DIRECTOR_COOLDOWN.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .NO_ACTIONABLE_WORK.get()
         );
     }
 
