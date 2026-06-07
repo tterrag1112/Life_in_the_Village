@@ -23,6 +23,7 @@ import net.minecraft.world.level.block.*;
 import net.minecraft.world.level.block.state.BlockState;
 import tterrag1112.life_in_the_village.Client.FarmingVisualEffects;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
+import tterrag1112.life_in_the_village.Entities.ActivityState;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
@@ -63,6 +64,13 @@ import java.util.stream.Collectors;
  * and hooks {@code WorkplaceAssignmentManager.onWorkplaceSale()}.
  */
 public class FarmerBehavior extends Behavior<TownspersonMob> {
+
+    // Liveliness L0 — pre-built "why idle" reasons (static, nameplate-blank;
+    // setActivityState short-circuits on equals so no per-tick cost). Read by
+    // /liv npc brain.
+    private static final ActivityState BLOCKED_NO_NAV      = ActivityState.IDLE.withBlocking("navigation claimed by another task");
+    private static final ActivityState BLOCKED_OFF_WORK    = ActivityState.IDLE.withBlocking("off work hours");
+    private static final ActivityState BLOCKED_NO_BUILDING = ActivityState.IDLE.withBlocking("no assigned work building");
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
@@ -235,6 +243,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                         entity.getNpcName());
                 warnedNoNav = true;
             }
+            entity.setActivityState(BLOCKED_NO_NAV);
             return false;
         }
         if (!(entity.level() instanceof ServerLevel)) {
@@ -256,6 +265,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                         entity.getNpcName(), entity.getProfession());
                 warnedOffWorkTime = true;
             }
+            entity.setActivityState(BLOCKED_OFF_WORK);
             return false;
         }
         if (entity.getAssignedBuildingId().isEmpty()) {
@@ -268,6 +278,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                         entity.getNpcName());
                 warnedNoBuilding = true;
             }
+            entity.setActivityState(BLOCKED_NO_BUILDING);
             return false;
         }
         // Phase 6.7.2.6 — defer when ShepherdBehavior has actionable

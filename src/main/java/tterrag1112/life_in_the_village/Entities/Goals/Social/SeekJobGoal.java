@@ -129,11 +129,8 @@ public class SeekJobGoal extends Goal {
 
         VillageSavedData data = VillageSavedData.get(level);
         data.getJobPostingById(targetPosting.getId()).ifPresent(posting -> {
-            System.out.println("SeekJob instance: " + System.identityHashCode(posting)
-                    + " data instance: " + System.identityHashCode(data));
             posting.addApplicant(entity.getUUID());
             data.setDirty();
-            System.out.println("After adding, size: " + posting.getApplicantIds().size());
         });
 
 

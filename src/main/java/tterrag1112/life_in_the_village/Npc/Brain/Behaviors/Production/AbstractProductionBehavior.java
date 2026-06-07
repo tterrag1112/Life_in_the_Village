@@ -26,6 +26,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.Worksh
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopRoleAssigner;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.ProfessionSpecialization;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.SpecializationManager;
+import tterrag1112.life_in_the_village.Entities.ActivityState;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
@@ -330,6 +331,16 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     // Behavior lifecycle
     // =========================================================================
 
+    // Liveliness L0 — pre-built "why idle" reasons. Static + nameplate-blank
+    // (IDLE.withBlocking keeps activity empty), so setting them every eligible
+    // tick is a no-op after the first (setActivityState short-circuits on
+    // equals) — no per-tick allocation or display churn. Read by /liv npc brain.
+    private static final ActivityState BLOCKED_ROLE        = ActivityState.IDLE.withBlocking("workshop role gate");
+    private static final ActivityState BLOCKED_OFF_WORK    = ActivityState.IDLE.withBlocking("off work hours");
+    private static final ActivityState BLOCKED_WORK_BLOCK  = ActivityState.IDLE.withBlocking("injured / asleep / overridden");
+    private static final ActivityState BLOCKED_NO_NAV      = ActivityState.IDLE.withBlocking("navigation claimed by another task");
+    private static final ActivityState BLOCKED_NO_BUILDING = ActivityState.IDLE.withBlocking("no assigned work building");
+
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
@@ -343,6 +354,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                         getClass().getSimpleName(), entity.getNpcName());
                 warnedBlockedByRole = true;
             }
+            entity.setActivityState(BLOCKED_ROLE);
             return false;
         }
         if (!entity.isWorkTime()) {
@@ -370,6 +382,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                         daily.workPrimary(), daily.meal(), daily.workSecondary());
                 warnedNotWorkTime = true;
             }
+            entity.setActivityState(BLOCKED_OFF_WORK);
             return false;
         }
         if (entity.isWorkingBlocked()) {
@@ -379,6 +392,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                         getClass().getSimpleName(), entity.getNpcName());
                 warnedWorkBlocked = true;
             }
+            entity.setActivityState(BLOCKED_WORK_BLOCK);
             return false;
         }
         if (!BrainNavGuard.canSteerNavigation(entity)) {
@@ -388,6 +402,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                         BrainNavGuard.describeNavClaim(entity));
                 warnedNoNav = true;
             }
+            entity.setActivityState(BLOCKED_NO_NAV);
             return false;
         }
         workBuilding = findAssignedBuilding(entity, level, requiredBuildingType()).orElse(null);
@@ -402,6 +417,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                                 .orElse("(none)"));
                 warnedNoWorkBuilding = true;
             }
+            entity.setActivityState(BLOCKED_NO_BUILDING);
             return false;
         }
         tickRoleCheck(level, workBuilding);
@@ -443,8 +459,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     // ANALYZE
     // =========================================================================
     protected void analyze(ServerLevel level) {
-        if (workBuilding == null) { goIdle(); return; }
+        if (workBuilding == null) { goIdle("no assigned work building"); return; }
         market = findMarket(level);
+        String idleReason = "no viable recipe"; // refined below if a recipe exists but is blocked
 
         // If surplus exists right now, immediately hand off to SellToMarketBehavior.
         if (isSellTime(level.getGameTime()) && market != null
@@ -469,6 +486,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     return;
                 }
             }
+            idleReason = isOutputAtCapacity(level, r) ? "output full" : "no inputs";
             // Phase 6.3.4.6 — recipe wanted but can't run yet. If output
             // isn't already at capacity, the most likely reason is input
             // depletion (batchSize=0). Attempt procurement here so the
@@ -504,7 +522,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     getClass().getSimpleName(), entity.getNpcName());
             loggedAnalyzeNoRecipe = true;
         }
-        goIdle();
+        goIdle(idleReason);
     }
 
     // =========================================================================
@@ -1017,8 +1035,20 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         } catch (Exception e) { return null; }
     }
 
-    protected void goIdle() {
-        entity.clearCurrentActivity();
+    protected void goIdle() { goIdle(null); }
+
+    /**
+     * Liveliness L0 — idle with a recorded "why" for the brain-debug command.
+     * {@code blockingReason == null} clears any prior reason (a clean idle);
+     * a non-null reason keeps the nameplate blank but surfaces in
+     * {@code /liv npc brain}.
+     */
+    protected void goIdle(String blockingReason) {
+        if (blockingReason == null) {
+            entity.clearCurrentActivity();
+        } else {
+            entity.setActivityState(ActivityState.IDLE.withBlocking(blockingReason));
+        }
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);

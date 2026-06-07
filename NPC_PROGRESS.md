@@ -2200,3 +2200,124 @@ Spec deviations + deferrals (logged in 33 Revision Notes):
   spec.
 
 Build verification deferred (sandbox blocks maven.neoforged.net).
+---
+
+## Liveliness L0 — performance quick wins + "why idle" feedback tooling
+
+First prompt of the NPC liveliness rework. Two low-risk foundations:
+per-tick perf wins + a "why is this NPC idle" readout. No behavior-
+selection changes (that's L1+).
+
+### Part A — performance quick wins
+
+**A1. Guard hostile scan throttled.** `GuardScanForHostilesBehavior` ran
+the proactive scan every tick per guard: `getEntitiesOfClass(Monster)`,
+`VillageSavedData.get(...).getVillageByName(...)`, and
+`getEntitiesOfClass(Player)`. Added a `lastScanTick` + `SCAN_INTERVAL_TICKS
+= 20` gate (mirrors `PredatorScanBehavior:81`) around **only the proactive
+scan** (step 3). The cheap per-tick paths — stale-target clear (dead/out-
+of-range) and retaliation against `HURT_BY_ENTITY` — stay every-tick, so a
+guard still reacts to being hit instantly and only *spotting* a new monster
+is delayed up to ~1s. No result cache needed: the found target lives in
+`ATTACK_TARGET` memory (the implicit cache).
+
+**A2. `System.out` demoted/removed in NPC behavior code.** Converted every
+raw `System.out.println` in `Npc/Brain/Behaviors/**` and
+`Entities/Goals/**` to SLF4J `.debug(...)` (inline
+`LoggerFactory.getLogger(X.class)`, matching the existing
+`VillageLeaderBehavior` precedent), and deleted the purely-diagnostic ones:
+`MinerBehavior`'s per-100-tick "Still mining" spam and `SeekJobGoal`'s two
+identity-hashcode probes. Sites: MinerBehavior (×5 → 4 debug + 1 deleted),
+BuilderBehavior (×3), GuildWorkerBehavior, ChildBirthBehavior,
+VillageLeaderBehavior, GuardPatrolBehavior, KingdomRulerBehavior,
+WorkshopStallDecisionGoal, SeekJobGoal (×2 deleted). No raw `System.out`
+left (only two pre-existing `//`-commented lines remain).
+
+**A3. Sensor audit — KEPT (verified consumed).** `SensorType
+.NEAREST_LIVING_ENTITIES` in `brainSensors()` IS consumed:
+`PersonalSpaceBehavior` (crowd nudging), `GreetingAcknowledgmentBehavior`
+(social greetings), and `ConversationCandidatesSensor` (feeds
+CONVERSATION_CANDIDATES). Dropping it would break social dynamics — **left
+in place, no change.** (`NEAREST_VISIBLE_LIVING_ENTITIES` is not used
+anywhere, but it isn't in our sensor set either, so nothing to drop.)
+
+### Part B — "why idle" feedback
+
+**B1. Blocking reasons recorded.** `ActivityState` already carried an
+(unused) `blockingReason` + `ofBlocked`/`withBlocking`/`isBlocked` API.
+Wired it at the gated decline points, using `ActivityState.IDLE
+.withBlocking(reason)` so the **nameplate stays blank** (only the debug
+command reads the reason):
+- `AbstractProductionBehavior.checkExtraStartConditions` — all 5 gates:
+  workshop role, off work hours, injured/asleep, navigation claimed, no
+  assigned building. Plus `analyze()` recipe-decline: "no inputs" /
+  "output full" / "no viable recipe" / "no assigned work building" via a
+  new `goIdle(String reason)` overload (`goIdle()` delegates to it).
+- `FarmerBehavior.checkExtraStartConditions` — nav / off-work / no-building
+  gates (own class, not a subclass of AbstractProductionBehavior).
+- Cost: the reasons are **static final `ActivityState` constants**, and
+  `setActivityState` short-circuits on `equals`, so setting them each
+  eligible tick is a no-op after the first — no per-tick allocation, no log.
+
+**B2. Brain-debug command.** Added `/liv npc brain <uuid|nearest>` to the
+existing `NpcInfoCommand` (self-registers via `@SubscribeEvent`; admin-
+gated `requires(hasPermission(2))`; reuses `resolveNpc` + `appendBrain`).
+Prints: identity, **Schedule** (profession, isWorkTime, resolved
+`DayPhase` via `ScheduleResolver.phaseAt`), **Activity** (current +
+recorded `blockingReason`), and **Brain** (active non-core Activity,
+running behaviors, reflection-probed registered behaviors — already in
+`appendBrain`). This is the "current behavior + why the others didn't fire"
+readout. (`/liv npc info` unchanged.)
+
+### Tie-In Audit
+
+- Guard scan: the only consumer of the scan result is `ATTACK_TARGET`
+  memory (read by `GuardMeleeAttackBehavior` in FIGHT); throttling the
+  *write* cadence doesn't change the consumer. Retaliation path untouched.
+- Sensor consumers (PersonalSpace / Greeting / ConversationCandidates)
+  intact — sensor kept.
+- `blockingReason` writes: static constants + equals short-circuit → no
+  per-tick cost, no log spam. `goIdle()` semantics unchanged for existing
+  callers (delegates to `goIdle(null)` = old clearCurrentActivity path).
+- Command is server-side, read-only, admin-gated.
+
+### Deviations
+
+- `MinerBehavior:166` was `% 100` (every 5s), not strictly per-tick as the
+  prompt noted; deleted as pure noise regardless.
+- Minor visible side effect of B1: when a production NPC is blocked, its
+  nameplate now clears to blank (it shows the empty IDLE activity) instead
+  of possibly retaining a stale prior activity string. This is an accuracy
+  improvement, not a behavior-selection change; the reason itself stays
+  debug-only.
+- Used inline `LoggerFactory.getLogger(...)` (existing precedent) rather
+  than adding a static LOGGER field per file — fewer edits/imports, lower
+  risk without a compiler.
+
+### Out of scope (deferred — flagged)
+
+- `ScheduleResolver.phaseAt`/`resolveDaily` per-NPC-per-tick allocation
+  (cache-by-day) — the dedicated real-optimization pass.
+- Base `brain.tick`/goal-selector cadence, NPC density caps, LOD.
+- Richer in-game idle overlay (L0 is command/log only).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (offline gradle can't
+resolve neoform-runtime). Static review: all 13 touched files brace/paren-
+balanced; no raw `System.out` left; APIs matched to call sites
+(`ActivityState.withBlocking`/`isBlocked`/`blockingReason`,
+`setActivityState`, `ScheduleResolver.phaseAt`, `Brain.getRunningBehaviors`/
+`getActiveNonCoreActivity`, the `PredatorScanBehavior` gate pattern).
+
+### Smoke test
+
+1. `/tick` (or profiler) before/after in a busy village — guard-scan
+   throttle reduces per-tick cost; guards still spot monsters within ~1s
+   and retaliate to hits instantly.
+2. No `System.out` from NPC behaviors in the console.
+3. Target an idle NPC → `/liv npc brain nearest`: shows active Activity,
+   running behaviors, DayPhase, and a concrete blockingReason (e.g. "no
+   inputs", "output full", "off work hours", "no assigned work building").
+4. A working NPC → blockingReason = "(none — working or cleanly idle)".
+5. No regressions: guards, conversation/social (sensor kept), production.

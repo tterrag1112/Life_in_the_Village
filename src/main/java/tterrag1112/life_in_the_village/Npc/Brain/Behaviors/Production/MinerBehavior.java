@@ -119,7 +119,8 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
                 nextYieldTick = miningTimer + first.tickInterval(mine.getLevel());
             }
             if (entity.needsPickaxe()) {
-                System.out.println("Miner " + entity.getNpcName()
+                org.slf4j.LoggerFactory.getLogger(MinerBehavior.class).debug(
+                        "Miner " + entity.getNpcName()
                         + " needs a pickaxe before mining");
                 goIdle();
                 return;
@@ -147,7 +148,8 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
 
         // Swing pickaxe animation
         if (miningTimer == 1) {
-            System.out.println("Mining started - nextYieldTick=" + nextYieldTick);
+            org.slf4j.LoggerFactory.getLogger(MinerBehavior.class)
+                    .debug("Mining started - nextYieldTick={}", nextYieldTick);
         }
         if (miningTimer % 20 == 0) {
             entity.swing(InteractionHand.MAIN_HAND);
@@ -162,13 +164,10 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
                     minePos.getX(), minePos.getY() - 1, minePos.getZ());
         }
 
-        if (miningTimer % 100 == 0) {
-            System.out.println("Still mining: " + miningTimer + "/" + nextYieldTick);
-        }
-
         // Yield resource when timer hits
         if (miningTimer >= nextYieldTick) {
-            System.out.println("YIELD TRIGGERED at tick " + miningTimer);
+            org.slf4j.LoggerFactory.getLogger(MinerBehavior.class)
+                    .debug("Yield triggered at tick {}", miningTimer);
 
             MiningYieldData yieldData = MiningYieldRegistry.INSTANCE.getDefault();
             if (yieldData == null) return;
@@ -178,7 +177,8 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
 
             entity.getPersonalInventory().addItem(new ItemStack(entry.item(), amount));
 
-            System.out.println("Miner " + entity.getNpcName() + " yielded "
+            org.slf4j.LoggerFactory.getLogger(MinerBehavior.class).debug(
+                    "Miner " + entity.getNpcName() + " yielded "
                     + amount + "x " + entry.item().getDescriptionId()
                     + " (" + entry.rarity() + ") next in " + nextYieldTick + " ticks");
 

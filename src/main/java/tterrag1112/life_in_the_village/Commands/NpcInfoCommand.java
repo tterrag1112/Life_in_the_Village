@@ -63,8 +63,65 @@ public final class NpcInfoCommand {
                                         .then(Commands.argument("target",
                                                         StringArgumentType.string())
                                                 .executes(ctx -> info(ctx,
+                                                        StringArgumentType.getString(ctx, "target")))))
+                                // Liveliness L0 — focused "why idle" readout:
+                                // DayPhase + active Activity + running behaviors
+                                // + the recorded blockingReason.
+                                .then(Commands.literal("brain")
+                                        .requires(src -> src.hasPermission(2))
+                                        .then(Commands.argument("target",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> brain(ctx,
                                                         StringArgumentType.getString(ctx, "target"))))))
         );
+    }
+
+    /**
+     * Liveliness L0 — {@code /liv npc brain <uuid_or_nearest>}. The
+     * "current behaviour + why the others didn't fire" readout: resolved
+     * DayPhase, active Activity, running Brain behaviors, and the blocking
+     * reason the gated profession behaviors recorded on decline.
+     */
+    private static int brain(CommandContext<CommandSourceStack> ctx, String targetArg) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal(
+                    "/liv npc brain must be run on a server level."));
+            return 0;
+        }
+        TownspersonMob npc = resolveNpc(ctx, level, targetArg);
+        if (npc == null) return 0;
+
+        StringBuilder sb = new StringBuilder();
+        appendIdentity(sb, npc);
+        appendSchedule(sb, level, npc);
+        appendActivityState(sb, npc);
+        appendBrain(sb, npc);
+        ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
+        return 1;
+    }
+
+    /** Resolved schedule context — the common idle cause at a glance. */
+    private static void appendSchedule(StringBuilder sb, ServerLevel level,
+                                       TownspersonMob npc) {
+        sb.append("Schedule:\n");
+        sb.append("  profession = ").append(npc.getProfession().name()).append("\n");
+        sb.append("  isWorkTime = ").append(npc.isWorkTime()).append("\n");
+        var phase = tterrag1112.life_in_the_village.Npc.Schedule
+                .ScheduleResolver.phaseAt(npc, level.getDayTime());
+        sb.append("  dayPhase   = ").append(phase).append("\n");
+    }
+
+    /** Current activity + the recorded "why not working" reason (debug-only). */
+    private static void appendActivityState(StringBuilder sb, TownspersonMob npc) {
+        var state = npc.getActivityState();
+        sb.append("Activity:\n");
+        sb.append("  current        = ")
+                .append(state.toDisplayString().isBlank() ? "(idle)" : state.toDisplayString())
+                .append("\n");
+        sb.append("  blockingReason = ")
+                .append(state.isBlocked() ? state.blockingReason()
+                        : "(none — working or cleanly idle)")
+                .append("\n");
     }
 
     private static int info(CommandContext<CommandSourceStack> ctx, String targetArg) {

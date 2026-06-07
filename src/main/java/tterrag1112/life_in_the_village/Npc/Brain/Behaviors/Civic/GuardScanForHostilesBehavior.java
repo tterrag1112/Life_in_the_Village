@@ -39,6 +39,14 @@ public class GuardScanForHostilesBehavior extends Behavior<TownspersonMob> {
     private static final double FORGET_RANGE = DETECTION_RANGE * 1.5;
     private static final int MAX_RUN = Integer.MAX_VALUE;
 
+    /** Liveliness L0 — the proactive monster/player scan (wide
+     *  {@code getEntitiesOfClass} + {@code VillageSavedData.get}) ran every
+     *  tick per guard. Gate it to a 1s cadence (mirrors
+     *  {@code PredatorScanBehavior}); retaliation + stale-target clearing
+     *  below stay per-tick so a guard still reacts instantly to being hit. */
+    private static final int SCAN_INTERVAL_TICKS = 20;
+    private long lastScanTick;
+
     public GuardScanForHostilesBehavior() {
         super(ImmutableMap.of(
                 MemoryModuleType.ATTACK_TARGET, MemoryStatus.REGISTERED
@@ -79,6 +87,11 @@ public class GuardScanForHostilesBehavior extends Behavior<TownspersonMob> {
         }
 
         // 3. Proactive scan for hostiles in range (GuardAttackGoal port).
+        //    Throttled — the wide entity scans + VillageSavedData.get are the
+        //    expensive part; a 1s cadence is plenty to spot a monster.
+        if (gameTime - lastScanTick < SCAN_INTERVAL_TICKS) return;
+        lastScanTick = gameTime;
+
         AABB searchArea = entity.getBoundingBox().inflate(DETECTION_RANGE);
 
         List<Monster> monsters = level.getEntitiesOfClass(Monster.class, searchArea);
