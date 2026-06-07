@@ -244,7 +244,11 @@ public final class ParkRenderer {
                 }
             }
             case HEDGEROW -> {
-                BlockState leaves = Blocks.OAK_LEAVES.defaultBlockState();
+                // PERSISTENT=true — a hedgerow has no adjacent log, so default
+                // (persistent=false) leaves decay after spawn / on chunk reload.
+                BlockState leaves = Blocks.OAK_LEAVES.defaultBlockState()
+                        .setValue(net.minecraft.world.level.block.LeavesBlock.PERSISTENT,
+                                Boolean.TRUE);
                 for (int dx = -2; dx <= 2; dx++) {
                     BlockPos at = pos.offset(dx, 0, 0);
                     if (level.getBlockState(at).isAir()) {

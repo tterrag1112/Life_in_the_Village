@@ -9053,3 +9053,38 @@ RURAL style + resolver + footprint + reservation path the scorer uses, so crafts
 like houses); explicit 1:1 assignment over `selection ∩ CRAFT_SET` into `workshopGates` (the
 8/8 seated precincts); crafts skipped in the batch loop (no double-place); `workshopGated`
 removed with no remaining refs; no new enum/codec/switch.
+
+### 2026-06-06 — Quick fix: park hedgerow leaves persist (no decay)
+
+Park `HEDGEROW` leaves decayed after spawn: they were stamped as
+`Blocks.OAK_LEAVES.defaultBlockState()` (`PERSISTENT=false`, `DISTANCE=7`), so Minecraft's
+leaf-decay ticks remove them (a hedgerow has no adjacent log). Fix: stamp the leaves with
+`LeavesBlock.PERSISTENT = true` so they never decay.
+
+**Disposition:** confirmed `HEDGEROW` (`ParkRenderer` ~L246) is the **only** park primitive that
+STAMPS leaves — the other `_LEAVES` references (L154–155) are the preserve-survey READ path
+(left untouched). The NBT accents (`BENCH`/`TRELLIS`/`TOPIARY`/`STATUE_PEDESTAL`, "stamping
+deferred") are an unrelated content gap, not touched.
+
+**Surface area:** 1 edit (the leaf block state).
+
+**Files modified:**
+- `.../Village/Decoration/Parks/ParkRenderer.java` (HEDGEROW leaves `PERSISTENT=true`).
+
+**Tie-In Audit:** purely the rendered block state at the hedgerow stamp — no planner / codec /
+NPC / savedata impact. The preserve-survey leaf reads are unaffected. No exhaustive switches.
+
+**Deviations from prompt:** none. Build/runtime deferred (sandbox 403 + no runtime) — static
+review only.
+
+**Out-of-scope but flagged:** park NBT-accent authoring (content gap); the workshop craft-drop
+(fix-up #3, this session); flag-OFF farm payoff (pending).
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY → wait / reload the chunk → hedgerow leaves remain (no decay holes).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: `Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.PERSISTENT,
+Boolean.TRUE)` — `PERSISTENT=true` stops decay regardless of `DISTANCE`; the only leaf-STAMP site;
+no other change.
