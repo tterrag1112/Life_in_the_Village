@@ -50,6 +50,18 @@ public class VillageEvent implements CommunityGathering {
         VIGIL,
         /** Communal purification / atonement (clears distress). */
         PURIFICATION,
+        // ── Per-faith signature ceremonies (Religion Rework R3b-3) ────
+        // Named gatherings (the display name comes free from the enum name
+        // via EventEffects.defaultDisplayName); all four share one blessing
+        // rite (Rite.SIGNATURE_RITE), differentiated by ReligionContent.
+        /** Sunstead — spring sowing blessing. */
+        FIRST_FURROW,
+        /** The Loom — binding-of-fates observance. */
+        THREAD_BINDING,
+        /** Tidecall — protective blessing for seafarers. */
+        VOYAGE_BLESSING,
+        /** The Forge Creed — oath before the ancestors. */
+        ANCESTOR_OATH,
 
         // ── Life-stage ────────────────────────────────────────────────
         COMING_OF_AGE,
@@ -94,7 +106,8 @@ public class VillageEvent implements CommunityGathering {
                      SPRING_EQUINOX, WINTER_FEAST, SUMMER_MARKET
                         -> EventCategory.SEASONAL_FESTIVAL;
                 case SUNSTEAD_EQUINOX, LOOM_THREADING, TIDECALL_FULL_MOON,
-                     FORGE_CREED_KINGDOM_DAY, VIGIL, PURIFICATION
+                     FORGE_CREED_KINGDOM_DAY, VIGIL, PURIFICATION,
+                     FIRST_FURROW, THREAD_BINDING, VOYAGE_BLESSING, ANCESTOR_OATH
                         -> EventCategory.RELIGIOUS_RITE;
                 case COMING_OF_AGE, WEDDING, FUNERAL, NAMING_CEREMONY
                         -> EventCategory.LIFE_STAGE_RITE;
@@ -123,7 +136,9 @@ public class VillageEvent implements CommunityGathering {
                 case SPRING_EQUINOX                 -> 12000L;
                 case SUNSTEAD_EQUINOX, LOOM_THREADING,
                      TIDECALL_FULL_MOON, FORGE_CREED_KINGDOM_DAY,
-                     VIGIL, PURIFICATION            -> 6000L;
+                     VIGIL, PURIFICATION,
+                     FIRST_FURROW, THREAD_BINDING,
+                     VOYAGE_BLESSING, ANCESTOR_OATH  -> 6000L;
                 case WEDDING                        -> 1200L;
                 case FUNERAL                        -> 800L;
                 case NAMING_CEREMONY                -> 600L;

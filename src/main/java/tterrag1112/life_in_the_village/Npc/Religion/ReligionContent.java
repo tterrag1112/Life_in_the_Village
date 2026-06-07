@@ -102,7 +102,12 @@ public final class ReligionContent {
                         RiteProfile.of(1.2f, 1.2f, "this ground is given to the Sun-Mother's light")),
                 // R3b-2 — Sunstead atones communally under the open sky.
                 Map.entry(Rite.PURIFICATION,
-                        RiteProfile.of(1.0f, 1.0f, "let the sun burn away the shadow on your heart"))));
+                        RiteProfile.of(1.0f, 1.0f, "let the sun burn away the shadow on your heart")),
+                // R3b-3 — signature First Furrow: a bright agrarian boon (mood +
+                // a treasury blessing for the sown year), no relationship lean.
+                Map.entry(Rite.SIGNATURE_RITE,
+                        RiteProfile.signature(1.2f, 0, 40L,
+                                "the First Furrow — may the first seed take root and the year run golden"))));
 
         // The Loom — abstract fate, no deity. Confession-centric, pattern flavor.
         m.put(ReligionRegistry.THE_LOOM, profiles(
@@ -119,7 +124,12 @@ public final class ReligionContent {
                         RiteProfile.of(1.0f, 1.0f, "this loom-room is woven into the pattern")),
                 // R3b-2 — the confession-centric Loom's group atonement runs deep.
                 Map.entry(Rite.PURIFICATION,
-                        RiteProfile.of(1.3f, 1.0f, "the snarled threads are combed straight again"))));
+                        RiteProfile.of(1.3f, 1.0f, "the snarled threads are combed straight again")),
+                // R3b-3 — signature Thread-Binding: the binding of fates — a
+                // strong relationship boost among attendees (no deity, abstract).
+                Map.entry(Rite.SIGNATURE_RITE,
+                        RiteProfile.signature(1.0f, 8, 0L,
+                                "the Thread-Binding — your fates are woven into one cloth"))));
 
         // Tidecall — sea-spirits, the Sea-Mother. Voyage blessings, tide feasts.
         m.put(ReligionRegistry.TIDECALL, profiles(
@@ -135,7 +145,12 @@ public final class ReligionContent {
                         RiteProfile.of(1.1f, 1.1f, "the Sea-Mother claims this shore")),
                 // R3b-2 — Storm's Vigil: a sea-mourning for those lost to the deep.
                 Map.entry(Rite.VIGIL,
-                        RiteProfile.of(1.0f, 1.0f, "we keep the watch for those the sea has taken"))));
+                        RiteProfile.of(1.0f, 1.0f, "we keep the watch for those the sea has taken")),
+                // R3b-3 — signature Voyage Blessing: a protective blessing for
+                // seafarers — a steadying mood pulse (no relationship/treasury).
+                Map.entry(Rite.SIGNATURE_RITE,
+                        RiteProfile.signature(1.2f, 0, 0L,
+                                "the Voyage Blessing — may the sea bear you out and bring you home"))));
 
         // The Forge Creed — ancestor / martial. Honor funerals, martial coming-of-age.
         m.put(ReligionRegistry.FORGE_CREED, profiles(
@@ -156,7 +171,12 @@ public final class ReligionContent {
                 // R3b-2 — Anvil Vigil: a vigil of martial resolve before the
                 // ancestors (a stronger, steadying observance).
                 Map.entry(Rite.VIGIL,
-                        RiteProfile.of(1.3f, 1.0f, "we stand the Anvil Vigil; the line will hold"))));
+                        RiteProfile.of(1.3f, 1.0f, "we stand the Anvil Vigil; the line will hold")),
+                // R3b-3 — signature Ancestor Oath: resolve/honor mood + a kin-bond
+                // relationship nudge among those who swear together.
+                Map.entry(Rite.SIGNATURE_RITE,
+                        RiteProfile.signature(1.2f, 6, 0L,
+                                "the Ancestor Oath — swear before those who held the line"))));
 
         return Map.copyOf(m);
     }

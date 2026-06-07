@@ -59,6 +59,7 @@ public class VillageEventScheduler {
         checkCulturalHolyDay(level, village, data, currentTick);
         checkCalendarVigil(level, village, data, currentTick);   // R3b-2
         checkPurification(level, village, data, currentTick);    // R3b-2
+        checkSignatureRite(level, village, data, currentTick);   // R3b-3
         checkCrises(level, village, data, currentTick);
 
         // Don't pile up Phase-3-style ambient events — wait until the
@@ -223,6 +224,52 @@ public class VillageEventScheduler {
         VillageEventScheduler.scheduleLifeEvent(level, village,
                 VillageEvent.EventType.PURIFICATION, currentTick + 1200L,
                 null, afflicted, invited);
+    }
+
+    /**
+     * R3b-3 — schedules a faith's named signature gathering on its own calendar
+     * day (365-day liturgical axis, reusing the R3b-2 revived-calendar path):
+     * Sunstead First Furrow @ Spring Equinox, Loom Thread-Binding @ First
+     * Threading, Tidecall Voyage Blessing @ First Catch, Forge Ancestor Oath @
+     * Ancestor Day. Faith-gated (only that religion's village schedules its own
+     * signature). The shared {@code Rite.SIGNATURE_RITE} blessing
+     * (ritualises-gated) differentiates the effect via ReligionContent.
+     */
+    private static void checkSignatureRite(ServerLevel level, Village village,
+                                           VillageSavedData data, long currentTick) {
+        if ((currentTick % 24000L) != 0L) return;   // once per day
+        Religion religion = ReligionRegistry.get(
+                ReligionContent.villageReligionId(level, village));
+        if (religion == null) return;
+        String religionId = religion.id();
+
+        VillageEvent.EventType type;
+        String dayName;
+        if (religionId.equals(ReligionRegistry.SUNSTEAD)) {
+            type = VillageEvent.EventType.FIRST_FURROW;    dayName = "Spring Equinox";
+        } else if (religionId.equals(ReligionRegistry.THE_LOOM)) {
+            type = VillageEvent.EventType.THREAD_BINDING;  dayName = "First Threading";
+        } else if (religionId.equals(ReligionRegistry.TIDECALL)) {
+            type = VillageEvent.EventType.VOYAGE_BLESSING; dayName = "First Catch";
+        } else if (religionId.equals(ReligionRegistry.FORGE_CREED)) {
+            type = VillageEvent.EventType.ANCESTOR_OATH;   dayName = "Ancestor Day";
+        } else {
+            return;
+        }
+
+        Integer eff = religion.calendar().effectiveDayOfYear(dayName);
+        if (eff == null) return;
+        int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
+        if (eff != litDay) return;
+
+        // De-dupe: one of this signature per village per day.
+        final VillageEvent.EventType t = type;
+        boolean already = data.getAllEvents().stream()
+                .filter(ev -> ev.getVillageId().equals(village.getId()))
+                .anyMatch(ev -> ev.getType() == t && currentTick - ev.getStartTick() < 24000L);
+        if (already) return;
+
+        scheduleEvent(level, village, data, type, currentTick);
     }
 
     /** Loaded village NPCs currently carrying MELANCHOLY. */

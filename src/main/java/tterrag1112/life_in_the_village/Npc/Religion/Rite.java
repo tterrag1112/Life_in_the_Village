@@ -42,7 +42,15 @@ public enum Rite {
      *  eases distress and clears MELANCHOLY for the afflicted participants
      *  WITHOUT the per-confessor knowledge ledger entry. Gathering-route rite
      *  (EventType.PURIFICATION); distress-triggered. */
-    PURIFICATION;
+    PURIFICATION,
+    // ── Religion Rework R3b-3 ────────────────────────────────────────────
+    /** The shared effect of each faith's <em>signature</em> headline ceremony.
+     *  ONE rite + one handler serves all four faiths' signatures (Sunstead
+     *  First Furrow, Loom Thread-Binding, Tidecall Voyage Blessing, Forge
+     *  Ancestor Oath) — they differ entirely through {@code ReligionContent}
+     *  (mood scale + relationship boost + treasury boon + flavor) and their
+     *  distinct named {@code EventType} gatherings + calendar triggers. */
+    SIGNATURE_RITE;
 
     public static final Codec<Rite> CODEC =
             Codec.STRING.xmap(Rite::valueOf, Rite::name);

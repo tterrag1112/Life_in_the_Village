@@ -116,7 +116,9 @@ public final class ReligionRegistry {
                         Rite.FEAST_DAY,
                         // R3b-2 — the confession-centric Loom observes communal
                         // purification (group atonement).
-                        Rite.PURIFICATION),
+                        Rite.PURIFICATION,
+                        // R3b-3 — the Loom's signature Thread-Binding.
+                        Rite.SIGNATURE_RITE),
                 List.of("loom_room", "household"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("First Threading",  30),
@@ -139,7 +141,9 @@ public final class ReligionRegistry {
                         Rite.HARVEST_THANKSGIVING,
                         // R3b-2 — Tidecall keeps the "Storm's Vigil" (a sea-
                         // mourning vigil for those lost to the deep).
-                        Rite.VIGIL),
+                        Rite.VIGIL,
+                        // R3b-3 — Tidecall's signature Voyage Blessing.
+                        Rite.SIGNATURE_RITE),
                 List.of("dock", "shore", "tidepool"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("Spring Tide",     45),
@@ -162,7 +166,9 @@ public final class ReligionRegistry {
                         Rite.TITHE, Rite.FEAST_DAY,
                         // R3b-2 — the martial Forge Creed keeps the "Anvil
                         // Vigil" (a vigil of resolve before the ancestors).
-                        Rite.VIGIL),
+                        Rite.VIGIL,
+                        // R3b-3 — the Forge Creed's signature Ancestor Oath.
+                        Rite.SIGNATURE_RITE),
                 List.of("forge", "barracks", "ancestor_hall"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("Founding Day",     12),

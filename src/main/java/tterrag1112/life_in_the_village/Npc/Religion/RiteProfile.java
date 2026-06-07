@@ -15,15 +15,20 @@ import java.util.Optional;
  *   <li>{@code pietyScale} — multiplier on the rite's piety bump.</li>
  *   <li>{@code flavor} — an optional short line woven into the rite's effect
  *       text (memory / ledger), letting each faith read differently.</li>
+ *   <li>{@code relationshipBoost} — R3b-3: a community relationship nudge among
+ *       a signature rite's attendees (0 = none).</li>
+ *   <li>{@code treasuryBoon} — R3b-3: a village treasury boon a signature rite
+ *       grants (0 = none).</li>
  * </ul>
  *
  * <p>Held by {@link ReligionContent}, not persisted (pure content) — so no
  * codec/field-cap impact on the {@link Religion} record.</p>
  */
-public record RiteProfile(float moodScale, float pietyScale, Optional<String> flavor) {
+public record RiteProfile(float moodScale, float pietyScale, Optional<String> flavor,
+                          int relationshipBoost, long treasuryBoon) {
 
-    /** Unspecified profile — today's behavior, no flavor. */
-    public static final RiteProfile DEFAULT = new RiteProfile(1f, 1f, Optional.empty());
+    /** Unspecified profile — today's behavior, no flavor, no extra effects. */
+    public static final RiteProfile DEFAULT = new RiteProfile(1f, 1f, Optional.empty(), 0, 0L);
 
     public RiteProfile {
         if (flavor == null) flavor = Optional.empty();
@@ -43,16 +48,29 @@ public record RiteProfile(float moodScale, float pietyScale, Optional<String> fl
 
     /** Effect-only tuning (no flavor). */
     public static RiteProfile tuned(float moodScale, float pietyScale) {
-        return new RiteProfile(moodScale, pietyScale, Optional.empty());
+        return new RiteProfile(moodScale, pietyScale, Optional.empty(), 0, 0L);
     }
 
     /** Flavor-only (default magnitudes). */
     public static RiteProfile flavored(String flavor) {
-        return new RiteProfile(1f, 1f, Optional.of(flavor));
+        return new RiteProfile(1f, 1f, Optional.of(flavor), 0, 0L);
     }
 
     /** Tuning + flavor. */
     public static RiteProfile of(float moodScale, float pietyScale, String flavor) {
-        return new RiteProfile(moodScale, pietyScale, Optional.ofNullable(flavor));
+        return new RiteProfile(moodScale, pietyScale, Optional.ofNullable(flavor), 0, 0L);
+    }
+
+    /**
+     * R3b-3 — a signature rite's effect mix: a village-wide mood scale, an
+     * optional community relationship boost among attendees, an optional
+     * village treasury boon, and flavor. One shared {@code SIGNATURE_RITE}
+     * handler reads this so the four faiths' signature rites differ entirely
+     * through content (no per-faith handlers).
+     */
+    public static RiteProfile signature(float moodScale, int relationshipBoost,
+                                        long treasuryBoon, String flavor) {
+        return new RiteProfile(moodScale, 1f, Optional.ofNullable(flavor),
+                relationshipBoost, treasuryBoon);
     }
 }

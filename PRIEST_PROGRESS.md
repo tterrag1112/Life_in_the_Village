@@ -1911,3 +1911,180 @@ path) — wants an in-game check.
 6. Confirm a sparse/unprofiled case (a faith without a VIGIL/PURIFICATION
    profile that still ritualises it) falls back to DEFAULT (×1.0, no flavor),
    no error. Confirm no ledger churn (gated scheduling).
+
+---
+
+## Religion Rework — Phase R3b-3: Per-faith signature rites (closes the R3b mini-arc)
+
+Final phase of the R3b new-ceremony mini-arc. Gives each of the four faiths
+ONE distinctive named headline ceremony — faith-gated, calendar-triggered off
+its own holy day via the R3b-2 revived-calendar path (`% 365` liturgical axis).
+
+### Disposition (verified; findings + the enum-minimization decision)
+
+- **Reused the R3b-2 revived-calendar trigger path** (`% 365`, not
+  `SeasonTracker`'s 96-day year) and the gathering route from the R3b-1 pattern
+  doc — no parallel calendar scan.
+- **Named EventTypes are free.** `EventEffects.defaultDisplayName` title-cases
+  the enum name (`FIRST_FURROW` → "First Furrow", `THREAD_BINDING` → "Thread
+  Binding", `VOYAGE_BLESSING` → "Voyage Blessing", `ANCESTOR_OATH` → "Ancestor
+  Oath"), so four distinctly-named gatherings cost nothing beyond the enum
+  values + grouped switch arms.
+- **EventType switches needing arms** (no default): `category()`,
+  `getDurationTicks()`, `EventAttendance.baseline()` — all take the four as one
+  grouped arm. `CeremonyBlessings.blessingRiteFor` (has default) maps all four
+  → one shared rite.
+- **`RiteProfile`** is built only via its builders (no direct `new` callers),
+  so it's safe to extend; **not persisted** (no codec/field-cap impact).
+- Calendar days confirmed: Sunstead "Spring Equinox" @80, Loom "First Threading"
+  @30, Tidecall "First Catch" @105, Forge "Ancestor Day" @330.
+- Effect channels confirmed: `getNpcRelationships().adjust(uuid, int, tick,
+  RelationshipOrigin)` (MET_SOCIALLY), `depositToTreasury`, mood/piety — all
+  existing.
+
+**Enum-minimization decision (total NEW enums = 5: 4 EventType + 1 Rite).**
+The genuinely-new, churny layer (a `Rite` with a handler + THREE exhaustive
+switches) is minimized to **ONE shared `Rite.SIGNATURE_RITE`** — the four
+faiths' signatures differ ENTIRELY through `ReligionContent` (the prompt's "a
+single shared signature observance rite differentiated entirely by
+ReligionContent"). Their effect MIXES (mood / relationship-among-attendees /
+treasury) are encoded by extending `RiteProfile` with two optional knobs
+(`relationshipBoost`, `treasuryBoon`), so one handler reads the profile — no
+per-faith handler. The four **named EventTypes** are retained because they are
+the headline identity (distinct `/event` + history + announcement names, free
+via `defaultDisplayName`) and cost only grouped switch arms. Per-rite:
+- First Furrow / Thread-Binding / Voyage Blessing / Ancestor Oath = named
+  `EventType` → shared `Rite.SIGNATURE_RITE` → per-faith `ReligionContent`.
+- NO faith got its own `Rite`: every signature effect is a combination of
+  existing primitives (mood, relationship, treasury, piety), so per the
+  no-speculative-enum rule none warranted a distinct handler.
+
+### What shipped
+
+- `RiteProfile` +`relationshipBoost` (int) +`treasuryBoon` (long); `DEFAULT`
+  and all existing builders default them to 0 (no behavior change); new
+  `signature(moodScale, relationshipBoost, treasuryBoon, flavor)` builder.
+- `Rite.SIGNATURE_RITE` (one value); swept all 3 `Rite` switches
+  (`RiteExecutor`, `RiteTier`→GRAND, `PriestBehavior.riteLabel`).
+- `RiteExecutor.handleSignatureRite` — ONE handler: village-wide mood + piety
+  always; an O(n) relationship "binding ring" among attendees when
+  `relationshipBoost > 0` (Loom/Forge); a treasury boon when `treasuryBoon > 0`
+  (Sunstead). All from the profile.
+- `VillageEvent.EventType` +FIRST_FURROW +THREAD_BINDING +VOYAGE_BLESSING
+  +ANCESTOR_OATH; grouped arms in `category`→RELIGIOUS_RITE,
+  `getDurationTicks`→6000, `EventAttendance.baseline`→0.55,
+  `CeremonyBlessings.blessingRiteFor`→`Rite.SIGNATURE_RITE`.
+- `VillageEventScheduler.checkSignatureRite` — the faith-gated calendar trigger
+  (religion → its EventType + signature day; `% 365`; per-type dedup), wired
+  into `tick`.
+- `ReligionRegistry`: SIGNATURE_RITE → Loom + Tidecall + Forge (Sunstead auto
+  via `Rite.values()`), so each faith `ritualises` its own signature.
+- `ReligionContent`: the four signature profiles — Sunstead (×1.2 mood, +40
+  treasury), Loom (+8 relationship), Tidecall (×1.2 mood, protective), Forge
+  (×1.2 mood, +6 relationship) — each with its named flavor line.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `checkSignatureRite` reads each faith's
+  `holyDaysByName` (the R3b-2 revived calendar) + `ritualises` (the blessing
+  rite is gated by `villageRitualises(SIGNATURE_RITE)`); faith-gated so only the
+  matching religion's village schedules its own signature.
+- **Downstream callers** — the 3 `Rite` switches + the mandatory `EventType`
+  switches updated; `CeremonyBlessings`/`EventAttendance`; `RiteExecutor`
+  handler; the relationship (`adjust`), mood, piety, and treasury
+  (`depositToTreasury`) systems reused. `EventEffects.onEventStart` routes the
+  RELIGIOUS_RITE signatures to the R2b village-wide attendance override + a
+  no-op `dispatchStart` (effect is the blessing rite) — identical to the other
+  holy-day/observance types.
+- **Sibling systems** — no double-scheduling on shared days: each check has its
+  own per-EventType dedup, and the signatures fall on DISTINCT days from other
+  observances (Forge Anvil Vigil @150 vs Ancestor Oath @330; Loom Threading
+  culture-holy-day vs Thread-Binding @30 are different EventTypes/triggers and
+  may coexist, which the scheduler explicitly tolerates). R2b attend behavior
+  will populate these RELIGIOUS_RITE gatherings.
+- **Exhaustive switches** — `Rite` (3, all swept) + `EventType` (3 mandatory,
+  all swept). No other enum.
+
+### Simplification Sweep
+
+The four signatures DID reduce to "a faith-flavored observance blessing", so —
+exactly as the sweep guidance asks — they share **one** `Rite.SIGNATURE_RITE` +
+**one** `handleSignatureRite`, differentiated via `ReligionContent` (+2
+`RiteProfile` knobs) rather than four near-duplicate handlers. The calendar
+trigger reuses the R3b-2 revived-calendar mechanism (one new `checkSignatureRite`
+alongside `checkCalendarVigil`/`checkPurification`/`checkCulturalHolyDay`, no new
+scan infra). Classes in scope: `RiteProfile` (+2 fields/1 builder), `RiteExecutor`
+(+1 handler), `VillageEventScheduler` (+1 trigger), `Rite`/`RiteTier`/
+`PriestBehavior`/`VillageEvent`/`EventAttendance`/`CeremonyBlessings` (+arms),
+`ReligionRegistry`/`ReligionContent` (+content). New-enum count: **5** (4
+EventType + 1 Rite), the Rite/handler layer minimized to one.
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The trigger writes the event store + rite
+ledger; the handler touches mood/piety/relationship/treasury. No
+`brainMemories()` change → no freeze risk.
+
+### Deviations from prompt
+
+- **Kept four named `EventType`s** rather than collapsing to one generic
+  signature gathering. They are the headline identity (named in `/event` /
+  announcements / history, free via `defaultDisplayName`) and cost only grouped
+  switch arms; the minimization the prompt stressed was applied to the `Rite`
+  layer (one shared rite + handler), which is where the real churn (handler +
+  three exhaustive switches) lives. Net new enums = 5, justified above.
+- **`RiteProfile` gained two fields** to encode the per-faith effect mix so one
+  handler serves all four (the prompt's "differentiate via ReligionContent").
+  No codec impact (RiteProfile is pure content).
+- **Relationship boost is a village-wide "binding ring"**, not the gathering's
+  live `actualAttendees` — same reasoning as R3b-2 (avoids a rite→gathering
+  reverse lookup + the Religion→Village.Event coupling R2a avoided); the
+  congregation IS the village under the R2b override.
+- **Tier GRAND** for the signature (a faith's headline annual rite warrants its
+  best officiant; a seated village priest is GRAND-capable). Annual cadence
+  means no ledger churn even if it SKIPs when no qualified priest is present.
+
+### Out-of-scope but flagged — R3b mini-arc CLOSED
+
+This closes the **R3b new-ceremony mini-arc** (R3b-1 holy-day enrichment +
+Consecration + the pattern doc; R3b-2 Vigil + Purification + calendar revival;
+R3b-3 the four signature rites). Remaining R3: religion-specific **orders**
+(R3c), **festivals/processions** (R3d, needs R2b), **multi-faith** villages
+(late R3). Also still flagged from earlier phases: per-EventType holy-day flavor
+text, the 365-day liturgical vs 96-day seasonal calendar reconciliation, and
+rite-ledger pruning — none introduced or worsened here.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: all 3 `Rite` switches + the 3 mandatory `EventType` switches
+carry the new values (compiler-exhaustive); every `RiteProfile` constructor is
+5-arg (DEFAULT + 4 builders) and all existing builder callers default the new
+knobs to 0 (no regression); `checkSignatureRite` is faith-gated + dedup'd +
+`% 365`; `Religion.id()` / `effectiveDayOfYear` / `getNpcRelationships().adjust`
+/ `depositToTreasury` confirmed; the shared `SIGNATURE_RITE` is `ritualises`-
+gated per faith. Runtime-sensitive (calendar-day match, per-faith effect mix,
+claim path) — wants an in-game check.
+
+### Smoke test
+
+1. Sunstead (Plainfolk) village with a seated priest: `/time` to Spring Equinox
+   (liturgical day 80 → tick 80×24000). Confirm a "First Furrow" gathering fires
+   (named in `/event`), the priest officiates, villagers get a bright mood pulse,
+   and the village treasury gains the agrarian boon (+40). No relationship change.
+2. The Loom (Silkwood) village: `/time` to First Threading (day 30). Confirm a
+   "Thread Binding" gathering fires and attendees' relationships toward one
+   another strengthen (the binding ring), with the abstract pattern/thread flavor
+   and no deity named.
+3. Tidecall (Tidereach): First Catch (day 105) → "Voyage Blessing", a protective
+   mood pulse, sea flavor (no relationship/treasury).
+4. Forge Creed (Highmarch): Ancestor Day (day 330) → "Ancestor Oath", resolve
+   mood + a kin-bond relationship nudge among attendees, martial flavor.
+5. Confirm a faith does NOT fire another faith's signature (e.g. a Sunstead
+   village never holds Thread-Binding).
+6. Confirm a day carrying both a signature and another observance doesn't
+   double-schedule the SAME ceremony (per-type dedup); distinct ceremonies may
+   coexist.
+7. Confirm DEFAULT fallback: a faith/rite with no profile (e.g. forcing
+   SIGNATURE_RITE where unprofiled) applies ×1.0 mood, no relationship/treasury,
+   no error.

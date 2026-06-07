@@ -385,6 +385,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             case CONSECRATION         -> "a consecration";
             case VIGIL                -> "a vigil";
             case PURIFICATION         -> "a purification";
+            case SIGNATURE_RITE       -> "a signature rite";
         };
     }
 }

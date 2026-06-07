@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Village;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -141,6 +142,7 @@ public final class RiteExecutor {
             case CONSECRATION         -> handleConsecration(rite, priest, level, now, village, religionId);
             case VIGIL                -> handleVigil(rite, priest, level, now, village, religionId);
             case PURIFICATION         -> handlePurification(rite, priest, level, now, religionId);
+            case SIGNATURE_RITE       -> handleSignatureRite(rite, priest, level, now, village, religionId);
         };
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
@@ -502,6 +504,49 @@ public final class RiteExecutor {
             eased++;
         }
         return eased > 0 ? RiteOutcome.SUCCESSFUL : RiteOutcome.DISRUPTED;
+    }
+
+    private static RiteOutcome handleSignatureRite(RiteExecution rite, TownspersonMob priest,
+                                                   ServerLevel level, long now,
+                                                   Village village, String religionId) {
+        // R3b-3 — the ONE shared handler for every faith's signature ceremony.
+        // It applies a village-wide mood + piety always, and (when the faith's
+        // SIGNATURE_RITE profile grants them) a community relationship boost
+        // among attendees and a treasury boon. The four faiths differ ENTIRELY
+        // through ReligionContent + their distinct named gathering + calendar
+        // day — no per-faith handler.
+        if (village == null) return RiteOutcome.DISRUPTED;
+        RiteProfile profile = ReligionContent.profileFor(religionId, Rite.SIGNATURE_RITE);
+        String name = village.getName();
+        List<TownspersonMob> attendees = new ArrayList<>();
+        for (var entity : level.getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob npc)) continue;
+            if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
+            npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), now);
+            String npcReligion = npc.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
+            npc.getPiety().adjustBelief(npcReligion, profile.scalePiety(0.03f));
+            npc.getPiety().recordRiteAttendance(now);
+            attendees.add(npc);
+        }
+        // Relationship boost among attendees — a "binding" ring (O(n)): each
+        // bonds toward the next, weaving the congregation together (the Loom's
+        // Thread-Binding / the Forge's kin-oath lean on this; other faiths set 0).
+        int boost = profile.relationshipBoost();
+        if (boost > 0 && attendees.size() > 1) {
+            int n = attendees.size();
+            for (int i = 0; i < n; i++) {
+                attendees.get(i).getNpcRelationships().adjust(
+                        attendees.get((i + 1) % n).getUUID(), boost, now,
+                        tterrag1112.life_in_the_village.Npc.Relations.RelationshipOrigin.MET_SOCIALLY);
+            }
+        }
+        // Treasury boon — an agrarian / material blessing (Sunstead's First
+        // Furrow grants it; others set 0).
+        if (profile.treasuryBoon() > 0) {
+            village.depositToTreasury(profile.treasuryBoon());
+            VillageSavedData.get(level).markDirty();
+        }
+        return RiteOutcome.SUCCESSFUL;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────

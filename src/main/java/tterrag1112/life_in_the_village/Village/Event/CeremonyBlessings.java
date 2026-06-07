@@ -64,6 +64,10 @@ public final class CeremonyBlessings {
             // R3b-2 — communal gatherings whose blessing is their own rite.
             case VIGIL            -> Optional.of(Rite.VIGIL);
             case PURIFICATION     -> Optional.of(Rite.PURIFICATION);
+            // R3b-3 — the four named signature gatherings share one blessing
+            // rite, differentiated by ReligionContent (per the village's faith).
+            case FIRST_FURROW, THREAD_BINDING, VOYAGE_BLESSING, ANCESTOR_OATH
+                                  -> Optional.of(Rite.SIGNATURE_RITE);
             default               -> Optional.empty();
         };
     }
