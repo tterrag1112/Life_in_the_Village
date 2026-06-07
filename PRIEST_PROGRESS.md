@@ -136,3 +136,189 @@ in-game check.
    tidies) via the work-satisfied signal.
 7. No movement freeze / brain-tick error (no new memory); /tick no
    per-tick regression.
+
+---
+
+## Religion Rework — Phase R1a: Rite capability model (tiers + skill/office gating)
+
+Establishes the capability foundation later religion phases gate through:
+*skills are what an NPC can do; profession/office are what they actually
+do.* A brand-new priest can run routine devotions; a seated village
+priest can run village-wide ceremonies. The change is the gate only —
+no specializations, orders, initiation, attendance, or economy (those
+are later phases).
+
+### Disposition (investigation — tree verified, summaries confirmed)
+
+Fast-forwarded onto `origin/main` (55 commits) first: the realized-priest
+machinery the prompt assumes (`PriestBehavior`,
+`RiteExecutor.runOne(deferToRealizedPriest)`, `OFFICIATE_GRACE_TICKS`) had
+landed since the branch point and the prompt's summaries now match the
+code. Verified in-tree before coding:
+- `Rite` — 10 types (codec by `name()`); exhaustive `Rite` switches live
+  in `RiteExecutor.runOne` and `PriestBehavior.riteLabel` (both untouched);
+  `RiteLifeEventProducer` does not switch on `Rite`.
+- `RiteExecutor.runOne(rite, rdata, level, deferToRealizedPriest)` is the
+  single per-rite-effect site; `runDue` passes `true`, `runImmediate`
+  (debug command + `PriestBehavior` completion) passes `false`.
+- `PriestBehavior.findClaimableRite` claims a due rite whose presider is
+  self-or-vacant; the seated-priest path resolves via
+  `OfficeRegistry.VILLAGE_PRIEST` (`RiteExecutor.findPriest`).
+- Skill read: `npc.getSkills().getLevel(Skill)` (same levels
+  `SkillRequirement` gates on); PRIEST primary/secondary = SOCIAL/LITERACY
+  (`ProfessionSkills`); `SkillXp.award` is the one XP funnel.
+- Offices: `VILLAGE_PRIEST` competence band SOCIAL 30–70, eligibility
+  SOCIAL 30 + LITERACY 30; `TEMPLE_HIGH_PRIEST` band SOCIAL 50–85. The
+  "holds office X in its village?" query is
+  `village.getOffices().get(id).filter(h -> h.isHeldBy(uuid))`.
+
+### Tier enum + Rite→tier mapping (proposed → shipped)
+
+`RiteTier { MINOR(5), STANDARD(10), GRAND(15) }` — ordinals are the
+capability ladder, the float is the SOCIAL XP award (see XP below).
+Derived mapping `RiteTier.tierOf(Rite)` (the only exhaustive `Rite`
+consumer added — no codec/persistence change, tier is a function of
+type):
+- MINOR — BLESSING, OFFERING, TITHE, CONFESSION
+- STANDARD — NAMING, MARRIAGE, FUNERAL, COMING_OF_AGE
+- GRAND — FEAST_DAY, HARVEST_THANKSGIVING
+
+**No KINGDOM tier** — no rite maps there this phase; omitted per the "no
+speculative enums" rule. The kingdom-rites phase adds the value and the
+high-priest raise together.
+
+### The gate (`RiteCapability.canOfficiate(TownspersonMob, Rite)`)
+
+One canonical helper both performance paths call. An officiant's cap is
+the higher of skill and office:
+- **Skill** — SOCIAL (the PRIEST competence axis) gates the tier;
+  LITERACY ≥ `READ_LITERACY_THRESHOLD` (30) is the secondary
+  "can read the liturgy" requirement for STANDARD/GRAND (MINOR needs
+  neither). Thresholds added to `SkillThresholds`:
+  `RITE_STANDARD_SOCIAL = 30` (mirrors VILLAGE_PRIEST competence floor)
+  and `RITE_GRAND_SOCIAL = 50` (mirrors TEMPLE_HIGH_PRIEST floor) — not
+  fresh magic numbers, anchored to the office bands and parked in the
+  canonical skill-threshold file. A non-office priest who meets the
+  office's skill bar (SOCIAL 30 + LITERACY 30) can run STANDARD rites
+  even before being seated.
+- **Office** — holding `VILLAGE_PRIEST` in the officiant's village
+  raises the cap to GRAND regardless of skill, so a freshly-seated
+  priest is naturally qualified for the ceremonies the seat exists to
+  run. Lookup is a single map-get on the village `OfficeState`.
+
+`canOfficiate(rite) = tierOf(rite).ordinal() <= capOf(officiant).ordinal()`.
+
+### Wiring (single helper, both paths)
+
+- `PriestBehavior.findClaimableRite` — added `if (!canOfficiate(entity,
+  r.type())) continue;`. An over-tier rite is left unclaimed for a
+  qualified officiant (the realized path).
+- `RiteExecutor.runOne` — compute `capable = priest != null &&
+  canOfficiate(priest, type)`. The realized-priest defer now also
+  requires `capable` (don't defer to a priest who'll never claim it,
+  which would starve the rite). The no-priest edge branch fires on
+  `priest == null || !capable`, so an unstaffable rite waits (MARRIAGE
+  14-day defer) or SKIPs rather than applying abstractly. Existing
+  realized-vs-abstract gate intact; no double-apply.
+
+### Tier-scaled XP
+
+The single officiation XP site in `runOne` now awards
+`RiteTier.tierOf(type).socialXp()` (MINOR 5 / STANDARD 10 / GRAND 15)
+instead of flat 5 — MINOR keeps the prior value, harder rites progress
+faster once qualified. Both paths route through here (`runImmediate`
+calls `runOne`). No outcome-quality / success-chance scaling (flagged
+for a later content phase).
+
+### Tie-In Audit
+
+- **Upstream feeders** — `RiteScheduler.schedule` / `RiteLifeEventProducer`
+  create rites with an empty presider; the gate runs at claim/perform
+  time, not creation, so unstaffable rites still queue and wait.
+- **Downstream callers** — `RiteExecutor.runImmediate` (debug command +
+  PriestBehavior completion) and `runDue` both funnel through `runOne`;
+  both get the capability gate with no signature change.
+  `PriestBehavior.findClaimableRite` is the only `findClaimableRite`
+  caller. The three player verbs (blessing/offering/confession) schedule
+  MINOR-tier rites — performable by any priest, so unaffected.
+- **Sibling systems** — Offices: the `VILLAGE_PRIEST` holding query
+  already exists and is a cheap map-get (no walk). Skills: read-only
+  `getLevel`, plus the existing `SkillXp.award` funnel (mentorship /
+  ambition multipliers still apply).
+- **Exhaustive switches** — `RiteTier.tierOf` is the only exhaustive
+  `Rite` switch added; `RiteTier` itself has no `switch` consumer
+  (cap comparison is by ordinal, XP by field). Existing `Rite` switches
+  (`RiteExecutor.runOne`, `PriestBehavior.riteLabel`) untouched.
+
+### Simplification Sweep
+
+Classes in scope: `Rite` (untouched), `RiteExecutor` (gate + XP scale),
+`PriestBehavior` (claim filter), plus new `RiteTier` / `RiteCapability`.
+No orphans introduced; the gate is one helper, not two open-coded checks.
+`PriestBehavior.TempleKind` stub intentionally retained (the next phase
+differentiates building types) — not dead.
+
+### Memory safety
+
+No new brain `MemoryModuleType` — the gate lives in the claim filter and
+the abstract resolver, not in any memory write. No freeze risk.
+
+### Deviations from prompt
+
+- **No KINGDOM tier / no TEMPLE_HIGH_PRIEST → KINGDOM raise.** Section 2
+  describes a high-priest branch raising the cap to KINGDOM, but (a) no
+  rite maps to KINGDOM this phase (the prompt itself says leave it out
+  with no consumer) and (b) temple offices are stubbed in v1
+  (`OfficeRegistry.findOfficesHeldBy` produces no temple matches), so a
+  seated high priest is not resolvable yet. Both are deferred to the
+  kingdom-rites phase, which adds the tier and the branch together. A
+  high priest who also holds the village's `VILLAGE_PRIEST` seat still
+  reaches GRAND today.
+- **Threshold constants added to `SkillThresholds`** rather than reusing
+  an existing one verbatim — there was no existing 30/50 SOCIAL gate. The
+  two new constants mirror the office competence floors and live in the
+  canonical threshold file, consistent with that file's role.
+
+### Out-of-scope but flagged
+
+- Specializations / orders / initiation / apprenticeship, building-type
+  differentiation, attendance/congregation, religion economy — later
+  phases (the `TempleKind` seam is ready).
+- Outcome-quality / success-chance scaling by tier — flagged for a later
+  content phase; this phase scales XP only.
+- Clearing an incapable explicit presider so `findPriest` can re-resolve
+  a capable office holder: in normal flow a presider is only ever a
+  capable priest (PriestBehavior now claims capability-filtered; the
+  office holder always reaches GRAND), so the `!capable && priest != null`
+  branch is a legacy/defensive path that resolves via the existing
+  14-day-defer-then-SKIP edge rule. Left as-is.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (neoform-runtime 2.0.18
+POM returns 403). Static review: `RiteTier` covers all 10 rites; new
+switch is the only exhaustive `Rite` consumer added; `RiteCapability`
+resolves SOCIAL/LITERACY via `getSkills().getLevel` and the office via
+the village `OfficeState`; both `runOne` callers unchanged in signature;
+XP funnels through the single `SkillXp.award` site; no new brain memory.
+Runtime-sensitive (office seating, skill levels) — wants an in-game check.
+
+### Smoke test
+
+1. `/litv spawn` a TEMPLE + a low-skill PRIEST (SOCIAL/LITERACY < 30),
+   not seated as `village_priest`.
+2. `/religion rite BLESSING <npcUuid>` — MINOR: the low-skill priest
+   walks to the temple and performs it; effects land once.
+3. `/religion rite MARRIAGE <npcUuid>` — STANDARD: with SOCIAL/LITERACY
+   below 30 the priest leaves it unclaimed; it waits (MARRIAGE defers up
+   to 14 days) rather than applying.
+4. `/religion rite FEAST_DAY <npcUuid>` — GRAND: left unclaimed by the
+   low-skill, unseated priest; an unstaffed village resolves it via the
+   no-priest edge rule (SKIPPED) rather than applying abstractly.
+5. Raise the priest: `/litv ... skill SOCIAL 60` (or seat it as
+   `village_priest`); re-run FEAST_DAY — it now performs the GRAND rite.
+6. Confirm tier-scaled XP: officiating a GRAND rite grants more SOCIAL XP
+   (+15) than a MINOR one (+5) — check `/liv npc` skill readout deltas.
+7. No movement freeze / brain-tick error (no new memory); `/tick` shows
+   no per-tick regression (the gate is a map-get + two skill reads at
+   claim time, behind the existing `idleCooldown`).

@@ -19,6 +19,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteCapability;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecution;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecutor;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteOutcome;
@@ -202,6 +203,11 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             if (!v.getId().equals(r.villageId())) continue;
             UUID presider = r.presidingPriestId().orElse(null);
             if (presider != null && !presider.equals(me)) continue; // claimed by another
+            // Capability gate (R1a): only claim a rite this priest is
+            // qualified to officiate. An over-tier rite (e.g. a GRAND
+            // ceremony for an unseated low-skill priest) is left unclaimed
+            // for a qualified officiant. Same helper RiteExecutor consults.
+            if (!RiteCapability.canOfficiate(entity, r.type())) continue;
             return r;
         }
         return null;

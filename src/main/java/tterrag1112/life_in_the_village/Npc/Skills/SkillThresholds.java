@@ -28,6 +28,21 @@ public final class SkillThresholds {
     /** COMMERCE skill required for business-merchant promotion. */
     public static final int MERCHANT_PROMOTION         = 70;
 
+    // ── Rite-officiation tiers (Religion Rework R1a) ─────────────────────
+    /** SOCIAL an un-seated priest needs to officiate STANDARD-tier rites
+     *  (NAMING / MARRIAGE / FUNERAL / COMING_OF_AGE) on skill alone.
+     *  Mirrors the {@code VILLAGE_PRIEST} office competence floor (SOCIAL
+     *  30) so a priest who meets the office's skill bar can run life-event
+     *  rites even before being seated. The secondary literacy gate reuses
+     *  {@link #READ_LITERACY_THRESHOLD}. */
+    public static final int RITE_STANDARD_SOCIAL       = 30;
+    /** SOCIAL an un-seated priest needs to officiate GRAND-tier rites
+     *  (FEAST_DAY / HARVEST_THANKSGIVING) on skill alone. Mirrors the
+     *  {@code TEMPLE_HIGH_PRIEST} office competence floor (SOCIAL 50).
+     *  Holding {@code VILLAGE_PRIEST} raises the cap to GRAND regardless
+     *  of skill, so a seated priest never needs this. */
+    public static final int RITE_GRAND_SOCIAL          = 50;
+
     // ── Apprenticeship milestone ladder ──────────────────────────────────
     public static final int APPRENTICE_MILESTONE_FOUNDATION    = 20;
     public static final int APPRENTICE_MILESTONE_INTERMEDIATE  = 40;

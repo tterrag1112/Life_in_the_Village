@@ -80,18 +80,30 @@ public final class RiteExecutor {
         TownspersonMob priest = priestId == null
                 ? null : TownspersonMob.findByUUID(level, priestId).orElse(null);
 
+        // Capability gate (Religion Rework R1a): a resolved priest who is
+        // not qualified for this rite's tier is treated as "no qualified
+        // officiant" — the rite waits for one (MARRIAGE defer) or SKIPs,
+        // rather than an unstaffable GRAND rite being applied abstractly.
+        // The seated VILLAGE_PRIEST always reaches GRAND, so in practice
+        // this only bites when a presider was set to an under-tier priest
+        // (e.g. a low-skill non-office priest claimed via an older save).
+        // Same canonical helper PriestBehavior.findClaimableRite calls.
+        boolean capable = priest != null && RiteCapability.canOfficiate(priest, rite.type());
+
         // Physical-officiation gate: defer to a realized (loaded) PRIEST entity
         // — PriestBehavior will walk to the venue and call runImmediate (which
         // passes deferToRealizedPriest=false and applies). No double-apply: the
         // abstract path here is skipped while the priest is loaded and within
-        // the grace window. runImmediate bypasses this gate entirely.
-        if (deferToRealizedPriest && priest != null
+        // the grace window. runImmediate bypasses this gate entirely. Only
+        // defer to a priest that can actually officiate this tier — an
+        // under-tier priest will never claim it, so deferring would starve it.
+        if (deferToRealizedPriest && capable
                 && priest.getProfession() == Profession.PRIEST
                 && now - rite.scheduledTick() < OFFICIATE_GRACE_TICKS) {
             return RiteOutcome.PENDING;
         }
 
-        if (priest == null) {
+        if (priest == null || !capable) {
             // Spec line 252: skip COMING_OF_AGE; defer MARRIAGE up to 14d.
             if (rite.type() == Rite.MARRIAGE
                     && now - rite.scheduledTick() < MARRIAGE_DEFER_LIMIT_TICKS) {
@@ -122,9 +134,12 @@ public final class RiteExecutor {
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
         if (priest.getProfession() == Profession.PRIEST) {
-            // Priest gains a small SOCIAL XP boost from officiating.
+            // Priest gains SOCIAL XP from officiating, scaled by rite tier
+            // (R1a) so harder rites progress faster once qualified. Single
+            // XP site for both paths — runImmediate (debug + PriestBehavior
+            // completion) routes through here too.
             tterrag1112.life_in_the_village.Npc.Skills.SkillXp.award(priest, tterrag1112.life_in_the_village.Npc.Skills.Skill.SOCIAL,
-                    5f, now);
+                    RiteTier.tierOf(rite.type()).socialXp(), now);
         }
         return outcome;
     }
