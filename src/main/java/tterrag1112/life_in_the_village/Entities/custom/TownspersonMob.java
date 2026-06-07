@@ -1644,6 +1644,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .Homestead.HomeCandlemakingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior(),
+                        // Liveliness L2 — hobby ABOVE the idle director: LEISURE
+                        // maps to Activity.IDLE, so this is where leisure hobbies
+                        // must run (the old SOCIAL-only placement never fired).
+                        // Preferred over the plain stroll; director is the fallback.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .HobbyBehavior(),
                         // Liveliness L1 — idle director (anywhere-stroll / light
                         // rest), lowest IDLE priority: the catch-all so an NPC
                         // with nothing else to do still moves.
@@ -1740,6 +1746,16 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 .WORK.get(), 0, ImmutableList.of(
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetPlayerBehavior()));
+
+        // Liveliness L2 — hobby during idle WORK time, ABOVE the idle director
+        // (P1 > the director's P2) so a hobby is preferred over the stroll/tidy.
+        // Its checkExtraStartConditions self-gates on the work-satisfied
+        // NO_ACTIONABLE_WORK signal (isWorkTime + signal present), so it's inert
+        // during active production and yields when work resumes (signal cleared).
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 1, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .HobbyBehavior()));
 
         // Liveliness L1 — idle director in WORK at the LOWEST priority (2),
         // below per-profession production (0) and the universal WORK entries

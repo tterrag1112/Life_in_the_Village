@@ -2737,3 +2737,88 @@ unchanged.
 3. After you leave / it dismisses, the NPC resumes work — clean hand-back,
    no flicker.
 4. IDLE/SOCIAL greeting still works as before.
+
+---
+
+## Liveliness L2 — looser work + fix the hobby wiring
+
+Two related fixes: make the 21-hobby system actually fire, and let an idle
+worker do a hobby (not just the director's stroll/tidy).
+
+### Bug: hobby registered in the wrong activity
+
+`HobbyBehavior` gated to `DayPhase.LEISURE`/day-off, but it was registered
+ONLY in the SOCIAL activity — and LEISURE maps to `Activity.IDLE`
+(`NpcSchedules`). So during leisure the brain ran IDLE behaviors while the
+hobby sat dormant in SOCIAL → it almost never fired.
+
+### Corrected eligibility (`HobbyBehavior`)
+
+Extracted a `hobbyEligible(level, entity)` helper used by BOTH
+`checkExtraStartConditions` and `canStillUse` (the latter also gated on
+leisure/day-off, so a WORK-time hobby would otherwise bail instantly):
+- (existing) resolved phase is `LEISURE`, OR day-off outside a work phase;
+- (new) `isWorkTime()` AND `NO_ACTIONABLE_WORK` PRESENT — idle work time
+  (the same work-satisfied signal the idle director gates on).
+`canStillUse` now winds the hobby down to LEAVING when eligibility ends —
+including when production gets work again and clears the signal, so the
+hobby yields to resumed work. Not eligible during active production (signal
+absent). The hobby state machine + catalogue are otherwise untouched.
+
+### Corrected registration (`makeBrain`)
+
+- **IDLE** — added `HobbyBehavior` just ABOVE the idle director (this is the
+  activity LEISURE maps to, so this is the fix for the dormant-hobby bug).
+- **WORK** — added `HobbyBehavior` at priority 1, ABOVE the director (P2)
+  and below production (P0)/greet. Idle-work-gated via its
+  `checkExtraStartConditions`.
+- **SOCIAL** — kept the existing copy (covers day-off hobbies that fall in a
+  SOCIAL-activity window; inert otherwise). 3 → no removal, 2 added.
+
+### Coexistence / alternation (no flicker)
+
+Hobby and director both require `WALK_TARGET` absent + `canSteerNavigation`,
+and (in WORK) the work-satisfied signal. Hobby sits above the director, so
+when a hobby is eligible AND a preference/location resolves, it wins; when
+none fits (no preference / location / on the preference-system cooldown),
+`checkExtra` returns false and the director runs as the fallback. Production
+holds nav while working (`canSteerNavigation` false) so neither hobby nor
+director starts mid-work; when production goes idle it sets the signal and
+yields the post; when it gets work it clears the signal and the hobby winds
+down. Same alternation as L1.
+
+### Memory safety (L1-fix2 trap)
+
+No new brain memory. `HobbyBehavior` writes `WALK_TARGET` + `HOBBY_COOLDOWN`
+and reads `NO_ACTIONABLE_WORK` — all three already in
+`TownspersonMob.brainMemories()` (verified: 1487 / 1505 / 1544).
+
+### Deviations / flagged
+
+- Homestead fillers (`HomeBaking`/`Milling`/`Weaving`/`Candlemaking`) NOT
+  released into idle WORK time — they're family-scale production and a
+  working baker doing HomeBaking is odd. Left LEISURE/IDLE-gated; separate
+  decision (per prompt).
+- Kept the SOCIAL hobby copy rather than removing it (extra day-off
+  coverage, harmless); the IDLE copy is the actual bug fix.
+- Hobby `checkExtra` does the preference/location resolve when eligible +
+  nav-free; bounded because during the director's stroll `canSteerNavigation`
+  is false (early-out) and the preference system throttles re-selection.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (confirmed
+neoform-runtime offline). Static review: both files balanced; hobby in
+IDLE/SOCIAL/WORK; `hobbyEligible` used by checkExtra + canStillUse; `tick`
+restored in checkExtra; all touched memories registered.
+
+### Smoke test
+
+1. A LEISURE-phase NPC now does a hobby (`/liv npc brain` shows
+   `HobbyBehavior` running — reads/gardens/fishes/drinks).
+2. A worker with no actionable work during WORK sometimes does a hobby
+   instead of strolling/tidying (hobby preferred, director fallback).
+3. A worker WITH work still works — signal clears, hobby + director yield,
+   production resumes (no mid-work hijack).
+4. No movement freeze / brain-tick errors (L1-fix2 trap not reintroduced).
+5. Variety by trait; cooldown prevents thrashing.
