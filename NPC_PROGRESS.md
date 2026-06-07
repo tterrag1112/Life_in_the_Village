@@ -2680,3 +2680,60 @@ memory written by the L1 behaviors.
 3. No brain-tick errors in the server log (the fault is gone).
 4. The whole L1/L1-fix/L1b effort now actually manifests (idle NPCs active,
    working NPCs working) — this unblocks it.
+
+---
+
+## Liveliness — greet customers during WORK
+
+`GreetPlayerBehavior` already did everything (APPROACH→ATTENDING→DISMISS,
+work-time gated, seated by `GreeterAssignment` writing `GREET_TARGET` when a
+player enters the building footprint). The only gap: it was registered in
+IDLE (@0) and SOCIAL (@0) but NOT in WORK — so a working NPC (manning a
+stall, crafting) never greeted a customer.
+
+### Change
+
+Added `new GreetPlayerBehavior()` to the WORK activity at **priority 0** in
+`makeBrain`, ahead of the universal WORK entries (P1) and the idle director
+(P2). It's added before `ProfessionBrainFactory.configureBrain` runs, so
+within P0 it's inserted into the (insertion-ordered) behavior set before the
+per-profession production behaviors → tried first when `GREET_TARGET` is
+present.
+
+### Coexistence (no flicker)
+
+- `GREET_TARGET`-gated (`MemoryStatus.VALUE_PRESENT`) → inert during normal
+  work; starts only when a player enters the workplace.
+- `checkExtraStartConditions` already gates on `canSteerNavigation` +
+  `canRotateHead`, so for a stationary manning NPC it pre-empts immediately;
+  for an actively-walking crafter it starts at the next nav-free moment.
+- Owns `WALK_TARGET` only while approaching; erases it on reach
+  (APPROACH→ATTENDING) and in `stop()`/DISMISS → the work behavior's
+  `canSteerNavigation` returns false while greet walks (it yields) and frees
+  up on DISMISS so work reclaims the post — the same alternation the idle
+  director uses.
+- No new memory: reuses `GREET_TARGET`, already in `brainMemories()` (the
+  IDLE/SOCIAL copies use it) — so no L1-fix2 unregistered-memory trap.
+
+### Out of scope (flagged)
+
+- Which building types greet (`hasGreeterFront`) — unchanged.
+- The greet state machine — untouched (movement already works).
+- Event-stall manning — separate/deferred.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: one
+registration block added; `GreetPlayerBehavior` now in IDLE/SOCIAL/WORK;
+`GREET_TARGET` confirmed in `brainMemories()`; balance OK; greet class
+unchanged.
+
+### Smoke test
+
+1. Walk into a working NPC's shop/stall (manning merchant, crafting
+   blacksmith during WORK): the NPC approaches and greets, then returns to
+   its post.
+2. Pre-empts promptly (merchant leaves its counter to come to you).
+3. After you leave / it dismisses, the NPC resumes work — clean hand-back,
+   no flicker.
+4. IDLE/SOCIAL greeting still works as before.

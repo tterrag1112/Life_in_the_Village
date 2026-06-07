@@ -1729,6 +1729,18 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 1, workBehaviors);
 
+        // Greet customers during WORK — priority 0 so it pre-empts the manning/
+        // production behavior when a player enters the workplace. GREET_TARGET-
+        // gated (GreeterAssignment seats it), so inert otherwise; it owns
+        // WALK_TARGET only while approaching and erases it on reach/DISMISS, so
+        // the work behavior reclaims the post afterwards (canSteerNavigation
+        // arbitration, same as the idle director — no flicker). Added before
+        // configureBrain's P0 production so it's tried first within priority 0.
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 0, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetPlayerBehavior()));
+
         // Liveliness L1 — idle director in WORK at the LOWEST priority (2),
         // below per-profession production (0) and the universal WORK entries
         // (1). The WORK instance self-gates on the NO_ACTIONABLE_WORK signal,
