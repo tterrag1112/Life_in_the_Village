@@ -57,6 +57,16 @@ public class EventEffects {
         // override per-NPC inside their dedicated start handlers.
         EventAttendance.applyOverrides(level, event, village, data);
 
+        // R2b — religious holy-day gatherings (SUNSTEAD_EQUINOX / LOOM_THREADING
+        // / TIDECALL_FULL_MOON / FORGE_CREED_KINGDOM_DAY) carry no explicit
+        // attendee list; like the Phase-3 festivals, the whole village observes.
+        // Stamp a village-wide override so AttendGatheringBehavior congregates
+        // them at the venue (the linked blessing rite's temple — convergence).
+        if (event.getCategory() == EventCategory.RELIGIOUS_RITE
+                && event.getActualAttendees().isEmpty()) {
+            EventAttendance.applyVillageWideOverride(level, event, village, data);
+        }
+
         // Announce to nearby players
         announceEvent(level, event, village, data, true);
     }

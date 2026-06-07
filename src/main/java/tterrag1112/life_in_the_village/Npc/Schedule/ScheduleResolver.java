@@ -60,6 +60,19 @@ public final class ScheduleResolver {
             // uses the real tick (day-of-week / day-off unaffected).
             long dayTime = (((gameTick + phaseJitter(npc)) % 24000L) + 24000L) % 24000L;
             DayPhase base = schedule.phaseAt(dayTime);
+            // Religion R2b — event-override collapse. An NPC pulled into an
+            // active gathering (its eventOverride is stamped by EventAttendance /
+            // the festival start handlers) attends it: collapse WORK_* to LEISURE
+            // (→ Activity.IDLE, where AttendGatheringBehavior runs) for the
+            // gathering's duration. MEAL / SOCIAL / sleep are preserved so
+            // attendees still eat and rest (AttendGatheringBehavior is also
+            // registered in SOCIAL, so MEAL/SOCIAL-phase attendees gather too).
+            // The officiating priest is NOT an attendee (no override) so it keeps
+            // WORK and officiates. This wires the long-documented eventOverride
+            // collapse (see class header) that phaseAt never actually applied.
+            if (npc.isEventTime() && base.isWork()) {
+                base = DayPhase.LEISURE;
+            }
             return tterrag1112.life_in_the_village.Npc.Laws.LawScheduleHooks
                     .applyLaws(npc, gameTick, base);
         } catch (Throwable t) {

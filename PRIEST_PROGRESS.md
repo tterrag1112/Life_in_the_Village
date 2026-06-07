@@ -1139,3 +1139,210 @@ Runtime-sensitive (scheduler timing, claim path) — wants an in-game check.
    schedules and runs with no attached rite, no error.
 7. No movement freeze / brain-tick error (no new brain memory); `/tick` shows
    no per-tick regression.
+
+---
+
+## Religion Rework — Phase R2b: General attend-gathering behavior
+
+Completes the R2 congregation foundation: the visible payoff. R2a unified
+the gathering contract + deduped ceremonies but nothing physically walked
+NPCs to a gathering. This phase builds the GENERAL behavior that gathers
+attendees to the venue for ALL gathering kinds, with religion (the priest
+officiating where the congregation meets) as the first beneficiary.
+
+### Disposition (R2a artifacts verified; TWO premise mismatches reported)
+
+- `CommunityGathering` (Village/Gathering) + `CommunityGatherings`
+  (Village/Event — it depends on both stores; the interface stays neutral)
+  are as R2a shipped: `gatheringLocation()`, `startTick/endTick`,
+  `gatheringStatus`, required/invited/actualAttendees, `isActiveAt(tick)`;
+  `activeInVillage(level, villageId, tick)` is the union query.
+- `EventAttendance` (unchanged) sets `eventOverride` + adds to
+  `actualAttendees` on a gathering going ACTIVE, clears on end.
+- `NpcMemoryTypes.UPCOMING_EVENT_TARGET` (UUID) / `EVENT_ATTENDANCE_POS`
+  (GlobalPos) exist and were forward-declared with **no existing consumer**
+  — nothing half-built to consolidate; and they were NOT in
+  `brainMemories()` (the freeze trap).
+- `GatherAtSquareBehavior` is the model (walk-to + linger, gated on
+  `WALK_TARGET` absent + `GATHER_COOLDOWN` + `BrainNavGuard`, resolve once
+  per pick).
+
+**Mismatch 1 — the eventOverride→LEISURE collapse was never wired.** The
+prompt (and `ScheduleResolver`'s own class header) state that an
+eventOverride collapses `WORK_*` into LEISURE so attendees land in
+`Activity.IDLE`. In the actual tree `ScheduleResolver.phaseAt` does NOT
+consult `eventOverride` at all — only the legacy `TownspersonMob.isWorkTime()`
+reads it, and only for 4 festival types, gating WORK behaviors (not the
+brain Activity). The brain Activity is driven by `NpcSchedules.tick →
+ScheduleResolver.phaseAt → activityFor` (WORK→`Activity.WORK`,
+MEAL/SOCIAL→`SOCIAL`, LEISURE→`IDLE`). So an attendee stayed in their normal
+Activity and the IDLE-hosted behavior would never fire. **R2b had to wire
+the collapse** (the precondition) — see deliverables.
+
+**Mismatch 2 — attendee population is asymmetric.** Three sources stamp
+`eventOverride`: (a) `EventAttendance.applyOverrides` for life events
+(required+invited, also into `actualAttendees`); (b) the 5 Phase-3 festival
+start handlers in `EventEffects` set it village-wide (NO `actualAttendees`);
+(c) holy-day religious events (SUNSTEAD_EQUINOX / LOOM_THREADING /
+TIDECALL_FULL_MOON / FORGE_CREED_KINGDOM_DAY) set it for NOBODY (created
+attendee-less; their handler stamps nothing). So gating on `actualAttendees`
+membership would miss festivals entirely, and holy days would gather no one.
+
+### What shipped
+
+**1. Registered both event memories in `brainMemories()`** (the freeze
+trap) — `UPCOMING_EVENT_TARGET` + `EVENT_ATTENDANCE_POS`, with the standard
+warning comment. Done before the behavior writes them.
+
+**2. Wired the eventOverride→LEISURE collapse** (`ScheduleResolver.phaseAt`):
+`if (npc.isEventTime() && base.isWork()) base = LEISURE`. Collapses WORK_*
+only — MEAL / SOCIAL / sleep are preserved so attendees still eat and rest
+(a multi-day festival otherwise starves them). The officiating priest is not
+an attendee (no override) → keeps WORK → officiates. This is the
+long-documented collapse the header promised but `phaseAt` never applied.
+
+**3. `AttendGatheringBehavior` (general)** — modelled on
+`GatherAtSquareBehavior`. Gate: `isEventTime()` + `BrainNavGuard` +
+(`WALK_TARGET` absent + `GATHER_COOLDOWN` absent via the memory map) + find
+the active `VillageEvent` gathering whose type matches the NPC's
+`eventOverride` (the **general** signal — works for festivals that set the
+override without `actualAttendees`) + the NPC is not its presider. Resolves
+the venue once (order below), sets `UPCOMING_EVENT_TARGET` = gathering id and
+`EVENT_ATTENDANCE_POS` = GlobalPos(venue), walks to a spot within
+`LINGER_RADIUS` (spread + re-cluster), sets activity text, and re-approaches
+on the reused `GATHER_COOLDOWN` throttle until the gathering ends
+(`EventAttendance.clearOverrides` clears the override → `isEventTime()`
+false). Registered HIGH in `Activity.IDLE` (after greet/house/shelter,
+above all ambient idle) AND in `SOCIAL` (above the ambient square-gather,
+below eat/converse/court/mentor) so MEAL/SOCIAL-phase attendees gather too.
+
+**4. Convergence** — venue resolution order: (1) the gathering's pinned
+`gatheringLocation()`; (2) for a gathering with a linked rite
+(`eventData["riteId"]` → `RiteSavedData`), the **rite's location** — the
+temple, the SAME point `PriestBehavior` walks the presider to; (3) the town
+square (`HobbyLocationResolver.TOWN_SQUARE`) / village centre. The first
+attendee writes the resolved venue back onto a location-less `VillageEvent`
+so everyone (and future consumers) agree. Result: priest + congregation meet
+at the temple for weddings and holy days.
+
+**5. Holy-day congregation** — `EventAttendance.applyVillageWideOverride`
+(new) stamps the override + `actualAttendees` on every village NPC **except
+priests** (they officiate, not attend); called from `EventEffects.onEventStart`
+for RELIGIOUS_RITE-category events with no explicit attendee list. Mirrors
+the Phase-3 festival pattern so holy days actually gather villagers.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `EventAttendance` (override + actualAttendees on
+  ACTIVE; now also `applyVillageWideOverride` for holy days), the Phase-3
+  festival handlers (village-wide override), `CommunityGatherings`
+  (discovery), the gathering's linked rite (venue source).
+- **Downstream callers** — `ScheduleResolver.phaseAt`/`isWorkTime`: the new
+  WORK→LEISURE collapse only fires for event-time NPCs and only on WORK
+  phases; the legacy `isWorkTime()` festival nuance is now moot for attendees
+  (they're in IDLE). `PriestBehavior`: unchanged — it still walks the presider
+  to `rite.location()`, which is the venue attendees resolve to (convergence),
+  and the officiant is excluded from attendance (not an attendee / presider
+  gate / priest-excluded from holy-day override). The idle director /
+  `GatherAtSquareBehavior`: AttendGathering sits above them in IDLE and above
+  GatherAtSquare in SOCIAL, so a real event pre-empts ambient idle; it yields
+  to greet/house/shelter and to nav guard.
+- **Sibling systems** — the work-satisfied idle signal: an attendee is in a
+  genuine LEISURE collapse running AttendGathering (a real task), not flagged
+  idle. Activity text set on approach. No AmbientProps coupling.
+- **Exhaustive switches** — none added. (The behavior switches nothing;
+  `blessingRiteFor` / status maps are R2a's, untouched.)
+
+### Simplification Sweep
+
+Behaviors in scope: new `AttendGatheringBehavior`; `GatherAtSquareBehavior`
+(unchanged, now sits below AttendGathering in SOCIAL). The two event memories
+had no prior consumer — no half-built attend path to consolidate. Touched:
+`ScheduleResolver` (collapse), `EventAttendance` (+village-wide helper),
+`EventEffects` (+holy-day call), `TownspersonMob` (memory registration + 2
+registrations). One general behavior over `CommunityGathering` — no
+religion-only attend path. Reused `NpcBehaviorHelpers.walkTo`,
+`HobbyLocationResolver`, `CommunityGatherings`, `EventAttendance`,
+`GATHER_COOLDOWN` (no new cooldown memory — an event-time attendee is never
+running the SOCIAL square-gather, so the throttle never collides).
+
+### Memory safety
+
+`UPCOMING_EVENT_TARGET` + `EVENT_ATTENDANCE_POS` are now in
+`brainMemories()` — the behavior writes both; without registration
+`brain.tick()` faults and freezes ALL movement. No third brain memory added
+(GATHER_COOLDOWN reused, already registered).
+
+### Deviations from prompt
+
+- **The eventOverride→LEISURE collapse had to be built** (Mismatch 1): the
+  prompt assumed it already existed ("collapse to LEISURE per
+  ScheduleResolver"). It did not — `phaseAt` ignored `eventOverride`. R2b
+  wires it (WORK_* only, preserving MEAL/SOCIAL/sleep). Without this the
+  attend behavior is dead, so it is in scope by necessity.
+- **Registered in IDLE AND SOCIAL**, not just "the LEISURE-mapped Activity":
+  collapsing only WORK_* (to keep attendees eating/resting) leaves MEAL/SOCIAL
+  phases on `Activity.SOCIAL`, so the behavior must also live there to gather
+  attendees during those windows.
+- **Gate is eventOverride-type-match, not `actualAttendees` membership**
+  (Mismatch 2): required so festivals (which set the override village-wide
+  without populating `actualAttendees`) are covered — the prompt's
+  "general, all gathering kinds" intent.
+- **Added `applyVillageWideOverride` for holy days** (a small, festival-
+  mirroring addition just beyond the strict behavior scope): holy-day
+  religious events populate no attendees, so without it the prompt's holy-day
+  smoke-test case gathers no one. Priests are excluded so they still officiate.
+- **Festival attendees now fully congregate** rather than partially working
+  (the legacy `isWorkTime()` partial-work nuance for HARVEST_FESTIVAL /
+  VILLAGE_FAIR is overridden by the collapse). This is the intended "go to the
+  festival" behavior; flagged as a behavior change.
+
+### Out-of-scope but flagged
+
+- Making rite *effects* depend on physical arrival — `EventAttendance` still
+  records attendance by probability/membership, not presence. Later tuning
+  phase. The `EVENT_ATTENDANCE_POS` memory is set so that phase can read it.
+- Festivals / processions / priest-fronted spectacle, and tightening the
+  milling crowd into a staged arrangement — R3. The crowd currently mills
+  within `LINGER_RADIUS` of the venue (GatherAtSquare-style), with some drift.
+- Civic-venue refinement (town hall vs square for TRIAL / TOWN_MEETING) —
+  resolution currently falls through to the town square; a building-typed
+  venue is a later refinement.
+- Phase-5 civic/cultural events with no attendee population (TOWN_MEETING /
+  TRIAL / lectures) gather no one until their attendee lists are wired — same
+  pre-existing gap as holy days were; only the religious holy days are wired
+  here (scope discipline).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: both event memories registered in `brainMemories()`;
+`DayPhase.isWork()` / `getEventOverride()` / `getCategory()` /
+`getProfession()` / `setMemoryWithExpiry` / `GlobalPos.of(dimension,pos)` /
+`VillageSavedData.setDirty()` all confirmed against existing usage;
+AttendGatheringBehavior registered in IDLE + SOCIAL; `EventCategory` is
+same-package in `EventEffects` (no import needed); officiant excluded three
+ways (no override / presider gate / priest-excluded from holy-day override).
+Runtime-sensitive (Activity transitions, claim timing, crowd convergence) —
+wants an in-game check.
+
+### Smoke test
+
+1. Marry two NPCs → a WEDDING gathering with a linked MARRIAGE rite. Confirm
+   the couple + invited family physically walk to the temple and mill there
+   for the duration; the priest officiates AT the temple (convergence); they
+   disperse when it ends.
+2. Advance to a cultural holy day → the religious VillageEvent + linked
+   FEAST_DAY rite. Confirm the village congregates at the temple (the new
+   village-wide override) and the priest officiates there; villagers are NOT
+   pulled from sleep (night) and still break for meals.
+3. Trigger a MARKET_DAY (or any Phase-3 festival) → confirm the SAME behavior
+   gathers attendees to the town square (general, not religion-only; no rite,
+   no priest).
+4. Confirm a non-attendee (no eventOverride) goes about its normal day, and a
+   priest officiating is never yanked into the congregation.
+5. Confirm NO NPC freeze (the `brainMemories()` registration) — movement
+   normal across the village while an event runs.
+6. `/tick` shows no per-tick regression (the behavior resolves once per pick
+   behind `WALK_TARGET`-absent + `GATHER_COOLDOWN`; the collapse is a cheap
+   per-phase branch).

@@ -136,6 +136,31 @@ public final class EventAttendance {
         event.addActualAttendee(npc.getUUID());
     }
 
+    /**
+     * Religion Rework R2b — for a village-wide gathering carrying no explicit
+     * attendee list (holy-day / seasonal religious observances created without
+     * required/invited), every loaded village NPC observes. Mirrors what the
+     * Phase-3 festival start handlers already do, and records them in
+     * {@code actualAttendees} so {@link #clearOverrides} tears the override down
+     * at the gathering's end. The congregation then walks to the venue via
+     * {@code AttendGatheringBehavior}.
+     */
+    public static void applyVillageWideOverride(ServerLevel level, VillageEvent event,
+                                                Village village, VillageSavedData data) {
+        for (UUID id : villageNpcIds(level, village, data)) {
+            TownspersonMob npc = TownspersonMob.findByUUID(level, id).orElse(null);
+            if (npc == null || !npc.isAlive()) continue;
+            if (event.getActualAttendees().contains(id)) continue;
+            // The priest officiates the holy-day's blessing rite (PriestBehavior
+            // walks them to the temple) — don't pull them into the congregation,
+            // or they'd collapse to LEISURE and never officiate.
+            if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.PRIEST) {
+                continue;
+            }
+            attend(npc, event);
+        }
+    }
+
     /** Convenience accessor for callers that want to populate a list. */
     public static List<UUID> villageNpcIds(ServerLevel level, Village village,
                                            VillageSavedData data) {

@@ -1554,7 +1554,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         .NO_ACTIONABLE_WORK.get(),
                 // Liveliness L3 — social gathering cooldown (L1-fix2: registered).
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
-                        .GATHER_COOLDOWN.get()
+                        .GATHER_COOLDOWN.get(),
+                // Religion R2b — attend-gathering behavior. MUST be registered
+                // (same freeze trap): AttendGatheringBehavior writes both, and
+                // an unregistered brain memory faults brain.tick() and freezes
+                // ALL NPC movement.
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .UPCOMING_EVENT_TARGET.get(),
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .EVENT_ATTENDANCE_POS.get()
         );
     }
 
@@ -1629,6 +1637,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .SeekHouseBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .SeekShelterBehavior(),
+                        // Religion R2b — attend an active gathering. LEISURE maps
+                        // to Activity.IDLE, and an eventOverride attendee collapses
+                        // to LEISURE; placed above all ambient idle (gesture /
+                        // hobby / stroll / director) so attending a real event wins,
+                        // but below the player/survival gates (greet/house/shelter)
+                        // and gated by BrainNavGuard. Self-dormant for non-attendees.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .AttendGatheringBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .IdleGestureBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
@@ -1710,6 +1726,13 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .SitAtFurnitureBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .FollowEscortLeaderBehavior(),
+                        // Religion R2b — attend an active gathering during a
+                        // MEAL / SOCIAL phase too (so attendees who are eating /
+                        // socialising still converge on the venue). Above the
+                        // ambient square-gather but below the real social tasks
+                        // (eat/converse/court/mentor) so eating wins first.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .AttendGatheringBehavior(),
                         // Liveliness L3 — social gathering, low priority: below
                         // every real social task (eat/converse/court/mentor/
                         // hobby) so it only pulls otherwise-idle NPCs to the
