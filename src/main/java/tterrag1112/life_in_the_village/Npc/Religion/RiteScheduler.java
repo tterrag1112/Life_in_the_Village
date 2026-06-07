@@ -86,12 +86,12 @@ public final class RiteScheduler {
         return java.util.Optional.of(exec.riteId());
     }
 
-    /** Whether the village's dominant religion ritualises {@code rite}. */
+    /** Whether the village's dominant religion ritualises {@code rite}. R3a —
+     *  the culture→religion resolution is centralized in
+     *  {@link ReligionContent#villageReligionId} (single source of truth). */
     public static boolean villageRitualises(ServerLevel level, Village village, Rite rite) {
-        String culture = VillageSavedData.get(level).getKingdomForVillage(village.getId())
-                .map(tterrag1112.life_in_the_village.Kingdom.Kingdom::getCulture)
-                .orElse("default");
-        Religion religion = ReligionRegistry.get(ReligionRegistry.dominantReligionFor(culture));
+        Religion religion = ReligionRegistry.get(
+                ReligionContent.villageReligionId(level, village));
         return religion != null && religion.ritualises(rite);
     }
 

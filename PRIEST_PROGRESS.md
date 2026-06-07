@@ -1346,3 +1346,179 @@ wants an in-game check.
 6. `/tick` shows no per-tick regression (the behavior resolves once per pick
    behind `WALK_TARGET`-absent + `GATHER_COOLDOWN`; the collapse is a cheap
    per-phase branch).
+
+---
+
+## Religion Rework — Phase R3a: Per-religion distinctiveness (content model + religion-aware rites)
+
+First R3 sub-phase. Makes the four faiths genuinely different and brings
+their dead flavor fields to life — without adding any new rite.
+
+### Disposition (verified; findings)
+
+- **The four religions are barely distinct** — confirmed. `Religion`
+  (record, 8 codec fields) carries `deity`, `coreTenets`,
+  `sacredLocations`, `preferredBookCategories`, and a grep shows **all four
+  are dead** (zero `.deity()/.coreTenets()/.sacredLocations()/
+  .preferredBookCategories()` consumers anywhere). Religions differ ONLY in
+  their `rites` list + calendar.
+- **`RiteExecutor` effects are uniform** — every handler hard-codes its mood
+  magnitude / trigger / piety delta / memory text; religion is read only to
+  credit piety to the participant's `primaryReligion`, never to vary the
+  effect. The religion-aware lookup slots cleanly into the per-rite handlers
+  AFTER the R1a capability gate + realized-vs-abstract path (no disturbance
+  to either).
+- **Religion resolution**: `RiteScheduler` already resolves the village's
+  dominant religion via `dominantReligionFor(culture)` (culture from
+  `VillageSavedData.getKingdomForVillage`). Chosen as canonical for effect
+  tuning (the officiating faith), per the prompt — distinct from the
+  participant's personal belief, which still receives the piety credit. With
+  one religion per village they coincide.
+- **Book system**: `Npc/Letters/` has `BookCategory` / `ProceduralBookFactory`
+  / `StarterTextbookLibrary`, but **no temple-library stocking pass** wiring
+  `preferredBookCategories` — that would be net-new. Per the prompt: deferred
+  (kept minimal), not built here.
+- **Verbs** (`ConfessVerb` / `RequestBlessingVerb` / `MakeOfferingVerb`)
+  return `VerbResult.success(treeId)` — they open dialogue TREES, not literal
+  text, so injecting dynamic deity/tenet text there needs dialogue-tree work
+  (deferred). Flavor is surfaced instead in the rite EFFECT text (NPC
+  memories / the confession ledger), which every rite already writes.
+
+### Design (presented before implementation)
+
+- **Content model — a parallel registry, not a `Religion` record/codec
+  change** (the lower-churn option): new `Npc/Religion/RiteProfile` (a small
+  record: `moodScale`, `pietyScale`, `Optional<String> flavor`; `DEFAULT` =
+  1.0/1.0/none) + `Npc/Religion/ReligionContent` holding a sparse
+  `Map<religionId, Map<Rite, RiteProfile>>`. A religion lists a profile only
+  for rites it distinguishes; everything else falls back to `DEFAULT` → exact
+  current behavior (sparse-friendly, no regressions). No schema change, no
+  field-cap pressure, all new content in ONE file.
+- **`ReligionContent` is the single content authority**: `villageReligionId`
+  (the canonical culture→religion resolver, now also used by
+  `RiteScheduler.villageRitualises` — DRY), `profileFor`, `invocation`
+  (deity-aware), `tenet`, `flavor`.
+- **`RiteExecutor` religion-aware**: `runOne` resolves the village religion
+  once and threads the id into each handler (ORDINATION excluded per the R1c
+  constraint). Handlers scale their mood/piety by the profile and weave
+  `invocation`/`flavor` into the existing memory text. No per-religion
+  `switch` in any handler — all branching lives in `ReligionContent`.
+
+### What shipped
+
+- **`RiteProfile`** + **`ReligionContent`** (new) — the model + the four
+  religions' authored, distinct content.
+- **`RiteExecutor`** — all 10 effect handlers (every rite except ORDINATION)
+  now consult `ReligionContent`: religion-scaled magnitudes + deity/flavor in
+  the memory/ledger text. Two private helpers (`riteFlavorSuffix`,
+  `confessionTenetSuffix`) centralize the text weaving.
+- **`RiteScheduler.villageRitualises`** — refactored to reuse
+  `ReligionContent.villageReligionId` (single resolution source).
+- **Dead fields consumed**: `deity` (woven into coming-of-age / marriage /
+  funeral officiation memory text via `invocation`); `coreTenets` (a tenet
+  surfaces in the confession ledger note).
+
+**Authored character (via the model, not new rites):**
+- *Sunstead* (Sun-Mother, agrarian): HARVEST_THANKSGIVING ×1.5 mood/piety,
+  harvest/labour blessing + coming-of-age flavor.
+- *The Loom* (no deity, fate): CONFESSION ×1.5, "pattern/thread" flavor,
+  quieter feast days (×0.8).
+- *Tidecall* (Sea-Mother): FEAST_DAY ×1.4 (tide feasts), voyage blessing +
+  sea-naming flavor.
+- *The Forge Creed* (ancestor/martial): FUNERAL ×1.5/×1.3 (honor-recounting),
+  martial coming-of-age ×1.3, ancestor offering.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `dominantReligionFor` / culture resolution
+  (centralized in `ReligionContent.villageReligionId`); `ReligionRegistry`
+  definitions (read for deity/tenets, unchanged).
+- **Downstream callers** — all `RiteExecutor` handlers + both callers
+  (`runDue`/`runImmediate`) and `PriestBehavior` (which calls `runImmediate`)
+  get the religion-aware effects; the R2a `CeremonyBlessings`-linked rites
+  flow through the same `runOne` → also religion-aware; `ReligionDebugCommand`
+  (`/religion rite`) schedules via `RiteScheduler.schedule` → same path.
+  `PietyComponent`: piety is still credited to the participant's own faith
+  (WHO is unchanged); only the magnitude is scaled (HOW MUCH).
+- **Sibling systems** — book/library: NOT wired (`preferredBookCategories`
+  deferred — net-new stocking pass). Dialogue: deity/tenet text surfaces in
+  memories/ledger, not dialogue trees (deferred). No new content enum.
+- **Exhaustive switches** — the `Rite` switch in `runOne` stays exhaustive
+  (all 11 arms, including ORDINATION unchanged); no new enum added.
+
+### Simplification Sweep
+
+Classes in scope: new `RiteProfile` + `ReligionContent`; `RiteExecutor`
+(handlers now religion-aware); `RiteScheduler` (resolution reuse). All
+per-religion content lives in `ReligionContent` — no parallel flavor source
+exists, and no per-religion `switch` is scattered across handlers. The
+culture→religion resolution is now single-sourced (was duplicated inline in
+`RiteScheduler`).
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The narrative `NpcMemory` / knowledge-ledger
+text changes are not brain memories — no `brainMemories()` change, no freeze
+risk.
+
+### Deviations from prompt
+
+- **Parallel `ReligionContent` registry, not a `Religion` codec field** —
+  chosen as the lower-churn option (the prompt offered both): no schema
+  change, no field-cap risk, content centralized. The dead `deity`/
+  `coreTenets` fields are consumed by reading the existing `Religion` record
+  through `ReligionContent`.
+- **Tuning religion = village dominant; piety still credited to the
+  participant's faith.** Effect MAGNITUDE is tuned by the officiating
+  (village) religion; WHO receives piety is unchanged. With one religion per
+  village these coincide; the rare mismatch (a minority NPC) is a multi-faith
+  concern deferred to a later R3 phase — flagged.
+- **Life-event memory text now always carries the deity invocation** (even
+  when a religion has no profile for that rite) — this is the intended deity
+  surfacing, not a regression; effect magnitudes are unchanged for
+  unspecified (DEFAULT) profiles.
+
+### Out-of-scope but flagged
+
+- **No new `Rite`** (per constraint) — R3b. The model is built and proven so
+  R3b can add ceremony types against it.
+- **`preferredBookCategories`** — a temple-library stocking pass is net-new;
+  deferred (a `ReligionContent.preferredBooks(id)` accessor would slot in
+  once a stocking consumer exists).
+- **`sacredLocations`** — worldgen concern, no cheap consumer; deferred.
+- **Player-facing verb dialogue** (deity/tenet in Confess/Blessing/Offering
+  responses) — needs dialogue-tree authoring; deferred. The NPC-side rite
+  text already varies per faith.
+- Religion-specific **orders** (R3c), **festivals/processions** (R3d),
+  **multi-faith villages** (late R3) — untouched.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: all 10 handler call-sites match their new signatures; the
+`Rite` switch stays exhaustive (ORDINATION untouched); `ReligionContent`
+profiles are sparse (unspecified → `RiteProfile.DEFAULT` → current
+constants); `villageReligionId` handles null village → Sunstead;
+`confessor.getRandom()` / `Religion.deity()/coreTenets()/displayName()`
+confirmed; no codec/field-cap change. Runtime-sensitive (per-religion
+magnitudes + text) — wants an in-game check.
+
+### Smoke test
+
+1. Set up four villages, one per culture (Plainfolk→Sunstead,
+   Silkwood→The Loom, Tidereach→Tidecall, Highmarch→Forge Creed).
+2. Trigger the SAME rite in each via `/religion rite <TYPE> <uuid>` and
+   confirm the EFFECT + TEXT differ: e.g. a FUNERAL in a Forge Creed village
+   gives a larger mood shift and the memory reads "...the Forge-Father: their
+   name is struck into the anvil of memory", while the same funeral elsewhere
+   uses the default magnitude and that faith's invocation.
+3. CONFESSION in a Loom village: confirm the larger mood effect and a core
+   tenet in the priest's confession ledger note ("...(every thread is seen
+   in the pattern)").
+4. HARVEST_THANKSGIVING: bigger village-wide mood/piety in a Sunstead village
+   than elsewhere; FEAST_DAY bigger in Tidecall, quieter in a Loom village.
+5. Regression check: trigger a rite a religion does NOT profile (e.g. a Loom
+   BLESSING) and confirm it behaves exactly as before (default magnitude),
+   with the faith's invocation in any text it writes.
+6. Confirm a deity-less faith (The Loom) reads naturally ("...in the sight of
+   The Loom") and never NPEs.
