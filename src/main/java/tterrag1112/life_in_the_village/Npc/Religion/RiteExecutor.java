@@ -138,6 +138,7 @@ public final class RiteExecutor {
             case HARVEST_THANKSGIVING -> handleHarvestThanksgiving(rite, priest, level, now, village, religionId);
             case FEAST_DAY            -> handleFeastDay(rite, priest, level, now, village, religionId);
             case ORDINATION           -> handleOrdination(rite, priest, level, now);
+            case CONSECRATION         -> handleConsecration(rite, priest, level, now, village, religionId);
         };
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
@@ -434,6 +435,35 @@ public final class RiteExecutor {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
             npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(8), now);
+            npc.getPiety().recordRiteAttendance(now);
+        }
+        return RiteOutcome.SUCCESSFUL;
+    }
+
+    private static RiteOutcome handleConsecration(RiteExecution rite, TownspersonMob priest,
+                                                  ServerLevel level, long now,
+                                                  Village village, String religionId) {
+        // R3b-1 — consecrate a religious building. The rite's first participant
+        // is the BUILDING id (not an NPC); the building must still exist.
+        if (village == null) return RiteOutcome.DISRUPTED;
+        UUID buildingId = first(rite.participantIds());
+        if (buildingId == null) return RiteOutcome.DISRUPTED;
+        var building = VillageSavedData.get(level).getBuildingById(buildingId).orElse(null);
+        if (building == null) return RiteOutcome.DISRUPTED; // building gone → cannot consecrate
+
+        // One-time consecration blessing — a village-wide mood lift + piety,
+        // religion-scaled (R3a). The SUCCESSFUL outcome of THIS rite is the
+        // persistent "consecrated" marker (RiteSavedData is unpruned), which the
+        // daily scan reads to grant the ongoing village blessing — no new
+        // building/codec field.
+        RiteProfile profile = ReligionContent.profileFor(religionId, Rite.CONSECRATION);
+        String name = village.getName();
+        for (var entity : level.getEntities().getAll()) {
+            if (!(entity instanceof TownspersonMob npc)) continue;
+            if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
+            npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), now);
+            String npcReligion = npc.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
+            npc.getPiety().adjustBelief(npcReligion, profile.scalePiety(0.03f));
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;

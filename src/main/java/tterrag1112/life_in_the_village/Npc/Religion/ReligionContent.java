@@ -97,7 +97,9 @@ public final class ReligionContent {
                 Map.entry(Rite.COMING_OF_AGE,
                         RiteProfile.of(1.1f, 1.0f, "honest labour now rewards the labourer")),
                 Map.entry(Rite.FEAST_DAY,
-                        RiteProfile.flavored("a day of sun and plenty"))));
+                        RiteProfile.flavored("a day of sun and plenty")),
+                Map.entry(Rite.CONSECRATION,
+                        RiteProfile.of(1.2f, 1.2f, "this ground is given to the Sun-Mother's light"))));
 
         // The Loom — abstract fate, no deity. Confession-centric, pattern flavor.
         m.put(ReligionRegistry.THE_LOOM, profiles(
@@ -109,7 +111,9 @@ public final class ReligionContent {
                         RiteProfile.of(1.0f, 1.0f, "the thread is cut, the pattern remains")),
                 // Quieter feast days — the Loom keeps to the household.
                 Map.entry(Rite.FEAST_DAY,
-                        RiteProfile.tuned(0.8f, 1.0f))));
+                        RiteProfile.tuned(0.8f, 1.0f)),
+                Map.entry(Rite.CONSECRATION,
+                        RiteProfile.of(1.0f, 1.0f, "this loom-room is woven into the pattern"))));
 
         // Tidecall — sea-spirits, the Sea-Mother. Voyage blessings, tide feasts.
         m.put(ReligionRegistry.TIDECALL, profiles(
@@ -120,7 +124,9 @@ public final class ReligionContent {
                 Map.entry(Rite.NAMING,
                         RiteProfile.of(1.1f, 1.0f, "salt remembers the new name")),
                 Map.entry(Rite.HARVEST_THANKSGIVING,
-                        RiteProfile.flavored("thanks for the sea's harvest"))));
+                        RiteProfile.flavored("thanks for the sea's harvest")),
+                Map.entry(Rite.CONSECRATION,
+                        RiteProfile.of(1.1f, 1.1f, "the Sea-Mother claims this shore"))));
 
         // The Forge Creed — ancestor / martial. Honor funerals, martial coming-of-age.
         m.put(ReligionRegistry.FORGE_CREED, profiles(
@@ -131,7 +137,13 @@ public final class ReligionContent {
                 Map.entry(Rite.OFFERING,
                         RiteProfile.of(1.1f, 1.1f, "honour the ancestors who held the line")),
                 Map.entry(Rite.MARRIAGE,
-                        RiteProfile.flavored("two lines forged into one"))));
+                        RiteProfile.flavored("two lines forged into one")),
+                // R3b-1 — the Forge Creed's kingdom-day feast (its holy day),
+                // previously DEFAULT; a martial ancestor-day observance.
+                Map.entry(Rite.FEAST_DAY,
+                        RiteProfile.of(1.1f, 1.0f, "we feast for the ancestors who held the line")),
+                Map.entry(Rite.CONSECRATION,
+                        RiteProfile.of(1.3f, 1.2f, "this hall is forged into the ancestors' keeping"))));
 
         return Map.copyOf(m);
     }

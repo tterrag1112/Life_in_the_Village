@@ -1522,3 +1522,193 @@ magnitudes + text) — wants an in-game check.
    with the faith's invocation in any text it writes.
 6. Confirm a deity-less faith (The Loom) reads naturally ("...in the sight of
    The Loom") and never NPEs.
+
+---
+
+## Religion Rework — Phase R3b-1: Holy-day enrichment + Consecration (the new-ceremony pattern)
+
+First of the R3b "new ceremonies" mini-arc. Enriches the existing holy-day
+gatherings and adds Consecration — the first genuinely-new ceremony — as the
+reusable exemplar R3b-2/3 follow.
+
+### Disposition (verified; findings)
+
+- **Holy-day gatherings already attach a blessing rite.** `CeremonyBlessings
+  .blessingRiteFor` (R2a) maps SUNSTEAD_EQUINOX / LOOM_THREADING /
+  TIDECALL_FULL_MOON / FORGE_CREED_KINGDOM_DAY → `FEAST_DAY`, scheduled via
+  `RiteScheduler.scheduleBlessingRite` from `checkCulturalHolyDay` →
+  `scheduleEvent` → `attach`. And R3a already makes `FEAST_DAY` religion-aware.
+  So the baseline is *partly* in place — the gap is depth/distinctiveness
+  (Sunstead's equinox is just a feast; Forge Creed had no `FEAST_DAY` profile →
+  DEFAULT/bland). **This corrects the prompt's "do they do nothing?" — they do
+  something; the work is enrichment, not net-new wiring.**
+- **`RiteExecutor`/`RiteTier`/`RiteCapability`** — three exhaustive `Rite`
+  switches (`RiteExecutor.runOne`, `RiteTier.tierOf`,
+  `PriestBehavior.riteLabel`); `RiteCapability.canOfficiate` is the R1a gate a
+  new rite slots into via `RiteTier.tierOf`.
+- **`scheduleOrdinations` (R1c)** is the bounded daily-scan + officiant-gated
+  schedule pattern to mirror; it already does one entity pass to group priests
+  by village. `RiteSavedData` is **unpruned** — so a SUCCESSFUL rite persists
+  as a durable marker, and the scan must gate on an available officiant to
+  avoid SKIP-churn.
+- **Village-effect channels** — no village-modifier system exists; the
+  available channels are `depositToTreasury`, the needs map, and broadcasting
+  mood. `HARVEST_THANKSGIVING` already uses `depositToTreasury(50)`. Chosen for
+  Consecration's ongoing blessing (most bounded: one deposit per village/day).
+- **Marking "consecrated"** — `Building` has no metadata map; a new field needs
+  a codec change. The unpruned rite ledger gives a free durable marker (mirrors
+  R1c "ordained = clergy spec / SUCCESSFUL ordination").
+
+### Add-a-ceremony pattern (the reusable template — R3b-2/3 cite this)
+
+1. **Gathering type vs new rite.** If the ceremony is village-wide/attended and
+   can reuse an existing rite's effect → a new `EventType` whose
+   `CeremonyBlessings.blessingRiteFor` maps to an existing `Rite` (the holy-day
+   route). If the mechanic is genuinely distinct (new target / new effect) →
+   a new `Rite` with its own handler (the Consecration route). Prefer the
+   lower-churn option; avoid a new `EventType` unless attendance is needed now.
+2. **Trigger.** Event-driven (life event → `EventLifeEventProducer`) OR a
+   bounded daily per-village scan mirroring `scheduleOrdinations` (gate on an
+   available officiant to avoid SKIP-churn in the unpruned ledger).
+3. **Tier / capability.** Add the `Rite` to `RiteTier.tierOf` at the right tier
+   so the existing R1a `RiteCapability` gate picks the right officiant.
+4. **Effect via an EXISTING channel.** Reuse mood broadcast / `depositToTreasury`
+   / piety / needs — invent no buff system. One-time effects in the handler;
+   ongoing effects in the daily scan, tied to a durable marker.
+5. **Marker (if stateful).** Prefer the unpruned rite ledger (a SUCCESSFUL rite
+   referencing the target) over a new codec field.
+6. **`ReligionContent` profile.** Add per-faith `RiteProfile` entries
+   (scale + flavor); `DEFAULT` fallback keeps sparse faiths working.
+7. **Exhaustive-switch sweep.** New `Rite` → `RiteExecutor.runOne`,
+   `RiteTier.tierOf`, `PriestBehavior.riteLabel`. New `EventType` →
+   `category` / `getDurationTicks` / `EventAttendance.baseline` / etc.
+
+### What shipped
+
+**Baseline — holy-day enrichment:**
+- `CeremonyBlessings.blessingRiteFor`: SUNSTEAD_EQUINOX → `HARVEST_THANKSGIVING`
+  (the solar equinox is an agrarian high holy day → the fuller mood+piety+
+  treasury blessing); the other three holy days keep `FEAST_DAY`.
+- `ReligionContent`: filled the missing **Forge Creed `FEAST_DAY`** profile
+  (martial ancestor-day flavor) so all four holy days now read distinctly.
+
+**Consecration (the new-ceremony exemplar) — the new-rite route:**
+- New `Rite.CONSECRATION`; `RiteTier.tierOf` → **GRAND** (a village-wide
+  spiritual act needing a competent officiant); `PriestBehavior.riteLabel`
+  "a consecration".
+- `RiteExecutor.handleConsecration` — first participant is the BUILDING id (not
+  an NPC); resolves the building, applies a one-time village-wide mood + piety
+  blessing (religion-scaled), returns SUCCESSFUL. The SUCCESSFUL rite IS the
+  consecrated marker (no new field).
+- `RiteScheduler` — `dailyTick` now builds the loaded-priest-by-village map
+  ONCE (shared by ordination + consecration), then runs `scheduleConsecrations`
+  (officiant-gated daily scan over TEMPLE/CHAPEL/SHRINE buildings; vacant
+  presider → normal claim path) and `applyConsecrationBlessings` (a small daily
+  `depositToTreasury`, per-faith scaled, per consecrated building that still
+  stands). `collectConsecrationMarkers` does one ledger pass per village
+  (O(rites+buildings), not O(rites×buildings)).
+- `ReligionContent` — CONSECRATION profiles for all four faiths (scale + flavor),
+  `DEFAULT` intact.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `checkCulturalHolyDay` → `scheduleEvent` → `attach`
+  feeds the (now richer) holy-day blessing; the building-spawn path (manual
+  today) feeds the consecration scan via `village.getBuildingIds()`.
+- **Downstream callers** — the three `Rite` switches updated (exhaustive);
+  `CeremonyBlessings` (holy-day mapping) unchanged in arity (still has a
+  `default`); the ongoing blessing uses `depositToTreasury`;
+  `CommunityGatherings` surfaces the CONSECRATION rite as a gathering but R2b's
+  attend behavior only processes `VillageEvent` gatherings, so the
+  building-id-as-participant is never misread as an NPC.
+- **Sibling systems** — the ordination scan and consecration scan coexist on
+  the shared priest map; PriestBehavior claims by tier preference (GRAND
+  CONSECRATION before STANDARD ORDINATION), no conflict. R2b: a consecration is
+  a standalone rite (no `VillageEvent`), so no attendees gather at it this
+  phase (flagged).
+- **Exhaustive switches** — `Rite` (+CONSECRATION in all 3); no new `EventType`
+  (so the `VillageEvent` switches are untouched).
+
+### Simplification Sweep
+
+Ceremony/scheduler classes in scope: `RiteScheduler` (consecration scan reuses
+the ordination-scan shape — shared `buildPriestsByVillage`, same officiant-gated
+structure, NO new scan mechanism), `RiteExecutor` (+1 handler), `Rite` /
+`RiteTier` / `PriestBehavior` (+1 arm each), `CeremonyBlessings` (holy-day
+remap), `ReligionContent` (+5 profiles). Holy-day enrichment does NOT duplicate
+effect logic — it reuses the existing `HARVEST_THANKSGIVING`/`FEAST_DAY`
+handlers + R3a scaling. The consecrated-marker reuses the rite ledger rather
+than adding a parallel store.
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The consecration scan/handler write only the
+rite ledger + mood/piety/treasury — no `brainMemories()` change, no freeze risk.
+
+### Deviations from prompt
+
+- **Consecration is a standalone rite (new `Rite`), not a gathering
+  `EventType`.** The mechanic is genuinely distinct (building target + ongoing
+  buff), so a new `Rite` is justified; wrapping it in a new `EventType` would
+  add the `VillageEvent` switch churn for an attendance feature the prompt
+  itself scopes as "eventually". This mirrors ordination (the established
+  scan-driven standalone-rite precedent) and is the cleaner exemplar. The
+  pattern doc covers BOTH routes so R3b-2/3 can pick either.
+- **Baseline was already partly done** (holy-days attach FEAST_DAY since R2a,
+  scaled since R3a); the enrichment is the SUNSTEAD_EQUINOX→HARVEST upgrade +
+  the Forge-Creed FEAST_DAY gap, not net-new wiring.
+- **Building-id stored as the rite's first participant** (participants are
+  usually NPC ids). Safe: only `handleConsecration` and the consecration
+  helpers read it (as a building), and no NPC-resolving consumer touches a
+  CONSECRATION rite's participants. Flagged as a documented convention.
+
+### Out-of-scope but flagged
+
+- Consecration as an ATTENDED gathering (villagers walk to the consecration) —
+  needs an `EventType` wrapper; deferred (R3d festivals territory). Today the
+  priest officiates at the building; no congregation gathers.
+- Vigil / Purification (R3b-2), per-faith signature rites (R3b-3), orders
+  (R3c), festivals (R3d), multi-faith (late R3) — untouched.
+- Holy-day per-EventType flavor (distinct text per SUNSTEAD_EQUINOX vs the
+  rite-level FEAST_DAY flavor) — the rite handler only knows the rite, not the
+  event type; deferred. The event type already names the faith's holy day.
+- Sunstead now gets two HARVEST_THANKSGIVINGs/year (autumn festival + equinox)
+  — intentional for the agrarian faith; treasury impact is minor (+50 each).
+- A de-consecration / re-consecration flow (building destroyed → marker stale)
+  — the ongoing blessing already ends when the building is gone (existence
+  check); the stale SUCCESSFUL rite is harmless. Pruning is a future ledger-
+  housekeeping concern, not introduced here.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: all 3 `Rite` switches carry CONSECRATION (compiler-exhaustive);
+no new `EventType`; the consecration scan mirrors `scheduleOrdinations`
+(officiant-gated, one shared priest pass, one ledger pass per village);
+`markDirty` / `depositToTreasury` / `getBuildingById` / `getShape().getOrigin`
+/ `getVillageCentre` confirmed; `RiteProfile`/`ReligionContent`/`RiteCapability`
+same-package (no imports); `Set`/`HashSet` imports added. Runtime-sensitive
+(scan timing, claim path, per-faith magnitudes) — wants an in-game check.
+
+### Smoke test
+
+1. Four villages, one per culture. Advance to each holy day (or `/religion`-
+   force the cultural event): confirm a religion-appropriate blessing fires —
+   a Sunstead (Plainfolk) equinox runs HARVEST_THANKSGIVING (village-wide mood +
+   piety + treasury, ×1.5) while the others run their per-faith FEAST_DAY
+   (Tidecall ×1.4, Loom ×0.8, Forge Creed ×1.1 with its new flavor).
+2. Manually spawn a NEW (unconsecrated) TEMPLE/CHAPEL/SHRINE in a village with a
+   qualified (GRAND-capable, e.g. seated) priest. Within a daily tick, confirm a
+   CONSECRATION is scheduled, the priest walks to the building and officiates
+   ("a consecration"), and on completion the village gets the one-time blessing.
+3. Confirm the building is now consecrated: re-running the daily scan does NOT
+   re-schedule it (`/religion`-inspect the ledger — one SUCCESSFUL CONSECRATION
+   naming the building).
+4. Confirm the ongoing blessing: the village treasury gains a small daily amount
+   while the consecrated building stands; destroy the building and confirm the
+   daily blessing stops.
+5. Confirm a village with only a low-skill/un-seated priest (no GRAND-capable
+   officiant) does NOT schedule a consecration (no churn) until a qualified
+   priest is present.
+6. Confirm a sparse/unprofiled case (a faith with no CONSECRATION profile, if
+   added later) falls back to DEFAULT (×1.0, no flavor) with no error.

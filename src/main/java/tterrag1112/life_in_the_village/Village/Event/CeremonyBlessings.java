@@ -53,8 +53,13 @@ public final class CeremonyBlessings {
             case NAMING_CEREMONY  -> Optional.of(Rite.NAMING);
             case COMING_OF_AGE    -> Optional.of(Rite.COMING_OF_AGE);
             case HARVEST_FESTIVAL -> Optional.of(Rite.HARVEST_THANKSGIVING);
-            case SUNSTEAD_EQUINOX, LOOM_THREADING,
-                 TIDECALL_FULL_MOON, FORGE_CREED_KINGDOM_DAY
+            // R3b-1 baseline enrichment: the Sunstead solar equinox is an
+            // agrarian high holy day → the fuller HARVEST_THANKSGIVING (mood +
+            // piety + treasury), not a plain feast. The other faiths' holy days
+            // keep FEAST_DAY, distinguished per-faith by their ReligionContent
+            // profile (scale + flavor).
+            case SUNSTEAD_EQUINOX -> Optional.of(Rite.HARVEST_THANKSGIVING);
+            case LOOM_THREADING, TIDECALL_FULL_MOON, FORGE_CREED_KINGDOM_DAY
                                   -> Optional.of(Rite.FEAST_DAY);
             default               -> Optional.empty();
         };

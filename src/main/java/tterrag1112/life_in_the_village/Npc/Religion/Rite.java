@@ -21,7 +21,17 @@ public enum Rite {
      *  becomes clergy (assigns the locked clergy specialization). Profession-
      *  driven, not a life-stage event — scheduled by {@code RiteScheduler}'s
      *  daily ordination pass, not by a life-event gathering. */
-    ORDINATION;
+    ORDINATION,
+    // ── Religion Rework R3b-1 ────────────────────────────────────────────
+    /** Consecrates a religious building (TEMPLE / CHAPEL / SHRINE). A notable
+     *  (GRAND-tier) ceremony scheduled by {@code RiteScheduler}'s daily
+     *  consecration scan for un-consecrated religious buildings; on success it
+     *  blesses the village and the SUCCESSFUL rite itself stands as the
+     *  persistent "consecrated" marker (the rite ledger is unpruned — no new
+     *  building field), which grants the village a small ongoing blessing while
+     *  the building stands. The rite's first participant is the BUILDING's id,
+     *  not an NPC. */
+    CONSECRATION;
 
     public static final Codec<Rite> CODEC =
             Codec.STRING.xmap(Rite::valueOf, Rite::name);

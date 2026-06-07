@@ -13,8 +13,10 @@ import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -45,13 +47,43 @@ public final class RiteScheduler {
         // 1. Run due rites first.
         RiteExecutor.runDue(level);
 
-        // 2. R1c — schedule ordinations for un-ordained priests (daily,
-        // one bounded pass over loaded NPCs).
         VillageSavedData vdata = VillageSavedData.get(level);
-        try { scheduleOrdinations(level, vdata); }
+        // One bounded pass over loaded NPCs, shared by the scan-driven rites
+        // (ordination R1c, consecration R3b-1) so officiant availability is
+        // computed once.
+        Map<UUID, List<TownspersonMob>> priestsByVillage = buildPriestsByVillage(level, vdata);
+
+        // 2. R1c — schedule ordinations for un-ordained priests.
+        try { scheduleOrdinations(level, vdata, priestsByVillage); }
         catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] ordination pass threw: {}", t.getMessage());
         }
+
+        // 3. R3b-1 — schedule consecrations for un-consecrated religious
+        // buildings, then apply the ongoing blessing for consecrated ones.
+        try { scheduleConsecrations(level, vdata, priestsByVillage); }
+        catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] consecration pass threw: {}", t.getMessage());
+        }
+        try { applyConsecrationBlessings(level, vdata); }
+        catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] consecration-blessing pass threw: {}", t.getMessage());
+        }
+    }
+
+    /** Groups loaded PRIEST NPCs by their village id (one entity pass). */
+    private static Map<UUID, List<TownspersonMob>> buildPriestsByVillage(
+            ServerLevel level, VillageSavedData vdata) {
+        Map<UUID, List<TownspersonMob>> byVillage = new HashMap<>();
+        for (var e : level.getEntities().getAll()) {
+            if (!(e instanceof TownspersonMob npc)) continue;
+            if (npc.getProfession() != Profession.PRIEST) continue;
+            Village v = npc.getAssignedVillageName()
+                    .flatMap(vdata::getVillageByName).orElse(null);
+            if (v == null) continue;
+            byVillage.computeIfAbsent(v.getId(), k -> new ArrayList<>()).add(npc);
+        }
+        return byVillage;
     }
 
     // ── Blessing-rite scheduling (R2a) ────────────────────────────────────
@@ -111,18 +143,8 @@ public final class RiteScheduler {
      * pre-ordained by the populator, so the gap cases (leader hires,
      * conversions) normally have a senior present.</p>
      */
-    private static void scheduleOrdinations(ServerLevel level, VillageSavedData vdata) {
-        // One pass: group loaded PRIEST NPCs by their village.
-        Map<UUID, List<TownspersonMob>> priestsByVillage = new HashMap<>();
-        for (var e : level.getEntities().getAll()) {
-            if (!(e instanceof TownspersonMob npc)) continue;
-            if (npc.getProfession() != Profession.PRIEST) continue;
-            Village v = npc.getAssignedVillageName()
-                    .flatMap(vdata::getVillageByName).orElse(null);
-            if (v == null) continue;
-            priestsByVillage.computeIfAbsent(v.getId(), k -> new ArrayList<>()).add(npc);
-        }
-
+    private static void scheduleOrdinations(ServerLevel level, VillageSavedData vdata,
+                                            Map<UUID, List<TownspersonMob>> priestsByVillage) {
         for (Map.Entry<UUID, List<TownspersonMob>> entry : priestsByVillage.entrySet()) {
             List<TownspersonMob> priests = entry.getValue();
             // Need at least one priest who can officiate an ORDINATION
@@ -157,6 +179,109 @@ public final class RiteScheduler {
                 .anyMatch(r -> r.type() == Rite.ORDINATION
                         && r.outcome() == RiteOutcome.PENDING
                         && r.participantIds().contains(ordinandId));
+    }
+
+    // ── Consecration scheduling (R3b-1) ───────────────────────────────────
+
+    /** Per-faith base daily treasury blessing per consecrated religious
+     *  building (scaled by the religion's CONSECRATION profile). Minor + bounded
+     *  (one deposit per village per day). */
+    private static final long CONSECRATION_DAILY_BRONZE = 5L;
+
+    /**
+     * Mirrors {@link #scheduleOrdinations}: a bounded daily per-village scan
+     * that schedules a {@link Rite#CONSECRATION} for each religious building
+     * (TEMPLE / CHAPEL / SHRINE) not yet consecrated and with no pending
+     * consecration, provided the village has a priest able to officiate one
+     * (GRAND tier). A vacant presider is left → claimed by a qualified priest
+     * through the normal R1a/R1b path. Gating on an available officiant avoids
+     * SKIP-churn in the unpruned rite ledger (same reasoning as ordinations).
+     */
+    private static void scheduleConsecrations(ServerLevel level, VillageSavedData vdata,
+                                              Map<UUID, List<TownspersonMob>> priestsByVillage) {
+        for (Village village : vdata.getAllVillages()) {
+            List<TownspersonMob> priests =
+                    priestsByVillage.getOrDefault(village.getId(), List.of());
+            boolean officiantAvailable = priests.stream()
+                    .anyMatch(p -> RiteCapability.canOfficiate(p, Rite.CONSECRATION));
+            if (!officiantAvailable) continue;
+
+            // One ledger pass per village (the ledger is unpruned, so compute
+            // the consecrated/pending building sets once, not per building).
+            Set<UUID> consecrated = new HashSet<>();
+            Set<UUID> pending = new HashSet<>();
+            collectConsecrationMarkers(level, village.getId(), consecrated, pending);
+
+            for (UUID bid : village.getBuildingIds()) {
+                if (consecrated.contains(bid) || pending.contains(bid)) continue;
+                Building b = vdata.getBuildingById(bid).orElse(null);
+                if (b == null || !isReligiousBuilding(b.getType())) continue;
+                BlockPos origin = b.getShape().getOrigin();
+                scheduleConsecrationRite(level, village, bid,
+                        origin != null ? origin : village.getVillageCentre());
+            }
+        }
+    }
+
+    /**
+     * Grants the ongoing consecration blessing: a small daily treasury deposit
+     * per consecrated religious building that STILL EXISTS (the building being
+     * gone ends the blessing even though the marker rite persists). Scaled
+     * per-faith via {@link ReligionContent}.
+     */
+    private static void applyConsecrationBlessings(ServerLevel level, VillageSavedData vdata) {
+        for (Village village : vdata.getAllVillages()) {
+            Set<UUID> consecrated = new HashSet<>();
+            collectConsecrationMarkers(level, village.getId(), consecrated, new HashSet<>());
+            if (consecrated.isEmpty()) continue;
+
+            int standing = 0;
+            for (UUID bid : consecrated) {
+                Building b = vdata.getBuildingById(bid).orElse(null);
+                if (b != null && isReligiousBuilding(b.getType())) standing++;
+            }
+            if (standing == 0) continue;
+            RiteProfile profile = ReligionContent.profileFor(
+                    ReligionContent.villageReligionId(level, village), Rite.CONSECRATION);
+            long blessing = Math.round(
+                    CONSECRATION_DAILY_BRONZE * standing * profile.pietyScale());
+            if (blessing > 0) {
+                village.depositToTreasury(blessing);
+                vdata.markDirty();
+            }
+        }
+    }
+
+    /** Single ledger pass: fills {@code consecrated} with building ids that have
+     *  a SUCCESSFUL CONSECRATION rite and {@code pending} with those that have a
+     *  PENDING one. The rite ledger IS the consecration marker (unpruned — no
+     *  building/codec field). */
+    private static void collectConsecrationMarkers(ServerLevel level, UUID villageId,
+                                                   Set<UUID> consecrated, Set<UUID> pending) {
+        for (RiteExecution r : RiteSavedData.get(level).ritesForVillage(villageId)) {
+            if (r.type() != Rite.CONSECRATION || r.participantIds().isEmpty()) continue;
+            UUID buildingId = r.participantIds().get(0);
+            if (r.outcome() == RiteOutcome.SUCCESSFUL) consecrated.add(buildingId);
+            else if (r.outcome() == RiteOutcome.PENDING) pending.add(buildingId);
+        }
+    }
+
+    private static boolean isReligiousBuilding(BuildingType type) {
+        return type == BuildingType.TEMPLE
+                || type == BuildingType.CHAPEL
+                || type == BuildingType.SHRINE;
+    }
+
+    /** Schedules a CONSECRATION rite at the building's origin, vacant presider,
+     *  due immediately. Not {@code ritualises}-gated — every faith consecrates
+     *  its own buildings (like ordination, this is universal). */
+    private static void scheduleConsecrationRite(ServerLevel level, Village village,
+                                                 UUID buildingId, BlockPos location) {
+        RiteExecution exec = new RiteExecution(UUID.randomUUID(), Rite.CONSECRATION,
+                java.util.Optional.empty(), List.of(buildingId),
+                location != null ? location : BlockPos.ZERO,
+                level.getGameTime(), 0L, RiteOutcome.PENDING, village.getId());
+        RiteSavedData.get(level).putRite(exec);
     }
 
     /** Schedule a one-shot rite for an external trigger (lifecycle event). */

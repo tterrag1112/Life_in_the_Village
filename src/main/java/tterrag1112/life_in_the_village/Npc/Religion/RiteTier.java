@@ -57,7 +57,10 @@ public enum RiteTier {
             // new clergy; it is a routine life-event-style ceremony, not a
             // village-wide GRAND one.
             case NAMING, MARRIAGE, FUNERAL, COMING_OF_AGE, ORDINATION  -> STANDARD;
-            case FEAST_DAY, HARVEST_THANKSGIVING                       -> GRAND;
+            // CONSECRATION (R3b-1): GRAND — consecrating a sacred site is a
+            // village-wide spiritual act, on par with the great ceremonies, so
+            // it requires a competent officiant (seated priest or high skill).
+            case FEAST_DAY, HARVEST_THANKSGIVING, CONSECRATION        -> GRAND;
         };
     }
 }
