@@ -8974,3 +8974,82 @@ runtime). Static review: the sizing loop now iterates `selection` filtered by `C
 (matching `workshopCount`), so no-NBT MILLER/WAREHOUSE no longer inflate `wMaxDim` (20 not 32)
 → 24×24 block; the loop was the only full-`CRAFT_SET` geometry walk (count/route/gate are
 membership tests); no contract/enum/codec change.
+
+### 2026-06-06 — 4c-a fix-up #3: one craft per workshop precinct (explicit placement)
+
+Fix-up #2 got the workshop band seating 8/8 precincts (`block=24×24`, no more ERROR spam) —
+4c-a's structural goal met. But only **4/8 crafts placed**: `BLACKSMITH×2` + `BAKERY×2` dropped
+`NO_VIABLE_CANDIDATE` while `CARPENTRY`/`STABLE`/`STOCKPILE×2` placed (same 20×16 footprint → not
+footprint), leaving 4 bare reserved lots and a CITY with no blacksmith/bakery.
+
+**Root (confirmed in code):** crafts were purely **scorer-gated** — `workshopGated` forced the
+candidate `insideAny(workshopGates)`, then the global `findBestCandidate` scan picked the single
+best cell across **all 8 gates at once**, with **no per-precinct assignment**. The dropped types
+are exactly the CIVIC-affinity + proximity-penalized ones (`BLACKSMITH`, `BAKERY`), which score
+poorly in the workshop band (beyond their preferred civic zone), so global-best-greedy left them
+with no admissible/positive cell → drop, even with empty precincts available.
+
+**Fix — explicit 1-craft-per-precinct (option b).** Generalized `materializeHouse` →
+`materializeBuilding(state, type, centre, faceTarget)` and, after the precincts seat,
+`reserveWorkshopDistricts` now **places each selected craft directly at a distinct seated
+precinct centre** (facing the core), bypassing the scorer entirely — the precinct centre is
+already terrain-validated at seat time. Crafts are skipped in the batch-4 scorer loop (mirroring
+the HOUSE skip), and the now-dead `workshopGated` gate was removed. Picked option (b) over the
+occupied-gate-exclusion (option a) because the drops are scorer/score-driven (same footprint,
+CIVIC-affinity types drop), which (a) wouldn't fix; (b) is deterministic AND the clean seam for
+4c-b. **Surplus rule:** if crafts > seated precincts, the surplus drops (logged); with per=1 and
+8 precincts for 8 crafts it's 1:1.
+
+**Surface area:** 1 edit.
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`materializeHouse` → generic
+  `materializeBuilding`; explicit craft placement in `reserveWorkshopDistricts`; batch-loop
+  craft skip; removed `workshopGated` + its gate check).
+
+**Tie-In Audit:**
+- *Touched surface:* `materializeBuilding` (generalized from `materializeHouse`); explicit craft
+  placement; the batch-loop craft skip; removal of `workshopGated`.
+- *Downstream:* `materializeBuilding`'s other caller is `placeArrangedBlock` (HOUSE) — updated to
+  pass `BuildingType.HOUSE`; behaviour identical for houses. `seatDistrict`/`workshopGates`
+  geometry unchanged. Economy/NPC — blacksmith/bakery now PLACE (were dropping) → businesses +
+  inhabitants register (strict improvement; the populator reads placed buildings). Residential
+  `houseGated` path untouched. Farms still excluded from `workshopGates`; workshops still get
+  district nodes (connection). `getBatch` still routes crafts to batch 4 (civic shrink + the
+  skip condition).
+- *Exhaustive switches:* none.
+
+**Simplification Sweep:** generalized one method (`materializeHouse` → `materializeBuilding`,
+reused by houses + crafts — net negative duplication) and **deleted** the dead `workshopGated`
+boolean + gate check (crafts no longer scorer-placed). Net negative.
+
+**Deviations from prompt:**
+- **Did not run the diagnostic** (sandbox 403 + no runtime) — chose option (b) directly: it
+  handles BOTH distribution and score/terrain (the diagnostic's possible causes), is
+  deterministic, and is the 4c-b seam. (a) would only fix distribution, not the score-drop the
+  type pattern points to.
+- Static review only — the placed/dropped craft counts + the in-world result need a spawn.
+
+**Out-of-scope but flagged:**
+- **4c-b** craft-quarter look (multi-craft precincts, arrangement, shared yard). Residential
+  2-house sub-min drop (pre-existing). Park-leaf persistence (separate fix-up). MILLER/WAREHOUSE/
+  WELL NBT authoring (content gap). Flag-OFF farm payoff (pending).
+
+**Cumulative pending verification:** all prior phases + 4c-a + fix-ups #2/#3. **Needs an in-world
+spawn** to confirm all selected crafts place (blacksmith + bakery back, 0 craft drops, no bare
+lots) + economy registers them.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY (flag on) → `workshop districts: … N crafts placed / 0 dropped`; blacksmith
+   + bakery present; each craft in a distinct precinct, no bare workshop lots; civic/band/
+   courtyards/parks/market unchanged; viable; economy registers blacksmith/bakery.
+3. `/litv spawn` TOWN → scales; surplus (crafts > precincts) drops per the rule.
+4. No overlap/abort; residential houses unchanged.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: `materializeBuilding` is `materializeHouse` parameterized by type (same
+RURAL style + resolver + footprint + reservation path the scorer uses, so crafts materialize
+like houses); explicit 1:1 assignment over `selection ∩ CRAFT_SET` into `workshopGates` (the
+8/8 seated precincts); crafts skipped in the batch loop (no double-place); `workshopGated`
+removed with no remaining refs; no new enum/codec/switch.

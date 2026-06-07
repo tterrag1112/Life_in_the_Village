@@ -290,6 +290,12 @@ public final class PhasedPlanner {
                 if (type == BuildingType.HOUSE && !state.residentialGates.isEmpty()) {
                     continue;
                 }
+                // 4c-a fix-up #3 — craft set is placed EXPLICITLY 1-per-precinct in
+                // reserveWorkshopDistricts (batch-3 hook); skip the scorer pass so
+                // they aren't double-placed / dropped by global-best greedy.
+                if (CRAFT_SET.contains(type) && !state.workshopGates.isEmpty()) {
+                    continue;
+                }
                 boolean foundation = (batch == 1 || batch == 2)
                         || foundationTypes.contains(type);
                 if (placeOne(state, type, foundation)) perBatchCounts[batch]++;
@@ -645,10 +651,6 @@ public final class PhasedPlanner {
         // the next district (capacity ≈ CAP/district, total ≥ houseCount).
         final boolean houseGated = type == BuildingType.HOUSE
                 && !state.residentialGates.isEmpty();
-        // 4c-a — a craft-set building must place INSIDE the reserved workshop
-        // precincts (the workshop band), like houses into residential gates.
-        final boolean workshopGated = CRAFT_SET.contains(type)
-                && !state.workshopGates.isEmpty();
 
         Best best = null;
         for (int i = 0; i < state.fmap.gridSize(); i++) {
@@ -669,13 +671,6 @@ public final class PhasedPlanner {
                             || insideAny(pos.getX(), pos.getZ(), state.residentialGates)
                             || insideAny(pos.getX(), pos.getZ(), state.workshopGates)
                             || withinResidentialBand(state, pos))) {
-                    rejZone++;
-                    continue;
-                }
-
-                // 4c-a — a craft building must lie inside a workshop precinct.
-                if (workshopGated
-                        && !insideAny(pos.getX(), pos.getZ(), state.workshopGates)) {
                     rejZone++;
                     continue;
                 }
@@ -2196,12 +2191,11 @@ public final class PhasedPlanner {
      * outside the civic precinct), sized to hold the craft set, recorded in
      * {@code workshopGates}. Reuses the residential seat machinery
      * ({@link #seatDistrict} + {@link #residentialDirections}) — there's now a
-     * concrete second consumer, so this is reuse, not a parallel path. The craft
-     * buildings then place via the scorer GATED into these precincts (the
-     * {@code workshopGated} check in {@link #findBestCandidate}); the
-     * craft-quarter arrangement/look is 4c-b. Workshops seat AFTER residential
-     * (its hook runs first) and avoid both bands via seatDistrict's overlap
-     * reject; a bearing offset interleaves them with the residential precincts.
+     * concrete second consumer, so this is reuse, not a parallel path. Each craft
+     * is then placed EXPLICITLY, one per seated precinct (fix-up #3), bypassing
+     * the scorer; the craft-quarter arrangement/look is 4c-b. Workshops seat AFTER
+     * residential (its hook runs first) and avoid both bands via seatDistrict's
+     * overlap reject; a bearing offset interleaves them with the residential precincts.
      */
     private static void reserveWorkshopDistricts(State state,
                                                  List<BuildingType> selection) {
@@ -2256,9 +2250,30 @@ public final class PhasedPlanner {
                     whalfX, whalfZ, state.workshopGates);
             if (g != null) seated++;
         }
-        LOGGER.info("workshop districts: {} requested / {} seated"
-                + " (workshops={}, per={}, block={}x{})",
-                n, seated, workshopCount, per, 2 * whalfX, 2 * whalfZ);
+
+        // 4c-a fix-up #3 — place ONE craft per seated precinct EXPLICITLY (centre,
+        // facing the core), bypassing the scorer. Crafts were purely scorer-gated
+        // into the gate UNION with no per-precinct assignment, so global-best-greedy
+        // left 4 CIVIC-affinity crafts (blacksmith/bakery) with no admissible cell →
+        // they dropped, leaving bare reserved lots. The precinct centre is already
+        // terrain-validated (seatDistrict), so explicit placement seats every craft.
+        java.util.List<BuildingType> craftList = new ArrayList<>();
+        for (BuildingType t : selection) if (CRAFT_SET.contains(t)) craftList.add(t);
+        int placed = 0, dropped = 0;
+        for (int i = 0; i < craftList.size(); i++) {
+            if (i >= state.workshopGates.size()) { dropped++; continue; }  // surplus
+            Polygon.AABB gate = state.workshopGates.get(i);
+            BlockPos centre = new BlockPos((gate.minX() + gate.maxX()) / 2, 0,
+                    (gate.minZ() + gate.maxZ()) / 2);
+            if (materializeBuilding(state, craftList.get(i), centre, anchor) != null) {
+                placed++;
+            } else {
+                dropped++;
+            }
+        }
+        LOGGER.info("workshop districts: {} requested / {} seated; {} crafts placed"
+                + " / {} dropped (per={}, block={}x{})",
+                n, seated, placed, dropped, per, 2 * whalfX, 2 * whalfZ);
     }
 
     /** Phase 2 fix-up — fraction of the village radius at which to resolve the
@@ -2455,7 +2470,8 @@ public final class PhasedPlanner {
         int placed = 0;
         List<Polygon.AABB> footprints = new ArrayList<>(arr.houses().size());
         for (ResidentialArranger.HousePlacement p : arr.houses()) {
-            Polygon.AABB fp = materializeHouse(state, p.centre(), p.faceTarget());
+            Polygon.AABB fp = materializeBuilding(state, BuildingType.HOUSE,
+                    p.centre(), p.faceTarget());
             if (fp != null) { placed++; footprints.add(fp); }
         }
         // Carry the variant's internal lanes to the render pass: truncate at the
@@ -2556,33 +2572,33 @@ public final class PhasedPlanner {
      * the placed footprint AABB (for border skip-tests). Frontage / facingRoad
      * are filled later by the orientation pass, like every building.
      */
-    private static Polygon.AABB materializeHouse(State state, BlockPos centre0,
-                                                 BlockPos faceTarget) {
+    private static Polygon.AABB materializeBuilding(State state, BuildingType type,
+                                                   BlockPos centre0, BlockPos faceTarget) {
         int x = centre0.getX(), z = centre0.getZ();
         if (!state.fmap.inBounds(x, z)) return null;
         Cell cell = state.fmap.cellAt(x, z);
         BlockCategory cat = cell.category();
         if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
                 || cell.localSlope() > MAX_SLOPE) return null;
-        PlacementProfile profile = PlacementDefaults.get(BuildingType.HOUSE);
+        PlacementProfile profile = PlacementDefaults.get(type);
         if (profile == null) return null;
 
         BlockPos centre = new BlockPos(x, cell.elevationY(), z);
         String variantId = state.variantResolver.pickVariantIdForV2(
-                BuildingType.HOUSE, centre, state.ctx.anchor(), state.villageRadius,
+                type, centre, state.ctx.anchor(), state.villageRadius,
                 state.culture, Style.RURAL, state.rng, state.availability);
         StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
-                Style.RURAL, BuildingType.HOUSE, variantId, LEVEL, Rotation.NONE);
+                Style.RURAL, type, variantId, LEVEL, Rotation.NONE);
         Footprint fp = new Footprint(info.width(), info.length());
         Rotation rotation = chooseFacing(centre, faceTarget);
         Aabb fpAabb = footprintAabb(centre, fp, rotation);
         if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) return null;
 
-        PlacedBuilding pb = new PlacedBuilding(BuildingType.HOUSE, centre, fp,
+        PlacedBuilding pb = new PlacedBuilding(type, centre, fp,
                 rotation, profile.priority(), variantId, null, null);
         state.placed.add(pb);
-        state.reservations.add(new Reservation(fpAabb, fpAabb, BuildingType.HOUSE));
-        state.events.add(PhaseEvent.placed(BuildingType.HOUSE, false,
+        state.reservations.add(new Reservation(fpAabb, fpAabb, type));
+        state.events.add(PhaseEvent.placed(type, false,
                 new ScoreBreakdown(1.0, 0.0, 0.0)));
         return new Polygon.AABB(fpAabb.minX(), fpAabb.minZ(),
                 fpAabb.maxX(), fpAabb.maxZ());
