@@ -22,6 +22,25 @@ public final class ScheduleResolver {
 
     private ScheduleResolver() {}
 
+    /** Bound (ticks) of the per-NPC phase jitter — see {@link #phaseJitter}. */
+    public static final int PHASE_JITTER_TICKS = 300;
+
+    /**
+     * Liveliness L3 — a small deterministic per-NPC offset in
+     * [-{@link #PHASE_JITTER_TICKS}, +{@link #PHASE_JITTER_TICKS}] derived from
+     * the entity UUID hash, added to the within-day phase/activity lookup so
+     * villagers wake/work/eat/rest at slightly staggered times instead of in
+     * lockstep. Cheap + stateless (a hash + floorMod, no allocation) — does not
+     * worsen the per-tick {@code resolveDaily} caveat. Bounded so it can't
+     * reorder phases or push work out of its window. Shared by
+     * {@code NpcSchedules.tick} (the brain Activity) so both stay consistent.
+     */
+    public static long phaseJitter(TownspersonMob npc) {
+        if (npc == null) return 0L;
+        return Math.floorMod(npc.getUUID().hashCode(), 2L * PHASE_JITTER_TICKS + 1L)
+                - PHASE_JITTER_TICKS;
+    }
+
     /**
      * Returns the active {@link DayPhase} for {@code npc} at
      * {@code gameTick}. Never throws — returns
@@ -36,7 +55,10 @@ public final class ScheduleResolver {
         if (npc == null) return DayPhase.HOME;
         try {
             DailySchedule schedule = resolveDaily(npc, gameTick);
-            long dayTime = ((gameTick % 24000L) + 24000L) % 24000L;
+            // Liveliness L3 — within-day phase lookup is jittered per NPC so
+            // villagers don't flip phases in lockstep. resolveDaily above still
+            // uses the real tick (day-of-week / day-off unaffected).
+            long dayTime = (((gameTick + phaseJitter(npc)) % 24000L) + 24000L) % 24000L;
             DayPhase base = schedule.phaseAt(dayTime);
             return tterrag1112.life_in_the_village.Npc.Laws.LawScheduleHooks
                     .applyLaws(npc, gameTick, base);

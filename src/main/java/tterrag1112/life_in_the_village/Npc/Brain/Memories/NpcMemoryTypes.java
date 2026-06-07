@@ -73,6 +73,10 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
             IDLE_DIRECTOR_COOLDOWN = register("idle_director_cooldown", Codec.LONG);
 
+    /** Liveliness L3 — TTL cool-down between social-gathering relocations. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            GATHER_COOLDOWN = register("gather_cooldown", Codec.LONG);
+
     /**
      * Liveliness L1 — the "work-satisfied" signal. Present (TTL) when a
      * production behavior has gone idle for a STRUCTURAL reason (no inputs /

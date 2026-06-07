@@ -61,12 +61,9 @@ public class HobbyBehavior extends Behavior<TownspersonMob> {
         if (entity.isChild()) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
 
-        long tick = level.getGameTime();
-        DayPhase cur = ScheduleResolver.phaseAt(entity, tick);
-        boolean leisure = cur == DayPhase.LEISURE;
-        boolean dayOff = ScheduleResolver.isDayOff(entity, tick) && !cur.isWork();
-        if (!leisure && !dayOff) return false;
+        if (!hobbyEligible(level, entity)) return false;
 
+        long tick = level.getGameTime();
         NpcHobbyPreference pref = entity.getHobbyPreference();
         if (!pref.hasCurrent() || !sameHobbyStillKnown(pref)) {
             Optional<HobbyDefinition> session = pref.pickForSession(
@@ -92,14 +89,30 @@ public class HobbyBehavior extends Behavior<TownspersonMob> {
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
         if (activeDefinition == null) return false;
         long tick = level.getGameTime();
-        DayPhase cur = ScheduleResolver.phaseAt(entity, tick);
-        boolean inLeisureOrDayOff = cur == DayPhase.LEISURE
-                || (ScheduleResolver.isDayOff(entity, tick) && !cur.isWork());
-        if (!inLeisureOrDayOff && phase != Phase.LEAVING) {
+        // Wind down (LEAVING) once no longer eligible — i.e. leisure/day-off
+        // ended, OR (idle work time) production has work again and cleared the
+        // NO_ACTIONABLE_WORK signal. So the hobby yields when real work resumes.
+        if (!hobbyEligible(level, entity) && phase != Phase.LEAVING) {
             phase = Phase.LEAVING;
             subTimer = 0;
         }
         return tick - startTick < activeDefinition.durationTicks() + 600L;
+    }
+
+    /**
+     * L2 — hobby eligibility. Existing: the resolved phase is LEISURE, or it's
+     * a day off outside a work phase. New: it's work time AND there's no
+     * actionable work ({@code NO_ACTIONABLE_WORK}, the shared work-satisfied
+     * signal also gating the idle director) — so idle work time goes to hobbies
+     * too. NOT eligible during active production (the signal is absent then).
+     */
+    private static boolean hobbyEligible(ServerLevel level, TownspersonMob entity) {
+        long tick = level.getGameTime();
+        DayPhase cur = ScheduleResolver.phaseAt(entity, tick);
+        if (cur == DayPhase.LEISURE) return true;
+        if (ScheduleResolver.isDayOff(entity, tick) && !cur.isWork()) return true;
+        return entity.isWorkTime()
+                && entity.getBrain().hasMemoryValue(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
     }
 
     @Override

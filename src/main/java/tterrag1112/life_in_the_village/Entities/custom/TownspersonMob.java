@@ -1551,7 +1551,10 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .IDLE_DIRECTOR_COOLDOWN.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
-                        .NO_ACTIONABLE_WORK.get()
+                        .NO_ACTIONABLE_WORK.get(),
+                // Liveliness L3 — social gathering cooldown (L1-fix2: registered).
+                tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
+                        .GATHER_COOLDOWN.get()
         );
     }
 
@@ -1654,6 +1657,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .Homestead.HomeCandlemakingBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior(),
+                        // Liveliness L2 — hobby ABOVE the idle director: LEISURE
+                        // maps to Activity.IDLE, so this is where leisure hobbies
+                        // must run (the old SOCIAL-only placement never fired).
+                        // Preferred over the plain stroll; director is the fallback.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .HobbyBehavior(),
                         // Liveliness L1 — idle director (anywhere-stroll / light
                         // rest), lowest IDLE priority: the catch-all so an NPC
                         // with nothing else to do still moves.
@@ -1701,6 +1710,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .SitAtFurnitureBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .FollowEscortLeaderBehavior(),
+                        // Liveliness L3 — social gathering, low priority: below
+                        // every real social task (eat/converse/court/mentor/
+                        // hobby) so it only pulls otherwise-idle NPCs to the
+                        // square, where the conversation behaviors then pair them.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GatherAtSquareBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior()
                 );
@@ -1738,6 +1753,28 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 1, workBehaviors);
+
+        // Greet customers during WORK — priority 0 so it pre-empts the manning/
+        // production behavior when a player enters the workplace. GREET_TARGET-
+        // gated (GreeterAssignment seats it), so inert otherwise; it owns
+        // WALK_TARGET only while approaching and erases it on reach/DISMISS, so
+        // the work behavior reclaims the post afterwards (canSteerNavigation
+        // arbitration, same as the idle director — no flicker). Added before
+        // configureBrain's P0 production so it's tried first within priority 0.
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 0, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .GreetPlayerBehavior()));
+
+        // Liveliness L2 — hobby during idle WORK time, ABOVE the idle director
+        // (P1 > the director's P2) so a hobby is preferred over the stroll/tidy.
+        // Its checkExtraStartConditions self-gates on the work-satisfied
+        // NO_ACTIONABLE_WORK signal (isWorkTime + signal present), so it's inert
+        // during active production and yields when work resumes (signal cleared).
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 1, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .HobbyBehavior()));
 
         // Liveliness L1 — idle director in WORK at the LOWEST priority (2),
         // below per-profession production (0) and the universal WORK entries

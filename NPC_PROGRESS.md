@@ -2802,3 +2802,304 @@ memory written by the L1 behaviors.
 3. No brain-tick errors in the server log (the fault is gone).
 4. The whole L1/L1-fix/L1b effort now actually manifests (idle NPCs active,
    working NPCs working) — this unblocks it.
+
+---
+
+## Liveliness — greet customers during WORK
+
+`GreetPlayerBehavior` already did everything (APPROACH→ATTENDING→DISMISS,
+work-time gated, seated by `GreeterAssignment` writing `GREET_TARGET` when a
+player enters the building footprint). The only gap: it was registered in
+IDLE (@0) and SOCIAL (@0) but NOT in WORK — so a working NPC (manning a
+stall, crafting) never greeted a customer.
+
+### Change
+
+Added `new GreetPlayerBehavior()` to the WORK activity at **priority 0** in
+`makeBrain`, ahead of the universal WORK entries (P1) and the idle director
+(P2). It's added before `ProfessionBrainFactory.configureBrain` runs, so
+within P0 it's inserted into the (insertion-ordered) behavior set before the
+per-profession production behaviors → tried first when `GREET_TARGET` is
+present.
+
+### Coexistence (no flicker)
+
+- `GREET_TARGET`-gated (`MemoryStatus.VALUE_PRESENT`) → inert during normal
+  work; starts only when a player enters the workplace.
+- `checkExtraStartConditions` already gates on `canSteerNavigation` +
+  `canRotateHead`, so for a stationary manning NPC it pre-empts immediately;
+  for an actively-walking crafter it starts at the next nav-free moment.
+- Owns `WALK_TARGET` only while approaching; erases it on reach
+  (APPROACH→ATTENDING) and in `stop()`/DISMISS → the work behavior's
+  `canSteerNavigation` returns false while greet walks (it yields) and frees
+  up on DISMISS so work reclaims the post — the same alternation the idle
+  director uses.
+- No new memory: reuses `GREET_TARGET`, already in `brainMemories()` (the
+  IDLE/SOCIAL copies use it) — so no L1-fix2 unregistered-memory trap.
+
+### Out of scope (flagged)
+
+- Which building types greet (`hasGreeterFront`) — unchanged.
+- The greet state machine — untouched (movement already works).
+- Event-stall manning — separate/deferred.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: one
+registration block added; `GreetPlayerBehavior` now in IDLE/SOCIAL/WORK;
+`GREET_TARGET` confirmed in `brainMemories()`; balance OK; greet class
+unchanged.
+
+### Smoke test
+
+1. Walk into a working NPC's shop/stall (manning merchant, crafting
+   blacksmith during WORK): the NPC approaches and greets, then returns to
+   its post.
+2. Pre-empts promptly (merchant leaves its counter to come to you).
+3. After you leave / it dismisses, the NPC resumes work — clean hand-back,
+   no flicker.
+4. IDLE/SOCIAL greeting still works as before.
+
+---
+
+## Liveliness L2 — looser work + fix the hobby wiring
+
+Two related fixes: make the 21-hobby system actually fire, and let an idle
+worker do a hobby (not just the director's stroll/tidy).
+
+### Bug: hobby registered in the wrong activity
+
+`HobbyBehavior` gated to `DayPhase.LEISURE`/day-off, but it was registered
+ONLY in the SOCIAL activity — and LEISURE maps to `Activity.IDLE`
+(`NpcSchedules`). So during leisure the brain ran IDLE behaviors while the
+hobby sat dormant in SOCIAL → it almost never fired.
+
+### Corrected eligibility (`HobbyBehavior`)
+
+Extracted a `hobbyEligible(level, entity)` helper used by BOTH
+`checkExtraStartConditions` and `canStillUse` (the latter also gated on
+leisure/day-off, so a WORK-time hobby would otherwise bail instantly):
+- (existing) resolved phase is `LEISURE`, OR day-off outside a work phase;
+- (new) `isWorkTime()` AND `NO_ACTIONABLE_WORK` PRESENT — idle work time
+  (the same work-satisfied signal the idle director gates on).
+`canStillUse` now winds the hobby down to LEAVING when eligibility ends —
+including when production gets work again and clears the signal, so the
+hobby yields to resumed work. Not eligible during active production (signal
+absent). The hobby state machine + catalogue are otherwise untouched.
+
+### Corrected registration (`makeBrain`)
+
+- **IDLE** — added `HobbyBehavior` just ABOVE the idle director (this is the
+  activity LEISURE maps to, so this is the fix for the dormant-hobby bug).
+- **WORK** — added `HobbyBehavior` at priority 1, ABOVE the director (P2)
+  and below production (P0)/greet. Idle-work-gated via its
+  `checkExtraStartConditions`.
+- **SOCIAL** — kept the existing copy (covers day-off hobbies that fall in a
+  SOCIAL-activity window; inert otherwise). 3 → no removal, 2 added.
+
+### Coexistence / alternation (no flicker)
+
+Hobby and director both require `WALK_TARGET` absent + `canSteerNavigation`,
+and (in WORK) the work-satisfied signal. Hobby sits above the director, so
+when a hobby is eligible AND a preference/location resolves, it wins; when
+none fits (no preference / location / on the preference-system cooldown),
+`checkExtra` returns false and the director runs as the fallback. Production
+holds nav while working (`canSteerNavigation` false) so neither hobby nor
+director starts mid-work; when production goes idle it sets the signal and
+yields the post; when it gets work it clears the signal and the hobby winds
+down. Same alternation as L1.
+
+### Memory safety (L1-fix2 trap)
+
+No new brain memory. `HobbyBehavior` writes `WALK_TARGET` + `HOBBY_COOLDOWN`
+and reads `NO_ACTIONABLE_WORK` — all three already in
+`TownspersonMob.brainMemories()` (verified: 1487 / 1505 / 1544).
+
+### Deviations / flagged
+
+- Homestead fillers (`HomeBaking`/`Milling`/`Weaving`/`Candlemaking`) NOT
+  released into idle WORK time — they're family-scale production and a
+  working baker doing HomeBaking is odd. Left LEISURE/IDLE-gated; separate
+  decision (per prompt).
+- Kept the SOCIAL hobby copy rather than removing it (extra day-off
+  coverage, harmless); the IDLE copy is the actual bug fix.
+- Hobby `checkExtra` does the preference/location resolve when eligible +
+  nav-free; bounded because during the director's stroll `canSteerNavigation`
+  is false (early-out) and the preference system throttles re-selection.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (confirmed
+neoform-runtime offline). Static review: both files balanced; hobby in
+IDLE/SOCIAL/WORK; `hobbyEligible` used by checkExtra + canStillUse; `tick`
+restored in checkExtra; all touched memories registered.
+
+### Smoke test
+
+1. A LEISURE-phase NPC now does a hobby (`/liv npc brain` shows
+   `HobbyBehavior` running — reads/gardens/fishes/drinks).
+2. A worker with no actionable work during WORK sometimes does a hobby
+   instead of strolling/tidying (hobby preferred, director fallback).
+3. A worker WITH work still works — signal clears, hobby + director yield,
+   production resumes (no mid-work hijack).
+4. No movement freeze / brain-tick errors (L1-fix2 trap not reintroduced).
+5. Variety by trait; cooldown prevents thrashing.
+
+---
+
+## Liveliness L3 — ambient richness (gathering + props + jitter)
+
+Three independent parts, staged as two commits (C separately; A+B together
+since both use the shared `AmbientProps`).
+
+### Part C — per-NPC schedule jitter (committed first)
+
+NPCs flipped phases in lockstep (the activity table `NpcSchedules.activityAt`
+is village-synchronized). Added `ScheduleResolver.phaseJitter(npc)` — a
+deterministic ±300-tick offset from `UUID.hashCode()` (`Math.floorMod`,
+no allocation) — applied to the within-day lookup in `phaseAt` AND to
+`NpcSchedules.tick`'s activity lookup (same offset → consistent). `phaseAt`'s
+`resolveDaily` still uses the real tick, so day-of-week/day-off are
+unaffected; `isWorkTime` routes through `phaseAt` so it's jittered too.
+Bounded so work stays in its window and phases don't reorder. Perf: a hash +
+floorMod per call — does NOT worsen the known per-tick `resolveDaily`
+allocation caveat (that caching is the deferred real-opt pass, not done here).
+
+### Part A — social gathering points
+
+`GatherAtSquareBehavior` (new): during SOCIAL, an idle NPC with no
+higher-priority social task drifts to the town square
+(`HobbyLocationResolver.resolve(HobbyLocation.TOWN_SQUARE, …)`) and lingers
+within a small radius, so the pairing-based conversation behaviors
+(`Engage`/`Initiate`) — which were SOCIAL-only with nothing bringing NPCs
+together — now actually fire. Registered LOW in SOCIAL (above only
+PersonalSpace), so it yields to eat/converse/court/mentor/hobby. Gated on
+`WALK_TARGET` absent + `canSteerNavigation` + a new `GATHER_COOLDOWN`
+(120–400 ticks); resolves the square once per pick (no per-tick scan).
+New memory `GATHER_COOLDOWN` registered in `NpcMemoryTypes` AND
+`brainMemories()` (L1-fix2 trap honoured).
+
+### Part B — carry / props everywhere
+
+`AmbientProps` (new util): `displayItem(npc)` = first inventory item, else a
+small static profession→prop map (blacksmith→axe, farmer→hoe, miner→pickaxe,
+baker→bread, merchant→emerald, librarian→book, …), else empty;
+`applyDisplay(npc)` writes `CARRYING_DISPLAY_ITEM` (rendered by CORE
+`CarryHoldAnimationBehavior`). Wired into the idle director's STROLL + TIDY
+and the gathering walk (TIDY previously used a local first-item helper, now
+removed in favour of the shared util with the profession fallback).
+Cosmetic only — never touches real inventory; cleared on stop.
+
+### Tie-In / Coexistence
+
+- Gathering yields to real social tasks (priority) and to nav
+  (`canSteerNavigation`); production never runs in SOCIAL. Same nav-arbitration
+  alternation as the idle director — no flicker.
+- No per-tick world scans: gather/jitter are O(1)-ish; carry is one inventory
+  walk per pick.
+- Memory safety: the only new brain memory (`GATHER_COOLDOWN`) is registered
+  in `brainMemories()`; carry reuses `CARRYING_DISPLAY_ITEM` (already
+  registered). No L1-fix2 freeze risk.
+
+### Deviations / flagged
+
+- Jitter applied at BOTH `ScheduleResolver.phaseAt` and `NpcSchedules.tick`
+  (the prompt named only ScheduleResolver) — needed because the visible
+  Activity transitions come from `NpcSchedules`, not `phaseAt`. Same offset,
+  so consistent.
+- Profession→prop map is a small static code map (flag if it grows /
+  data-driven later).
+- Gathering walks to a random spot within 4 blocks of the square; if
+  occasionally unwalkable, pathfinding just gets the NPC close — acceptable.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net`. Static review: all files
+balanced (NpcSchedules paren "mismatch" is a pre-existing comment
+false-positive — interval `[0, 24000))`); `GATHER_COOLDOWN` registered in
+brainMemories; no unregistered-memory write; unused `ItemStack` import
+removed from the director.
+
+### Smoke test
+
+1. SOCIAL/leisure: idle NPCs walk to the square/well and linger; co-located
+   NPCs strike up conversations (`/liv npc brain` shows gathering/conversation).
+2. Strolling/gathering NPCs visibly hold an item (tool/goods); clears on stop;
+   no inventory change.
+3. At a phase boundary, NPCs start work/wake at staggered times, not all at
+   once.
+4. Work still happens in valid windows; no movement freeze / brain-tick error
+   (L1-fix2 clear); `/tick` no regression.
+5. Production/hobbies/greeting still work — gathering yields to real tasks.
+
+---
+
+## Liveliness L4 — activity-text polish
+
+Final liveliness step: varied, flavourful nameplate text instead of fixed
+phase-level strings, so the village reads as alive. Polish only — no
+behaviour/selection change, only the label.
+
+### Flavour mechanism
+
+`ActivityFlavor` (new, static): string pools keyed by an action key
+(`stroll`/`rest`/`tidy`/`square`/`prod.gather`/`prod.deposit`/`farm.*`) plus
+a per-profession crafting map (baker→"Kneading dough"/"Tending the oven"/…,
+blacksmith→"Hammering at the forge"/…, etc.). `pick(key, rng)` / `craft(prof,
+rng)` return one string. Code map for v1 (data-driven JSON flagged as a later
+option). No new memory (text only).
+
+### Pick-once discipline (no nameplate churn)
+
+Strings are picked ONCE per action/phase entry, never per tick — relying on
+`setActivityState`'s `equals` short-circuit to hold the label steady:
+- **IdleDirector** (STROLL/REST/TIDY) + **GatherAtSquare**: the activity is
+  set once in the action method (called once per action pick), so the literal
+  was replaced directly with `ActivityFlavor.pick(...)`.
+- **AbstractProductionBehavior** + **FarmerBehavior**: added an
+  `applyPhaseFlavor()` called at the top of `tick()` that re-picks ONLY when
+  the phase changes (`phase != flavorPhase`) and otherwise re-sets the cached
+  string (a no-op via the short-circuit). Removed the per-tick literal
+  set-sites from the phase handlers (production: gather/craft/deposit;
+  farmer: harvest/replant/tend-animals/deposit). Crafting flavour is
+  per-profession via `ActivityFlavor.craft(profession, rng)`.
+
+So a baker now shows "Kneading dough" / "Tending the oven" / "Baking bread"
+across cycles; a stroller varies its wander text; different NPCs of a
+profession differ; the same NPC varies across actions.
+
+### L0 semantics preserved
+
+`blockingReason` / `IDLE.withBlocking(...)` idle states are untouched —
+flavour applies only to ACTIVE (non-blocked) states (`goIdle` still owns the
+idle text and the `/liv npc brain` "why idle" reason).
+
+### Deviations / flagged (long tail not converted)
+
+- Converted the prominent/visible sites only (production phases, farmer work
+  phases, director, gathering). The long tail of less-visible literals is
+  flagged as opportunistic follow-up:
+  - Farmer: "Planning farm work…", "Buying seeds", "Buying tools",
+    "Composting" (+ the transient analyze-time "Tending animals" at the
+    commit point, harmlessly overridden by the central flavour next tick).
+  - `MerchantBehavior` has no `setCurrentActivity` sites (manning text comes
+    from elsewhere) — nothing to convert.
+  - `HobbyBehavior` already shows per-hobby names (varied) — left as-is.
+- Data-driven JSON pools: not built (code map v1).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (confirmed neoform-runtime
+offline). Static review: all touched files balanced; converted literals
+removed from per-tick handlers and re-homed in `applyPhaseFlavor` (pick on
+phase change only); flavour switches use `default`; no new memory.
+
+### Smoke test
+
+1. Watch a baker over several cycles: varied crafting text, not the same
+   string each time.
+2. Different NPCs of a profession show different flavour; same NPC varies
+   across actions.
+3. Strollers/gatherers show varied text; `/liv npc brain` reflects it.
+4. No nameplate flicker (text changes per action/phase, not per tick).
+5. Idle "why" debug unchanged; no perf regression.

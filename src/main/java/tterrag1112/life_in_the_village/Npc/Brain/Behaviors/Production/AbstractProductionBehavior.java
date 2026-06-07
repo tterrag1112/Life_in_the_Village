@@ -441,6 +441,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     @Override
     protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
+        applyPhaseFlavor();
         switch (phase) {
             case GATHERING        -> gather(level);
             case WALKING_TO_STEP  -> walkToStep(level);
@@ -448,6 +449,33 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             case DEPOSITING       -> deposit(level);
             default               -> {}
         }
+    }
+
+    // Liveliness L4 — flavour text picked ONCE per phase change (not per tick),
+    // held steady by setActivityState's equals short-circuit. Replaces the
+    // fixed per-tick strings the phase handlers used to set.
+    private Phase flavorPhase = null;
+    private String phaseFlavor = null;
+
+    private void applyPhaseFlavor() {
+        if (phase != flavorPhase) {
+            phaseFlavor = flavorFor(phase);
+            flavorPhase = phase;
+        }
+        if (phaseFlavor != null) entity.setCurrentActivity(phaseFlavor);
+    }
+
+    private String flavorFor(Phase p) {
+        var rng = entity.getRandom();
+        return switch (p) {
+            case GATHERING    -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.pick("prod.gather", rng);
+            case WORKING_STEP -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.craft(entity.getProfession(), rng);
+            case DEPOSITING   -> tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                    .ActivityFlavor.pick("prod.deposit", rng);
+            default           -> null; // WALKING_TO_STEP keeps prior; IDLE handled by goIdle
+        };
     }
 
     @Override
@@ -540,7 +568,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     // Phase: GATHERING (includes ChannelRouter-based fallback procurement)
     // =========================================================================
     protected void gather(ServerLevel level) {
-        entity.setCurrentActivity("Gathering materials");
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
         if (currentRecipe == null) { goIdle(); return; }
 
         if (!loggedGatheringStart) {
@@ -633,7 +661,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             loggedRecipeStart = true;
         }
 
-        entity.setCurrentActivity("Crafting " + currentRecipe.output().getDescriptionId());
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
         workTimer++;
         entity.getLookControl().setLookAt(target.getX(), target.getY(), target.getZ());
         if (workTimer % WORK_PULSE_INTERVAL == 0) {
@@ -675,7 +703,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     }
 
     protected void deposit(ServerLevel level) {
-        entity.setCurrentActivity("Depositing goods");
+        // Activity text set by applyPhaseFlavor() (L4) on phase entry.
         Building dest = outputBuilding(level);
         if (dest == null) { goIdle(); return; }
 
