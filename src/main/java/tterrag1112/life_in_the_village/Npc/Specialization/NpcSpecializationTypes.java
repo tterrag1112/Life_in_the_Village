@@ -176,6 +176,16 @@ public final class NpcSpecializationTypes {
             List.of(new SkillRequirement(Skill.BEEKEEPING, FOUNDATION)),
             false, SpecializationData.None.INSTANCE));
 
+    // ── Priest family (Religion Rework R1b) ───────────────────────────────
+    // Generalist-only this phase. Concrete religion-specific orders vary
+    // per religion and land in the content/multi-religion phase; they will
+    // register as gated siblings here and assign over the locked generalist
+    // via force=true (same pattern the combat-role / admin paths use).
+    public static final SpecializationDef PRIEST_CLERIC = register(new SpecializationDef(
+            id("priest/cleric"), Profession.PRIEST,
+            Component.literal("Cleric"),
+            List.of(), true, SpecializationData.None.INSTANCE));
+
     // ── Lookup ───────────────────────────────────────────────────────────
 
     public static Optional<SpecializationDef> byId(Identifier id) {
@@ -194,5 +204,36 @@ public final class NpcSpecializationTypes {
         return forProfession(profession).stream()
                 .filter(SpecializationDef::isGeneralist)
                 .findFirst();
+    }
+
+    // ── Inhabitant-spawn locked-generalist assignment (R1b) ───────────────
+
+    /** Professions whose freshly-spawned inhabitants receive their
+     *  generalist spec, <em>locked</em>, at spawn — worldgen/operator
+     *  intent that survives skill drift and is the seam later content
+     *  branches on. Bias-not-gate professions (BLACKSMITH / FARMER) are
+     *  deliberately NOT here: they spawn spec-less and auto-promote via
+     *  {@code trySetSpecialization}, which a lock would block. */
+    private static final java.util.Set<Profession> LOCK_GENERALIST_AT_SPAWN =
+            java.util.EnumSet.of(Profession.PRIEST);
+
+    /**
+     * Religion Rework R1b — the single inhabitant-spawn specialization
+     * route. For a profession in {@link #LOCK_GENERALIST_AT_SPAWN}, assigns
+     * its generalist {@link SpecializationDef} via the canonical component
+     * API ({@code assign(force=true)} + {@code setLocked}). No-op for every
+     * other profession. Called once per spawned NPC from
+     * {@code VillageInhabitantPopulator}. Centralized here (the
+     * specialization registry) rather than open-coded at the call site so
+     * future professions/orders extend the set, not the populator.
+     */
+    public static void assignInitialSpawnSpec(
+            tterrag1112.life_in_the_village.Entities.custom.TownspersonMob npc,
+            Profession profession) {
+        if (npc == null || !LOCK_GENERALIST_AT_SPAWN.contains(profession)) return;
+        defaultFor(profession).ifPresent(def -> {
+            var comp = npc.getSpecializationComponent();
+            if (comp.assign(def, npc, true)) comp.setLocked(true);
+        });
     }
 }

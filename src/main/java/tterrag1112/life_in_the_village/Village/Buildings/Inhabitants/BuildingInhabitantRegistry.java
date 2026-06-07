@@ -118,6 +118,20 @@ public final class BuildingInhabitantRegistry {
                 .worker(Profession.PRIEST)
                 .build());
 
+        // Religion Rework R1b — chapels and shrines are now staffed. A
+        // chapel is the day-to-day village religious post; a shrine is a
+        // light devotional post. Both take a single PRIEST worker (needs
+        // separate housing, mirroring TEMPLE) — the simplest correct
+        // staffing; building-kind differentiation lives in PriestBehavior's
+        // rite-claim preference, not in distinct inhabitant shapes.
+        register(BuildingType.CHAPEL, BuildingInhabitantSpec.builder()
+                .worker(Profession.PRIEST)
+                .build());
+
+        register(BuildingType.SHRINE, BuildingInhabitantSpec.builder()
+                .worker(Profession.PRIEST)
+                .build());
+
         register(BuildingType.HEALER_HUT, BuildingInhabitantSpec.builder()
                 .worker(Profession.HEALER)
                 .build());

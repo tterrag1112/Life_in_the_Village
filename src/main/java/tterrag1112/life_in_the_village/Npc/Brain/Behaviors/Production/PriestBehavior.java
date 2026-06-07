@@ -24,6 +24,7 @@ import tterrag1112.life_in_the_village.Npc.Religion.RiteExecution;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecutor;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteOutcome;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteTier;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
 import tterrag1112.life_in_the_village.Profession.Profession;
@@ -86,6 +87,8 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
     private int timer;
     private int idleCooldown;
     private long lastBlessTick = Long.MIN_VALUE;
+    /** R1b order seam — last-seen specialization id, for change-only debug. */
+    private net.minecraft.resources.Identifier lastOrderId;
 
     public PriestBehavior() {
         super(ImmutableMap.of(MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED), 24000);
@@ -144,12 +147,12 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
     }
 
     private void analyze(ServerLevel level) {
-        // Specialization seam (stub): identical for every kind in the
-        // foundation; the religion rework differentiates here (chapel →
-        // day-to-day weddings/funerals, temple → grand rites, etc.).
-        switch (kindOf(building)) {
-            case TEMPLE, CHAPEL, SHRINE, OTHER -> { /* identical for now */ }
-        }
+        // Specialization seam (R1b): resolve the priest's order so the
+        // content/multi-religion phase can branch behaviour per
+        // religion-specific order without re-plumbing. Generalist
+        // (priest/cleric) today — a no-op beyond the change-only debug
+        // trace. Runs behind idleCooldown, never per-tick.
+        readOrderSeam();
 
         RiteExecution rite = findClaimableRite(level);
         if (rite != null) {
@@ -199,6 +202,17 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
                 .flatMap(n -> VillageSavedData.get(level).getVillageByName(n)).orElse(null);
         if (v == null) return null;
         UUID me = entity.getUUID();
+        TempleKind kind = kindOf(building);
+        // Building-kind rite preference (R1b): among all due, claimable,
+        // capability-permitted rites in this priest's village, prefer the
+        // tier this building specializes in. This is preference ordering,
+        // NOT a second gate — R1a canOfficiate remains the only hard limit,
+        // so a lone qualified priest still performs everything (the best by
+        // preference is simply chosen first). Ties keep the earliest-due
+        // rite (stable: a strictly-better rank must beat the incumbent),
+        // so OTHER buildings reproduce the prior first-due behaviour.
+        RiteExecution best = null;
+        int bestRank = Integer.MAX_VALUE;
         for (RiteExecution r : RiteSavedData.get(level).dueRites(level.getGameTime())) {
             if (!v.getId().equals(r.villageId())) continue;
             UUID presider = r.presidingPriestId().orElse(null);
@@ -208,9 +222,46 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             // ceremony for an unseated low-skill priest) is left unclaimed
             // for a qualified officiant. Same helper RiteExecutor consults.
             if (!RiteCapability.canOfficiate(entity, r.type())) continue;
-            return r;
+            int rank = tierPreferenceRank(kind, RiteTier.tierOf(r.type()));
+            if (rank < bestRank) { bestRank = rank; best = r; }
         }
-        return null;
+        return best;
+    }
+
+    /** Building-kind rite-claim preference: lower rank = claimed first.
+     *  Layers on the R1a capability gate; never relaxes or tightens it. */
+    private static int tierPreferenceRank(TempleKind kind, RiteTier tier) {
+        return switch (kind) {
+            // Seat of grand ceremony: GRAND first, then STANDARD, then MINOR.
+            case TEMPLE -> switch (tier) {
+                case GRAND -> 0; case STANDARD -> 1; case MINOR -> 2;
+            };
+            // Day-to-day village religious life: STANDARD life-events and
+            // MINOR first; GRAND deprioritized (still allowed if pending).
+            case CHAPEL -> switch (tier) {
+                case STANDARD -> 0; case MINOR -> 1; case GRAND -> 2;
+            };
+            // Light devotional post: the fallback for routine MINOR rites.
+            case SHRINE -> switch (tier) {
+                case MINOR -> 0; case STANDARD -> 1; case GRAND -> 2;
+            };
+            // No preference — earliest-due wins (prior behaviour).
+            case OTHER -> 0;
+        };
+    }
+
+    /** Specialization-order seam (R1b). Resolves the priest's spec id and
+     *  debug-logs only on change. Generalist (priest/cleric) is a no-op
+     *  today; the content phase branches behaviour here by order. */
+    private void readOrderSeam() {
+        net.minecraft.resources.Identifier id =
+                entity.getSpecializationComponent().currentId().orElse(null);
+        if (id != null && !id.equals(lastOrderId)) {
+            lastOrderId = id;
+            org.slf4j.LoggerFactory.getLogger(PriestBehavior.class)
+                    .debug("[PriestBehavior] {} officiates as order {}",
+                            entity.getNpcName(), id);
+        }
     }
 
     private void tickWalkToRite(ServerLevel level) {

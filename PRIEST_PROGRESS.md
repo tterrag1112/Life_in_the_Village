@@ -322,3 +322,193 @@ Runtime-sensitive (office seating, skill levels) — wants an in-game check.
 7. No movement freeze / brain-tick error (no new memory); `/tick` shows
    no per-tick regression (the gate is a map-get + two skill reads at
    claim time, behind the existing `idleCooldown`).
+
+---
+
+## Religion Rework — Phase R1b: Building-role differentiation + chapel/shrine staffing + specialization seam
+
+Builds on R1a (the rite-capability gate). This phase differentiates what
+a priest does by which religious building they staff, makes chapels and
+shrines actually staffed, and lays the priest specialization seam the
+content phase (religion-specific orders) will extend. Scope is those
+three things only — no concrete orders, no rite-venue relocation, no
+initiation/apprenticeship, no layout/placement work.
+
+### Disposition (investigation — tree verified, two mismatches reported)
+
+Verified in-tree before coding; two prompt summaries did NOT match and
+are handled accordingly:
+
+- **`BuildingType.forProfession` does not exist** — the actual mapping is
+  `Profession.professionFor(BuildingType)`, and it already returns PRIEST
+  for `TEMPLE, CHAPEL, SHRINE` (Profession.java:146). So the profession
+  side needs no change; only the inhabitant specs were missing.
+- **The "existing inhabitant-spawn locked-spec assignment path … as used
+  for shepherd/beekeeper" does not exist in the tree.** Grepping every
+  `.assign(`, `setLocked(true)`, and `FARMER_SHEPHERD/BEEKEEPER` write
+  site: the only locked-spec assignment is the `/liv npc lockspec` admin
+  command and the combat-role/legacy-NBT paths. `VillageInhabitantPopulator`
+  and `FarmRoleAssigner` only *read* locked specs; nothing auto-assigns a
+  locked spec at spawn. The `NpcSpecializationComponent` javadoc ("Locks
+  are set by BuildingInhabitantRegistry initial spawn assignment") is
+  aspirational — that code was never written. So shepherd/beekeeper specs
+  are operator-set today, not worldgen-set. **This phase adds the first
+  real spawn-time assignment route**, centralized in the specialization
+  registry (not open-coded per-profession) so it is the single canonical
+  path future professions/orders reuse.
+
+Confirmed accurate: `PriestBehavior.TempleKind` (TEMPLE/CHAPEL/SHRINE/
+OTHER) + `kindOf` + the identical-arms `analyze()` switch (the seam);
+`findClaimableRite` gated by `RiteCapability` (R1a); `RiteTier.tierOf`;
+`BuildingInhabitantSpec` builder API (`.worker/.resident/.household/
+.workerHousehold/.build`); TEMPLE entry `builder().worker(PRIEST).build()`;
+`NpcSpecializationTypes` register/`defaultFor` + `FARMER_MIXED`/
+`ADVENTURER_ROOKIE` generalist pattern; `NpcSpecializationComponent.assign(
+def, owner, force)` + `setLocked`; `SpecializationGate.qualifies`.
+
+### What shipped
+
+**1. Building-role differentiation — rite-claim preference (`PriestBehavior`).**
+Replaced the dead identical-arms `analyze()` switch. `findClaimableRite`
+now scans all due / claimable / capability-permitted rites in the
+priest's village and picks the best by a building-kind preference rank
+(`tierPreferenceRank(TempleKind, RiteTier)`), lowest rank first, ties
+keeping the earliest-due rite:
+- TEMPLE → GRAND (0), STANDARD (1), MINOR (2)
+- CHAPEL → STANDARD (0), MINOR (1), GRAND (2)
+- SHRINE → MINOR (0), STANDARD (1), GRAND (2)
+- OTHER → 0 for all (earliest-due wins — exactly the prior behaviour)
+
+This is preference ordering, NOT a second gate: R1a `canOfficiate`
+remains the only hard limit, so a lone qualified priest still performs
+everything (the single candidate is trivially "best"). Still the single
+claim path — `analyze` claims the chosen rite via `withPresider(me)` as
+before; no second claim route, no duplicated capability check.
+
+**2. Chapel & shrine staffing (`BuildingInhabitantRegistry`).** Added
+`CHAPEL → worker(PRIEST)` and `SHRINE → worker(PRIEST)`. A manually
+spawned chapel/shrine now populates a priest. Both use a single PRIEST
+worker (needs separate housing, mirroring TEMPLE) — the simplest correct
+staffing; building-kind differentiation lives in the claim preference,
+not in distinct inhabitant shapes.
+
+**3. Specialization seam (generalist only).**
+- Registered `PRIEST_CLERIC` (`lit:priest/cleric`, Profession.PRIEST,
+  `isGeneralist=true`, no requirements, `SpecializationData.None`) —
+  mirrors `FARMER_MIXED`.
+- Added `NpcSpecializationTypes.assignInitialSpawnSpec(npc, profession)`
+  — the canonical spawn-time route. Driven by an opt-in set
+  `LOCK_GENERALIST_AT_SPAWN = { PRIEST }`; for opted-in professions it
+  assigns the generalist via the canonical component API
+  (`assign(force=true)` + `setLocked(true)`), no-op otherwise. Called once
+  per spawned NPC from `VillageInhabitantPopulator.spawnNpcInBuilding`
+  (after `changeProfession`, which does not touch specialization).
+- `PriestBehavior.readOrderSeam()` resolves the spec id each `analyze`
+  (behind `idleCooldown`, never per-tick) and DEBUG-logs only on change.
+  Generalist is a no-op today; the content phase branches behaviour here.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `Profession.professionFor` already maps CHAPEL/
+  SHRINE/TEMPLE → PRIEST (untouched). The populator now runs for CHAPEL/
+  SHRINE (new specs) and calls `assignInitialSpawnSpec` for every spawned
+  NPC; only PRIEST acts on it.
+- **Downstream callers** — `findClaimableRite` has one caller (`analyze`);
+  selection logic changed, claim path unchanged. Single-priest case does
+  not regress (best-of-one = the one). OTHER-kind buildings reproduce the
+  prior first-due pick exactly (all ranks 0, stable tie-break).
+- **Sibling systems** — Specialization: the locked generalist is scoped
+  to PRIEST, which has no auto-promotion path, so it cannot block
+  `trySetSpecialization` (the BLACKSMITH/FARMER bias-not-gate auto-promote
+  flow). Farmers are deliberately excluded from the opt-in set, so
+  `FarmRoleAssigner`'s locked-spec pinning sees no new locks and is
+  unchanged. R1a gate: preference layers on top, never bypasses it.
+- **Exhaustive switches** — new `tierPreferenceRank` switches over both
+  `TempleKind` (4 arms) and `RiteTier` (3 arms) — all covered, compiler-
+  enforced. `kindOf`'s `BuildingType` switch unchanged. The `Rite`
+  switches (`RiteExecutor.runOne`, `PriestBehavior.riteLabel`,
+  `RiteLifeEventProducer`) are untouched.
+
+### Simplification Sweep
+
+Classes in scope: `PriestBehavior` (differentiation now real — the
+`TempleKind` stub is no longer a placeholder; removed the dead identical-
+arms switch), `NpcSpecializationTypes` (+priest spec, +canonical spawn
+route), `BuildingInhabitantRegistry` (+2 entries), `VillageInhabitant
+Populator` (+1 call). No orphans introduced; the spawn-assignment route is
+centralized in one helper rather than open-coded at the call site, so it
+is the single path, not a parallel mechanism.
+
+### Memory safety
+
+No new brain `MemoryModuleType`. `PriestBehavior` still writes only
+`WALK_TARGET` and reads/sets `NO_ACTIONABLE_WORK` (both already in
+`TownspersonMob.brainMemories()`). No freeze risk.
+
+### Deviations from prompt
+
+- **No reusable spawn-time locked-spec path existed to reuse** (see
+  disposition). Rather than open-code a priest special-case in the
+  populator, added `NpcSpecializationTypes.assignInitialSpawnSpec` as the
+  canonical, opt-in route (currently PRIEST-only) and called it once from
+  the populator. This *is* the "single path, no parallel mechanism" the
+  constraint intends — it just had to be created, not reused.
+- **`BuildingType.forProfession` → `Profession.professionFor`** naming
+  mismatch; the real API already maps CHAPEL/SHRINE/TEMPLE → PRIEST, so no
+  profession-side change was needed.
+- **Order seam is a DEBUG-log-on-change read**, not a no-op, so the seam
+  is demonstrably exercised; analyze runs behind `idleCooldown`, so no
+  hot-loop spam.
+
+### Out-of-scope but flagged
+
+- Concrete religion-specific **orders/branches** — content/multi-religion
+  phase; they register as gated `PRIEST_*` siblings and assign over the
+  locked generalist with `force=true`.
+- **Rite-venue relocation** (chapel physically hosting a wedding) —
+  congregation/attendance phase. This phase changes which priest
+  claims/prefers a rite, not where it is located.
+- Initiation rite + apprenticeship arc — R1c.
+- **Non-populator priest hires don't yet get the generalist spec.** Only
+  the worldgen/manual populator path calls `assignInitialSpawnSpec`; a
+  priest created by `VillageLeaderBehavior.assignProfessions` (leader hires
+  an unemployed NPC into PRIEST) spawns spec-less. The order seam no-ops
+  gracefully (null id → skip). Wiring the leader-hire / career-change path
+  is deferred — out of this phase's "buildings spawned manually" scope.
+- Multi-priest claim race (two priests picking the same rite before either
+  persists the claim) is unchanged from R1a — preference *reduces* it
+  (different kinds prefer different tiers) but the persisted-claim +
+  re-fetch-PENDING guard remains the backstop.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (neoform-runtime POM 403);
+all in-game testing is the user's. Static review: `tierPreferenceRank`
+covers all TempleKind×RiteTier arms (compiler-exhaustive); `PRIEST_CLERIC`
+registered before `assignInitialSpawnSpec` reads it via `defaultFor`;
+populator call sits after `changeProfession` (which leaves specialization
+untouched); locked generalist scoped to PRIEST so no auto-promotion
+regression; no new brain memory; `RiteTier` import added, `Identifier`/
+`LoggerFactory` used fully-qualified.
+
+### Smoke test
+
+1. Manually spawn a TEMPLE, a CHAPEL, and a SHRINE in one village (e.g.
+   `/liv` building spawn or world-edit the building types), then trigger
+   population. Confirm each building now spawns a PRIEST.
+2. `/liv npc` (or the spec readout) on each new priest → confirms the
+   `lit:priest/cleric` specialization, **locked**.
+3. Seat/skill the priests so each is qualified for the relevant tiers
+   (e.g. seat the temple priest as `village_priest` for GRAND; ensure
+   SOCIAL/LITERACY ≥ 30 for STANDARD), so capability is not the variable
+   under test.
+4. Schedule a mix in that village: `/religion rite FEAST_DAY <p>` (GRAND),
+   `/religion rite MARRIAGE <p>` (STANDARD), `/religion rite BLESSING <p>`
+   (MINOR). Confirm the TEMPLE priest claims FEAST_DAY first, the CHAPEL
+   priest takes the MARRIAGE life-event, and the SHRINE priest takes the
+   BLESSING — `/liv npc brain` shows "Officiating <rite>" per priest.
+5. Remove all but one priest (e.g. only the SHRINE priest, made GRAND-
+   qualified) and re-schedule the GRAND rite: confirm the lone qualified
+   priest still performs it — preference, not a gate.
+6. No movement freeze / brain-tick error (no new memory); `/tick` shows no
+   per-tick regression (preference is a bounded scan behind `idleCooldown`).
