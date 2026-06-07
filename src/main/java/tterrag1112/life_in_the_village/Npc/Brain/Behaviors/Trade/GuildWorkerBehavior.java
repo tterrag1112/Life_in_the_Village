@@ -92,8 +92,8 @@ public class GuildWorkerBehavior extends Behavior<TownspersonMob> {
         newQuests.forEach(guildData::addQuest);
         data.updateGuild(guild.withRefresh(level.getGameTime()));
 
-        System.out.println("Guild refreshed "
-                + newQuests.size() + " quests");
+        org.slf4j.LoggerFactory.getLogger(GuildWorkerBehavior.class).debug(
+                "Guild refreshed " + newQuests.size() + " quests");
     }
 
     private void checkQuestProgress(ServerLevel level,

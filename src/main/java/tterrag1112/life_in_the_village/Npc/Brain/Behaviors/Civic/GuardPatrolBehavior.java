@@ -291,7 +291,8 @@ public class GuardPatrolBehavior extends Behavior<TownspersonMob> {
         entity.setAssignedPost(post.orElse(null));
 
         if (post.isPresent()) {
-            System.out.println("GuardPatrolGoal: "
+            org.slf4j.LoggerFactory.getLogger(GuardPatrolBehavior.class).debug(
+                    "GuardPatrolGoal: "
                     + entity.getNpcName()
                     + " assigned to post at "
                     + post.get().toShortString());

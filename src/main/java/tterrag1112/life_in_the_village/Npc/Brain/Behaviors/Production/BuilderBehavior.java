@@ -632,7 +632,8 @@ public class BuilderBehavior extends Behavior<TownspersonMob> {
                 data.removeExpansionRequest(currentExpansion.getId());
 
             } catch (Exception e) {
-                System.out.println("BuilderGoal: failed to place "
+                org.slf4j.LoggerFactory.getLogger(BuilderBehavior.class).debug(
+                        "BuilderGoal: failed to place "
                         + type + " — " + e.getMessage());
                 failExpansion(level);
             }
@@ -722,7 +723,8 @@ public class BuilderBehavior extends Behavior<TownspersonMob> {
 
                     inv.setItem(i, ItemStack.EMPTY);
                 } else {
-                    System.out.println("Builder: stockpile full, could not return "
+                    org.slf4j.LoggerFactory.getLogger(BuilderBehavior.class).debug(
+                            "Builder: stockpile full, could not return "
                             + stack.getItem());
                 }
             }
@@ -770,7 +772,8 @@ public class BuilderBehavior extends Behavior<TownspersonMob> {
 
         VillageDecorator.decorateExpansionBuilding(level, newBuilding, village, data);
 
-          System.out.println("BuilderGoal: connected expansion road to "
+          org.slf4j.LoggerFactory.getLogger(BuilderBehavior.class).debug(
+                                 "BuilderGoal: connected expansion road to "
                                  + newBuilding.getType() + " — "
                                  + newBuilding.getName());
       }

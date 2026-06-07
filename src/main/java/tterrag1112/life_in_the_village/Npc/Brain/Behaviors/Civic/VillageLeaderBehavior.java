@@ -225,7 +225,8 @@ public class VillageLeaderBehavior extends Behavior<TownspersonMob> {
         if (collected > 0) {
             village.depositToTreasury(collected);
             VillageSavedData.get(level).setDirty();
-            System.out.println("Village leader collected "
+            org.slf4j.LoggerFactory.getLogger(VillageLeaderBehavior.class).debug(
+                    "Village leader collected "
                     + CurrencyValue.of(collected)
                     + " into " + village.getName() + " treasury. "
                     + "Total: " + village.getTreasury());

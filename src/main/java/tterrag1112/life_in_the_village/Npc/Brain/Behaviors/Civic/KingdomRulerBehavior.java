@@ -185,7 +185,8 @@ public class KingdomRulerBehavior extends Behavior<TownspersonMob> {
         ).stream().limit(3).forEach(guard -> {
             // Set guard's assigned village to threatened village
             guard.setAssignedVillageName(threatened.getName());
-            System.out.println("Kingdom ruler sending guard "
+            org.slf4j.LoggerFactory.getLogger(KingdomRulerBehavior.class).debug(
+                    "Kingdom ruler sending guard "
                     + guard.getNpcName() + " to defend "
                     + threatened.getName());
         });

@@ -253,7 +253,8 @@ public class ChildBirthBehavior extends Behavior<TownspersonMob> {
                                     data.markDirty();
                                 }));
 
-        System.out.println("ChildBirthGoal: " + child.getNpcName()
+        org.slf4j.LoggerFactory.getLogger(ChildBirthBehavior.class).debug(
+                "ChildBirthGoal: " + child.getNpcName()
                 + " born to " + entity.getNpcName()
                 + " in " + entity.getAssignedVillageName().orElse("unknown"));
     }

@@ -112,7 +112,8 @@ public class WorkshopStallDecisionGoal extends Goal {
                 .ifPresent(stall -> {
                     data.addMarketStall(stall);
                     MarketStallPlacer.assignGoalIfNpc(level, stall);
-                    System.out.println("[WorkshopStallDecisionGoal] "
+                    org.slf4j.LoggerFactory.getLogger(WorkshopStallDecisionGoal.class).debug(
+                            "[WorkshopStallDecisionGoal] "
                             + entity.getNpcName() + " claimed stall "
                             + stall.getSlotIndex() + " in "
                             + market.getName());

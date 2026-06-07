@@ -69,6 +69,21 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
             LAST_INTERIOR_WANDER = register("last_interior_wander", Codec.LONG);
 
+    /** Liveliness L1 — TTL cool-down between idle-director action picks. */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            IDLE_DIRECTOR_COOLDOWN = register("idle_director_cooldown", Codec.LONG);
+
+    /**
+     * Liveliness L1 — the "work-satisfied" signal. Present (TTL) when a
+     * production behavior has gone idle for a STRUCTURAL reason (no inputs /
+     * output full / no viable recipe), i.e. there is no actionable primary
+     * task right now. The idle director gates on this during WORK so it
+     * fills the gap without pre-empting a runnable production cycle.
+     * Transient (no codec) — purely a runtime signal.
+     */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Boolean>>
+            NO_ACTIONABLE_WORK = registerNoCodec("no_actionable_work");
+
     /** TTL cool-down memory: present → recently nudged for personal space. */
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
             LAST_PERSONAL_SPACE_NUDGE = register("last_personal_space_nudge", Codec.LONG);
