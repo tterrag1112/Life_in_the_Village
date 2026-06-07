@@ -353,6 +353,11 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
     private void analyze(ServerLevel level) {
         entity.setCurrentActivity("Planning farm work...");
+        // Liveliness L1b — optimistic clear of the work-satisfied signal: if
+        // this analyze commits to a work phase it stays cleared (so the idle
+        // director won't hijack a working farmer in WALK_TARGET-absent gaps);
+        // if it ends in goIdle() the signal is re-set there.
+        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
 
         VillageSavedData data = VillageSavedData.get(level);
 
@@ -1542,7 +1547,13 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
-        entity.clearCurrentActivity();
+        // Liveliness L1b — idle for lack of runnable farm work: hold the
+        // work-satisfied signal so the WORK idle director fills the gap, and
+        // record the reason for /liv npc brain. Cleared optimistically at the
+        // top of analyze() (re-set here if that analyze finds no work). goIdle
+        // SETS (never erases), so stop() calling it can't wipe the signal.
+        entity.setActivityState(ActivityState.IDLE.withBlocking("no farm work available"));
+        entity.getBrain().setMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
     }
 
     /**

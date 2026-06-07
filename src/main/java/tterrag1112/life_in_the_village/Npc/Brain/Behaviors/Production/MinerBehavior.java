@@ -6,6 +6,7 @@ import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
+import tterrag1112.life_in_the_village.Entities.ActivityState;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import net.minecraft.server.level.ServerLevel;
@@ -72,6 +73,9 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void start(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
+        // Liveliness L1b — committing to walk to the mine is real work; clear
+        // the work-satisfied signal (re-set by goIdle if mining can't proceed).
+        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
         phase = Phase.WALKING_TO_MINE;
         miningTimer = 0;
         nextYieldTick = 100; // short initial delay before first yield
@@ -254,6 +258,12 @@ public class MinerBehavior extends Behavior<TownspersonMob> {
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
         entity.setItemInHand(InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        // Liveliness L1b — idle for lack of minable ore (or no pickaxe): hold
+        // the work-satisfied signal so the WORK idle director fills the gap,
+        // and record the reason for /liv npc brain. Cleared at work-start
+        // (start → WALKING_TO_MINE). goIdle SETS (never erases) → stop() safe.
+        entity.setActivityState(ActivityState.IDLE.withBlocking("no minable ore / no pickaxe"));
+        entity.getBrain().setMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
     }
 
     private ItemStack firstOreStack() {
