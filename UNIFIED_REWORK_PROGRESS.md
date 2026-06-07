@@ -8895,3 +8895,82 @@ overlap-rejected sweep (center ~`[100,106]`); scan 150 covers villageRadius 120 
 1.0625 (≈127.5) + footprint; dumper synced; `StrategySelector` has no scan-radius ref; no new
 enum/codec/switch. The `villageRadius`-normalized scoring is flagged for in-world observation,
 not retuned.
+
+### 2026-06-06 — 4c-a fix-up #2: workshop block sized from available (placeable) crafts
+
+The cap-relax landed a genuinely good CITY (districts + courtyard precincts + green-commons +
+parks + civic + market all render, viable, 1559ms, scan-150 clean, `residential band [59,99]
+active=true fitsCourtyard=true`). But workshops still seated **0/10** (`block=36×36`). This
+fix-up removes the concrete cause: the block was sized from unplaceable craft types.
+
+**Root cause (confirmed):** `reserveWorkshopDistricts` sized `wMaxDim` by walking the **static
+`CRAFT_SET`** — including `MILLER`/`WAREHOUSE`, which have **no authored NBT** (logged
+`unavailable (no NBT): [WELL, MILLER, WAREHOUSE]`, absent from `selection`). For a missing NBT
+`StructureSizeCache` returns the **32×32 fallback** footprint (+ the `CultureResolver`/
+`StructureSizeCache` ERROR spam), so `wMaxDim=32` → 36×36 block, even though every authored
+craft (blacksmith/bakery/carpentry/stockpile) is **20×16**. The asymmetry was the bug:
+`workshopCount` already used `selection` (=10), but the sizing loop used `CRAFT_SET`.
+
+**The fix (one loop):** size `wMaxDim` from `CRAFT_SET ∩ selection` (the available crafts):
+`wMaxDim=20` → `wPitch=22` → `whalf=12` → a **24×24 block** (reach 12). Kills the MILLER/
+WAREHOUSE sizing ERROR spam and roughly halves the block. Verified the sizing loop was the only
+place walking the full `CRAFT_SET` for geometry — the count, the `getBatch` route, and the
+`workshopGated` scorer check are all membership tests on the live type, unaffected.
+
+**⚠ Expected to be NECESSARY-BUT-MAYBE-NOT-SUFFICIENT (flagged per the prompt's contingency):**
+with residential correctly filling `[59,99]` at cap 120, the outer ring `[99,120]` is only
+**~21 deep** — thinner than even a 24×24 block. So workshops can only seat where the sweep's
+`+π/8` bearings find **band-internal gaps** the courtyards/greens didn't claim (the overlap
+reject keys off actual gates, not the band radius, so a small block CAN land in a gap). If the
+band is too densely filled, workshops stay 0 — in which case the next step (a **separate**
+follow-up, not built here) is to **seat the workshop band BEFORE the residential green-fill** so
+workshops claim band-gap sectors directly (interleave) rather than chasing a too-thin outer
+ring. Kept this fix-up to the sizing correction, as directed.
+
+**Surface area:** 1 edit (the sizing loop).
+
+**Files modified:**
+- `.../Village/Planning/V2/Layer4/PhasedPlanner.java` (`reserveWorkshopDistricts` sizing loop:
+  `CRAFT_SET` → `CRAFT_SET ∩ selection`).
+
+**Tie-In Audit:**
+- *Touched surface:* the `wMaxDim` sizing loop (block geometry only).
+- *Downstream:* a smaller reserved AABB — `seatDistrict` overlap-reject / `workshopGates` /
+  router / `OverlapAuditor` just see a smaller box (no contract change); `workshopGated`
+  unchanged; economy/NPC unaffected. The MILLER/WAREHOUSE `StructureSizeCache`/`CultureResolver`
+  ERROR during workshop sizing disappears (other paths that size unavailable types, if any, are
+  unaffected by this change).
+- *Exhaustive switches:* none.
+
+**Simplification Sweep:** one loop bound corrected; no new machinery. Net flat.
+
+**Deviations from prompt:** none — the sizing correction is exactly the one change. Could not
+build/spawn (sandbox 403 + no runtime) — static review only; the `seated` count + ERROR-spam
+removal need an in-world spawn.
+
+**Out-of-scope but flagged:**
+- **Interleave-before-green-fill** — the contingency if workshops still seat 0 (residential
+  fills the band, outer ring ~21 < 24): seat the workshop band before the green-fill so it
+  claims gap sectors. A separate follow-up; NOT built here.
+- 4c-b craft-quarter look (multi-craft precincts, arrangement). MILLER/WAREHOUSE/WELL NBT
+  authoring (content gap — Garrett's call). Flag-OFF farm-payoff validation (pending). Tiled
+  variants (Phase 4).
+
+**Cumulative pending verification:** all prior phases + 4c-a + the cap relax + now the sizing
+fix. **Needs an in-world spawn** to confirm the 24×24 block, the ERROR-spam removal, and the
+`seated` count (→ if 0, the interleave follow-up).
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403 + no runtime). Static review done.
+2. `/litv spawn` CITY (flag on) → `workshop districts: … block=24×24` (≈), NO MILLER/WAREHOUSE
+   `StructureSizeCache`/`CultureResolver` ERROR during workshop sizing; report `seated`. Civic /
+   residential band [59,99] / courtyards / parks / market unchanged; viable; spawn time ~same.
+3. If `seated > 0` → workshops in the band; if still 0 → the interleave follow-up is next
+   (flagged).
+4. `/litv spawn` TOWN → sane.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net + no
+runtime). Static review: the sizing loop now iterates `selection` filtered by `CRAFT_SET`
+(matching `workshopCount`), so no-NBT MILLER/WAREHOUSE no longer inflate `wMaxDim` (20 not 32)
+→ 24×24 block; the loop was the only full-`CRAFT_SET` geometry walk (count/route/gate are
+membership tests); no contract/enum/codec change.

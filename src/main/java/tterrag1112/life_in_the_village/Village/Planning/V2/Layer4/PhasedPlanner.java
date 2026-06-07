@@ -2212,9 +2212,15 @@ public final class PhasedPlanner {
             return;
         }
         BlockPos anchor = state.ctx.anchor();
-        // Size from the LARGEST craft footprint so any craft fits its precinct.
+        // Size from the largest AVAILABLE craft footprint — the craft types
+        // actually in `selection` (CRAFT_SET ∩ selection). 4c-a fix-up #2: the
+        // static CRAFT_SET includes no-NBT types (MILLER/WAREHOUSE) for which
+        // StructureSizeCache returns the 32×32 fallback, which inflated the block
+        // ~2× (36×36) so it never fit the band — and spammed the resolver ERROR.
+        // Authored crafts are 20×16 → a 24×24 block that can seat.
         int wMaxDim = 0;
-        for (BuildingType t : CRAFT_SET) {
+        for (BuildingType t : selection) {
+            if (!CRAFT_SET.contains(t)) continue;
             StructureSizeCache.FootprintInfo f = defaultFootprint(state, t);
             wMaxDim = Math.max(wMaxDim, Math.max(f.width(), f.length()));
         }
