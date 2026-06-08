@@ -1661,18 +1661,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                                 .FollowEscortLeaderBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .ElderlyRelaxBehavior(),
-                        // Phase 6.4.5 + 6.6.6 — opportunistic homestead-skill behaviors.
-                        // Each self-gates on workstation presence (where applicable),
-                        // family stock, and motive (economic OR LEISURE-hobby).
-                        // Universal (no profession restriction) — any seeded skill works.
+                        // M2 — the general homestead-production behavior. Collapses
+                        // the former four (Home{Baking,Milling,Weaving,Candlemaking})
+                        // into one behavior + table; iterates the table in the same
+                        // order, first qualifying row wins. Each row self-gates on
+                        // workstation presence (where applicable), family stock, and
+                        // motive (economic OR LEISURE-hobby). Universal (no profession
+                        // restriction) — any seeded skill works.
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .Homestead.HomeBakingBehavior(),
-                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .Homestead.HomeMillingBehavior(),
-                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .Homestead.HomeWeavingBehavior(),
-                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                .Homestead.HomeCandlemakingBehavior(),
+                                .Homestead.HomeProductionBehavior(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .PersonalSpaceBehavior(),
                         // Liveliness L2 — hobby ABOVE the idle director: LEISURE

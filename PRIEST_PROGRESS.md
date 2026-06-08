@@ -6071,3 +6071,170 @@ lists unchanged; static-init order safe (constants before the `BY_SKILL` field).
 5. **Destinations unchanged.** Profession output still routes to building/market
    (miller→stockpile), homestead output still to the household. Nothing observable
    changed — only the code is reorganized.
+
+---
+
+## M2 — general home-production primitive (2026-06-08)
+
+(Production Architecture, not Religion — logged here as the active branch's
+running ledger.)
+
+### Disposition (findings)
+
+Second half of the skills-first inversion. M1 moved recipes into `SkillRecipes`;
+M2 collapses the **four hand-written homestead behaviors**
+(`Home{Baking,Milling,Weaving,Candlemaking}Behavior`) into **one
+`HomeProductionBehavior` + a `skill → HomeCraft` table** that reproduces the four
+crafts identically. After this, a new home craft is a table row, not a behavior
+class — which makes R6's monastic crafts cheap.
+
+**Per-craft parameter table (extracted verbatim — proves the table captures all
+four exactly):**
+
+| craft | skill (≥1) | amenities (pref order) | recipe (SkillRecipes) | need good = `recipe.output()` | per-member | econ < | hobby id | XP |
+|---|---|---|---|---|---|---|---|---|
+| Baking | BAKING | SMOKER, FURNACE | WHEAT_TO_BREAD (3 wheat→1 bread, 200t) | BREAD | 4 | 150 | `home_cooking` | 2 |
+| Milling | MILLING | GRINDSTONE | GRIND_WHEAT (2 wheat→3 flour, 80t) | WHEAT_FLOUR | 4 | 150 | *(none → bare LEISURE)* | 2 |
+| Weaving | WEAVING | LOOM | SPIN_STRING (4 string→1 wool, 60t) | WHITE_WOOL | 2 | 150 | `home_weaving` | 2 |
+| Candlemaking | CANDLEMAKING | *(none)* | MAKE_TORCH (1 stick+1 coal→4 torch, 40t) | TORCH | 4 | 150 | `home_chandlery` | 2 |
+
+**Key observations that make the generalization exact:**
+- The four share one skeleton: `checkExtraStartConditions` (not-child + nav-guard
+  + skill≥1 + house + amenity + inputs + family-need + motive) → phase machine
+  `WALKING_TO_WORKSTATION → PRODUCING → DEPOSITING → DONE`. Candlemaking is the
+  sole no-workstation variant (no WALKING phase; produces at the house).
+- In every craft the **family-need good is exactly `recipe.output()`**, the
+  deposited stack is `new ItemStack(recipe.output(), recipe.outputCount())`, the
+  produce duration is `recipe.ticks()`, and inputs come from `recipe.inputs()` —
+  so only the per-member threshold, amenity list, hobby id, XP, and activity
+  label vary (the table fields). Constants (ARRIVAL 4.0, WALK_SPEED 0.7,
+  CLOSE_ENOUGH 1, MAX_RUN 24000, the 600-tick nav safety abort, the WALK_TARGET
+  VALUE_ABSENT memory requirement) are identical across all four.
+- **Motive** generalizes as `economic OR hobby`, where economic =
+  `(wallet+pool) < 150` and hobby = `LEISURE && (hobbyId == null ? true :
+  pref.hasCurrent() && hobbyId.equals(pref.currentHobby()))` — the `null` arm
+  reproduces milling's bare-LEISURE motive exactly.
+- **Registration**: the four are contiguous entries in the IDLE-priority-0 list
+  (`TownspersonMob.makeBrain`, lines 1668–1675), tried in order, first-to-pass
+  wins. So the single behavior **iterates the table in that same order and picks
+  the first qualifying row** — identical selection (not "greatest need").
+
+### What shipped
+
+- **`Npc/Brain/Behaviors/Homestead/HomeProductionBehavior.java`** (new) — one
+  `Behavior<TownspersonMob>` with a nested `HomeCraft` record and a 4-row
+  `TABLE` (the exact parameters above). `checkExtraStartConditions` resolves the
+  house/household once, then iterates the table and selects the first row whose
+  skill / amenity / inputs / family-need / motive all qualify; `start` sets the
+  WALKING phase + WALK_TARGET when the row has a workstation, else jumps to
+  PRODUCING; `tick` runs the shared phase machine; `tickDepositing` consumes all
+  recipe inputs, deposits `recipe.output()` to the household via
+  `storeWithFallback`, and awards the row's skill XP.
+- **`TownspersonMob.makeBrain`** — the four `new Home*Behavior()` registrations
+  collapsed to one `new HomeProductionBehavior()` in the same IDLE/0 slot
+  (between `ElderlyRelaxBehavior` and `PersonalSpaceBehavior`, unchanged).
+- **Deleted** `HomeBakingBehavior`, `HomeMillingBehavior`, `HomeWeavingBehavior`,
+  `HomeCandlemakingBehavior`.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `SkillRecipes` (M1 recipes), `AmenityType.matches`
+   (workstation detection), `HouseholdData` (`getMemberNpcIds().size()` need +
+   `getPooledWealth()` motive), the hobby ids via `NpcHobbyPreference` +
+   `ScheduleResolver.phaseAt` (LEISURE motive). All consumed exactly as the four
+   behaviors did; no new feeder.
+2. **Downstream callers.** The brain registration (4→1, same slot/priority). No
+   other class referenced the four behavior classes by name (grep: only stale
+   explanatory comments in the production classes about why a recipe constant
+   stays public — left as-is; the 5 public aliases are retained per the prompt).
+   Household storage receives the same deposits via the same `storeWithFallback`.
+3. **Sibling systems.** The profession production behaviors are untouched (still
+   source `SkillRecipes`). The idle/liveliness chain is unchanged: the single
+   behavior occupies the former contiguous slot, so when no craft qualifies the
+   brain falls through to `PersonalSpace`/`Hobby`/`SoloDevotion`/`IdleDirector`
+   exactly as before. Skill XP routing unchanged (`SkillXp.award`).
+4. **Exhaustive switches.** No new enum; the only `switch` is the internal
+   `Phase` (4 arms, all handled). No existing exhaustive switch touched.
+   Confirmed.
+
+### Simplification Sweep
+
+Four behavior classes → one behavior + one table. No per-skill home behavior
+remains (grep confirms the four files are deleted and only
+`HomeProductionBehavior` lives in `Homestead/`). The `TABLE` is the single place
+craft params live. Classes in scope + inbound callers: `HomeProductionBehavior`
+(new; 1 inbound — the brain registration); `TownspersonMob.makeBrain` (the 4→1
+edit); the 4 deleted classes (0 remaining callers). Net −4 classes, −~600 dup
+lines (the four near-identical state machines), +1 behavior + a 4-row table.
+
+### Behavior-preservation proof
+
+Each of the four crafts is reproduced field-for-field by its table row + the
+shared skeleton: identical skill+min-level gate, identical amenity set in the
+same preference order (SMOKER→FURNACE for baking; single for milling/weaving;
+none for candlemaking), identical recipe object (the M1 `SkillRecipes` entry →
+same inputs/output/count/ticks), identical family-need check
+(`countItem(recipe.output()) < familySize × perMember`, same per-member values),
+identical economic (`wallet+pool < 150`) and hobby/LEISURE motive (including
+milling's null-hobby bare-LEISURE), identical phase machine + durations + deposit
++ XP, identical constants and memory requirement. Selection across crafts matches
+the prior first-contiguous-in-IDLE-list-wins via same-order table iteration.
+
+### Deviations from prompt
+
+- **Selection rule is "first qualifying row in table order", not "greatest
+  need".** The prompt offered greatest-need as an example, but the hard
+  behavior-preservation constraint requires reproducing the original sequential
+  IDLE-list resolution (first contiguous behavior to pass wins) — so the table is
+  ordered baking→milling→weaving→candlemaking and the first qualifying row is
+  chosen. (A greatest-need tiebreak would change which craft a multi-skilled NPC
+  does and is therefore out of bounds this phase.)
+- **The per-craft `LOGGER.info` lines collapsed into one generic log line.**
+  Logging only — no player-observable behavior change.
+
+### Out-of-scope but flagged
+
+- **R6** adds the monastic-craft rows (book-copying / beekeeping / brewing /
+  herbalism) + the monastery/monk context on top of this table.
+- **Migrating the profession production behaviors onto the primitive** is a later
+  M-step (they still run their own `AbstractProductionBehavior` machinery,
+  sourcing `SkillRecipes`).
+- A future **greatest-need / weighted** selection across qualifying rows (if the
+  first-in-order rule ever proves too rigid) — deliberately not done here.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: imports match the originals' package paths exactly; the four
+files are deleted and only `HomeProductionBehavior` remains in `Homestead/`; the
+brain edit collapses 4→1 in the same IDLE/0 slot; no remaining code reference to
+the deleted classes (only stale comments); the table reproduces every extracted
+parameter; the phase machine handles the no-workstation (candlemaking) variant;
+the motive null-hobby arm reproduces milling.
+
+### Smoke test (user-runnable)
+
+1. **Each craft, unchanged.** Give an NPC the skill + amenity for each craft and
+   deplete the family good, then confirm production exactly as in M1:
+   - BAKING ≥1 + a smoker (or furnace) + bread below 4×family + ≥3 wheat → bakes
+     bread to the household (200t), +2 BAKING.
+   - MILLING ≥1 + a grindstone + flour below 4×family + ≥2 wheat → grinds flour
+     (80t), +2 MILLING.
+   - WEAVING ≥1 + a loom + wool below 2×family + ≥4 string → spins white wool
+     (60t), +2 WEAVING.
+   - CANDLEMAKING ≥1 + (no workstation) + torches below 4×family + ≥1 stick & ≥1
+     coal → makes 4 torches at the house (40t, no walk), +2 CANDLEMAKING.
+2. **No skill / no amenity → nothing.** An NPC without the skill, or without the
+   required amenity (baking with neither smoker nor furnace; milling with no
+   grindstone; weaving with no loom), does not produce that craft.
+3. **Both motives.** Confirm the economic motive fires when `wallet+pool < 150`
+   (even outside LEISURE), and the hobby motive fires during LEISURE with the
+   matching hobby (`home_cooking`/`home_weaving`/`home_chandlery`), and milling
+   fires on bare LEISURE — all exactly as before.
+4. **Multi-skill NPC picks in order.** An NPC qualifying for several crafts at
+   once does baking first, then (next eligibility) milling, etc. — the same craft
+   the contiguous-behavior order produced before.
+5. **Fall-through unchanged.** With no craft eligible, the NPC proceeds to its
+   normal idle/hobby/stroll behaviors as before (the single behavior cedes the
+   slot just like the four did).
