@@ -170,19 +170,25 @@ public final class RiteExecutor {
                 ? null : TownspersonMob.findByUUID(level, ordinandId).orElse(null);
         if (ordinand == null) return RiteOutcome.DISRUPTED;
 
-        // Assign the locked clergy spec via the canonical spawn-spec route —
-        // the SAME path the populator uses (idempotent: assign(force=true) +
-        // setLocked). No third assignment mechanism. This also closes the
-        // R1b gap: leader-hired priests, never run through the populator,
-        // become ordained here.
-        tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes
-                .assignInitialSpawnSpec(ordinand, ordinand.getProfession());
+        // R3c — assign the locked clergy spec via the religion-aware order
+        // route (the SAME path the populator uses): the village religion's
+        // ORDER if it has one, else the generalist. Identity, force-assigned +
+        // locked. Closes the R1b gap (leader-hired priests become ordained
+        // here) AND gives them their faith's order.
+        ClergyOrders.assignClergyOrder(level, ordinand);
 
         // Effects mirror COMING_OF_AGE in style + magnitude: piety +0.1,
         // mood +20, OFFICIATED_BY memory + rel-with-officiant +10.
         String religionId = ordinand.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
         ordinand.getPiety().adjustBelief(religionId, 0.10f);
         ordinand.getMood().applyWithRawMagnitude(MoodTrigger.GIFT_FAVORITE, 20, now);
+
+        // R3c — initiation-into-the-order flavor: name the order when there is
+        // one ("initiated me into the Threadkeepers"), else the generalist
+        // "ordained me into the clergy".
+        String initiation = ClergyOrders.assignedOrderName(ordinand)
+                .map(order -> "initiated me into the " + order)
+                .orElse("ordained me into the clergy");
 
         // Self-ordination fallback (a lone capable priest with no separate
         // senior present): still ordain, but skip the self-referential
@@ -192,7 +198,7 @@ public final class RiteExecutor {
                     tterrag1112.life_in_the_village.Npc.Relations.RelationshipOrigin.MET_SOCIALLY);
             ordinand.getMemory().add(NpcMemory.create(MemoryType.OFFICIATED_BY,
                     List.of(priest.getUUID()), now, 80,
-                    priest.getNpcName() + " ordained me into the clergy"));
+                    priest.getNpcName() + " " + initiation));
         }
 
         // R1d — start the mentored clergy training arc. The ADULT-transition

@@ -204,6 +204,14 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         if (v == null) return null;
         UUID me = entity.getUUID();
         TempleKind kind = kindOf(building);
+        // R3c — the priest's clergy ORDER (its spec id) nudges preference toward
+        // its focus rites, composed UNDER the R1b building band: building rank is
+        // primary, order focus is a secondary tiebreak WITHIN a band (orderRank
+        // 0 = a focus rite, 1 = not). A Threadkeeper in a temple still does GRAND
+        // first, but prefers CONFESSION among same-band rites. Generalist → all
+        // orderRank 1, so no change.
+        net.minecraft.resources.Identifier orderId =
+                entity.getSpecializationComponent().currentId().orElse(null);
         // Building-kind rite preference (R1b): among all due, claimable,
         // capability-permitted rites in this priest's village, prefer the
         // tier this building specializes in. This is preference ordering,
@@ -214,6 +222,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         // so OTHER buildings reproduce the prior first-due behaviour.
         RiteExecution best = null;
         int bestRank = Integer.MAX_VALUE;
+        int bestOrderRank = Integer.MAX_VALUE;
         for (RiteExecution r : RiteSavedData.get(level).dueRites(level.getGameTime())) {
             if (!v.getId().equals(r.villageId())) continue;
             UUID presider = r.presidingPriestId().orElse(null);
@@ -224,7 +233,13 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             // for a qualified officiant. Same helper RiteExecutor consults.
             if (!RiteCapability.canOfficiate(entity, r.type())) continue;
             int rank = tierPreferenceRank(kind, RiteTier.tierOf(r.type()));
-            if (rank < bestRank) { bestRank = rank; best = r; }
+            int orderRank = tterrag1112.life_in_the_village.Npc.Religion.ClergyOrders
+                    .isFocusRite(orderId, r.type()) ? 0 : 1;
+            if (rank < bestRank || (rank == bestRank && orderRank < bestOrderRank)) {
+                bestRank = rank;
+                bestOrderRank = orderRank;
+                best = r;
+            }
         }
         return best;
     }

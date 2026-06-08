@@ -2088,3 +2088,172 @@ claim path) — wants an in-game check.
 7. Confirm DEFAULT fallback: a faith/rite with no profile (e.g. forcing
    SIGNATURE_RITE where unprofiled) applies ×1.0 mood, no relationship/treasury,
    no error.
+
+---
+
+## Religion Rework — Phase R3c: Religion-specific clergy orders
+
+R3's order layer — the branch/identity dimension of the hybrid clergy model
+(skill = capability, **specialization = order**, office = leadership). Turns
+the generic `PRIEST_CLERIC` seam into per-faith clergy identity.
+
+### Disposition (verified; findings)
+
+- The R1b/R1c/R1d/R3a seams are exactly as documented: `PRIEST_CLERIC`
+  generalist (`isGeneralist=true`); `assignInitialSpawnSpec(npc, profession)`
+  (locked generalist at spawn, the single inhabitant-spawn spec route);
+  `handleOrdination` calls it; `readOrderSeam`/`findClaimableRite`/
+  `tierPreferenceRank(TempleKind, RiteTier)`; `ReligionContent.villageReligionId`
+  (single culture→religion resolver); R1d `clergyTitle` (skill-derived rank).
+- **`assignInitialSpawnSpec` has exactly two callers** — the populator spawn +
+  `handleOrdination`. `SpecializationDef` is `(name, profession, displayName,
+  requirements, isGeneralist, extra)`; `NpcSpecializationComponent.assign(def,
+  npc, force)` + `setLocked` is the locked-assign API (orders bypass the skill
+  gate via `force=true`, like `PRIEST_CLERIC`/combat roles).
+- **No existing `Npc.Specialization → Npc.Religion` dependency** (only
+  `Npc.Religion → Npc.Specialization`, via the ordination spec assignment). So
+  the religion-aware order hub must live in `Npc.Religion` (or it would create a
+  package cycle) — `ClergyOrders` does, mirroring `ReligionContent`.
+- **Orthogonality confirmed**: R1d `clergyTitle` is `ApprenticeRank
+  .fromSkillLevel(SOCIAL)` (Initiate/Priest/Senior Priest) — independent of the
+  order spec id. The two compose as "an Initiate of the Threadkeepers".
+- **`isOrdained`** (R1c ordination trigger) = "carries any PRIEST-profession
+  specialization" — an order IS one, so orders satisfy it (no re-ordination
+  loop). No other code keys specifically on `PRIEST_CLERIC`, so a priest holding
+  an order instead breaks nothing.
+
+### Design
+
+- **Four order `SpecializationDef`s** registered in `NpcSpecializationTypes`
+  (the registry idiom), `isGeneralist=false`, no skill requirements (identity,
+  not capability): `PRIEST_DAWN` (Order of the Dawn), `PRIEST_THREADKEEPERS`,
+  `PRIEST_TIDEWARDENS`, `PRIEST_ANCESTOR_KEEPERS`. `PRIEST_CLERIC` stays the
+  generalist fallback.
+- **`Npc/Religion/ClergyOrders`** — the religion-aware hub (no cycle):
+  - `ORDERS` map (religionId → order def), keyed by the `ReligionRegistry`
+    id constants — expands cleanly to sub-orders later.
+  - `assignClergyOrder(level, npc)` — PRIEST-only; resolves the village religion
+    via `ReligionContent.villageReligionId`, assigns that religion's order
+    (locked); for an order-less religion **delegates to the existing
+    `assignInitialSpawnSpec`** (generalist) — so that route stays live (not
+    orphaned) and the generalist fallback is sparse-friendly.
+  - `assignedOrderName(npc)` — the order's display name (empty for generalist),
+    for the initiation flavor.
+  - `isFocusRite(orderId, rite)` — each order's focus rites (the behavioral
+    signature).
+- **Religion-aware assignment at BOTH points**: `handleOrdination` and the
+  populator now call `ClergyOrders.assignClergyOrder(level, npc)` instead of
+  `assignInitialSpawnSpec` directly — same two assignment points, now
+  order-aware, no third mechanism.
+- **Behavioral signature** — `findClaimableRite` composes: building band
+  (`tierPreferenceRank`) is PRIMARY; the order's focus is a SECONDARY tiebreak
+  WITHIN a band (`orderRank` 0 = focus rite, 1 = not). A Threadkeeper in a
+  temple still does GRAND rites first, but prefers CONFESSION among same-band
+  rites; a generalist's `orderRank` is always 1 → no change. Focus sets: Dawn →
+  HARVEST/FEAST, Threadkeepers → CONFESSION/PURIFICATION, Tidewardens →
+  BLESSING, Ancestor-Keepers → FUNERAL/VIGIL.
+- **Magnitude tie-in skipped (intentionally)** — the order's focus rites are
+  ALREADY per-faith-tuned by R3a `ReligionContent` (the order ≙ the religion),
+  so no extra magnitude mechanism is needed; the order's job this phase is
+  identity + the preference nudge.
+- **Initiation flavor** — `handleOrdination`'s memory now reads "initiated me
+  into the {order}" (e.g. "the Threadkeepers"), or "ordained me into the clergy"
+  for the generalist — reusing the existing memory/text path.
+
+### Tie-In Audit
+
+- **Upstream feeders** — both `assignClergyOrder` callers (populator spawn +
+  `handleOrdination`) resolve the religion via `ReligionContent.villageReligionId`
+  and assign the order; `ORDERS` keyed by `ReligionRegistry` ids.
+- **Downstream callers** — `findClaimableRite` reads the order spec id for the
+  secondary preference (the R1a capability gate + R1b building band unchanged);
+  `readOrderSeam` still resolves the spec id (now an order); `SpecializationGate`
+  is bypassed (force-locked assign, as before). `isOrdained` / `R1d clergyTitle`
+  unaffected (orthogonal). No reader keyed on `PRIEST_CLERIC` specifically.
+- **Sibling systems** — R1d apprenticeship/rank: an order-holding priest is
+  still "ordained" (any PRIEST spec) and still gets a skill-derived title;
+  R1b building preference composes as the primary key; R3a `ReligionContent`
+  provides the (unchanged) per-faith magnitudes. `assignInitialSpawnSpec`
+  retained as the generalist delegate (not deleted).
+- **Exhaustive switches** — NONE added (orders are map-driven: `ORDERS`,
+  `FOCUS`; no new enum, no new `Rite`/`EventType`). Confirmed.
+
+### Simplification Sweep
+
+The four orders are structurally identical, so they're driven from ONE
+`religionId→order` map + shared `assignClergyOrder` (not four bespoke paths) —
+mirroring `ReligionContent`. Classes in scope: `NpcSpecializationTypes` (+4
+order defs, `PRIEST_CLERIC` retained as the sole generalist), new `ClergyOrders`
+(map + assignment + focus + flavor helpers), `RiteExecutor.handleOrdination`
+(redirect + flavor), `VillageInhabitantPopulator` (redirect),
+`PriestBehavior.findClaimableRite` (composite preference). `assignInitialSpawnSpec`
+is NOT orphaned — it remains the generalist-fallback delegate. `PRIEST_CLERIC`
+is the only generalist (`isGeneralist=true`) in the priest family.
+
+### Memory safety
+
+No new brain `MemoryModuleType`. The change touches the specialization component
+(persisted spec id — the order, no new field), the narrative memory text, and a
+read-only preference in `findClaimableRite`. No `brainMemories()` change.
+
+### Deviations from prompt
+
+- **Order hub in `Npc.Religion.ClergyOrders`, and the two call sites call it**
+  (rather than literally keeping the `assignInitialSpawnSpec` name at the call
+  sites). Putting the religion-aware logic inside `assignInitialSpawnSpec`
+  (`Npc.Specialization`) would force a `Specialization → Religion` import and a
+  package cycle; the hub belongs on the religion side. The prompt's intent —
+  orders assigned at the existing two clergy-assignment points, no third
+  mechanism — is met, and `assignInitialSpawnSpec` stays live as the generalist
+  delegate (so it's reused, not bypassed).
+- **No persistent-field / codec change** — the spec id (the order) is already
+  persisted by `NpcSpecializationComponent`.
+
+### Out-of-scope but flagged
+
+- **One order per religion** (the foundation). Multiple sub-orders/branches
+  within a religion → deferred; `ORDERS` is structured (map keyed by religion)
+  to expand to `Map<String, List<SpecializationDef>>` + a selection rule.
+- **Spawn-time religion-resolution edge**: a populator-spawned founder's order
+  is resolved + LOCKED at spawn via `villageReligionId`; if the village has no
+  kingdom/culture yet (→ the system-wide SUNSTEAD default), the founder gets the
+  Dawn order, and (being pre-ordained) is never re-ordained to correct it later.
+  This is inherent to resolving religion by kingdom-culture at spawn and is
+  consistent with how the whole religion system treats culture-less villages;
+  a future "re-ordain on conversion" pass could refresh it. Flagged, not fixed.
+- Festivals → R3d (needs R2b); multi-faith → R3e; offices/ranks untouched.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: no new enum / exhaustive switch (orders are map-driven); the four
+order defs use the 6-arg `SpecializationDef` ctor (`isGeneralist=false`);
+`assignClergyOrder` is PRIEST-gated, locked, with the generalist delegate
+preserved; the composite preference keeps building band primary + order
+secondary (generalist ⇒ no change); `assignedOrderName` / `def.name()` /
+`displayName().getString()` / `currentId()` confirmed; nothing else keys on
+`PRIEST_CLERIC`. Runtime-sensitive (religion resolution timing, claim path) —
+wants an in-game check.
+
+### Smoke test
+
+1. Ordain a new (leader-hired) priest in a village of each culture (Plainfolk /
+   Silkwood / Tidereach / Highmarch). Confirm each receives the correct LOCKED
+   order: Order of the Dawn / Threadkeepers / Tidewardens / Ancestor-Keepers
+   (`/liv npc` spec readout), and the ordination memory reads "initiated me into
+   the <order>".
+2. Confirm the order nudges rite-claim preference composed with building role:
+   e.g. a Threadkeeper, given a CONFESSION and another same-band rite both
+   pending, prefers the CONFESSION; a temple Threadkeeper still does a pending
+   GRAND rite before a MINOR confession (building band primary).
+3. Confirm a founder spawned by the populator carries its village religion's
+   order (not just the generalist) — assuming the village's culture is resolved
+   at spawn.
+4. Confirm fallback: a priest whose religion has no registered order (force an
+   unknown religion) gets the generalist `PRIEST_CLERIC`, no error; the
+   ordination reads "ordained me into the clergy".
+5. Confirm the R1d clergy rank title still reads correctly alongside the order
+   (e.g. an "Initiate" by skill who is of the Tidewardens) — the two are
+   independent.
+6. No NPC freeze / brain-tick error (no new brain memory); rite officiation
+   still works (orders don't gate, only nudge).

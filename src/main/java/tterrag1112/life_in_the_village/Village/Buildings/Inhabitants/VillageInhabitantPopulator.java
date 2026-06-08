@@ -220,13 +220,13 @@ public final class VillageInhabitantPopulator {
             npc.setFamilyRole(familyRole);
             npc.assignToBuilding(building.getId(), village.getName());
 
-            // Religion Rework R1b — locked-generalist specialization at
-            // spawn (currently PRIEST → priest/cleric). No-op for every
-            // other profession; the opt-in lives in NpcSpecializationTypes,
-            // not here, so future professions extend the set rather than
-            // this call site.
-            tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes
-                    .assignInitialSpawnSpec(npc, profession);
+            // Religion Rework R1b/R3c — locked clergy specialization at spawn.
+            // For PRIEST this assigns the village religion's ORDER (R3c) — or
+            // the generalist for an order-less religion; no-op for every other
+            // profession. The religion-aware logic lives in ClergyOrders, not
+            // here.
+            tterrag1112.life_in_the_village.Npc.Religion.ClergyOrders
+                    .assignClergyOrder(level, npc);
 
             // Phase 6.3.3.q.2 / 6.3.4.1.4 — Business creation in the
             // spawn pipeline. The hook is now profession-agnostic

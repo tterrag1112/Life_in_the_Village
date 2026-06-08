@@ -176,15 +176,37 @@ public final class NpcSpecializationTypes {
             List.of(new SkillRequirement(Skill.BEEKEEPING, FOUNDATION)),
             false, SpecializationData.None.INSTANCE));
 
-    // ── Priest family (Religion Rework R1b) ───────────────────────────────
-    // Generalist-only this phase. Concrete religion-specific orders vary
-    // per religion and land in the content/multi-religion phase; they will
-    // register as gated siblings here and assign over the locked generalist
-    // via force=true (same pattern the combat-role / admin paths use).
+    // ── Priest family (Religion Rework R1b / R3c) ─────────────────────────
+    // PRIEST_CLERIC is the generalist/fallback (sparse-friendly: a religion
+    // with no registered order, or an unknown one, gets this). R3c adds one
+    // locked, assignment-driven (isGeneralist=false, no skill requirements —
+    // orders are identity, not capability) order per religion; the
+    // religionId→order map + religion-aware assignment live in
+    // {@code Npc.Religion.ClergyOrders}.
     public static final SpecializationDef PRIEST_CLERIC = register(new SpecializationDef(
             id("priest/cleric"), Profession.PRIEST,
             Component.literal("Cleric"),
             List.of(), true, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef PRIEST_DAWN = register(new SpecializationDef(
+            id("priest/dawn"), Profession.PRIEST,
+            Component.literal("Order of the Dawn"),
+            List.of(), false, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef PRIEST_THREADKEEPERS = register(new SpecializationDef(
+            id("priest/threadkeepers"), Profession.PRIEST,
+            Component.literal("Threadkeepers"),
+            List.of(), false, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef PRIEST_TIDEWARDENS = register(new SpecializationDef(
+            id("priest/tidewardens"), Profession.PRIEST,
+            Component.literal("Tidewardens"),
+            List.of(), false, SpecializationData.None.INSTANCE));
+
+    public static final SpecializationDef PRIEST_ANCESTOR_KEEPERS = register(new SpecializationDef(
+            id("priest/ancestor_keepers"), Profession.PRIEST,
+            Component.literal("Ancestor-Keepers"),
+            List.of(), false, SpecializationData.None.INSTANCE));
 
     // ── Lookup ───────────────────────────────────────────────────────────
 
