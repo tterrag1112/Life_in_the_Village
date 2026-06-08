@@ -69,6 +69,17 @@ public final class RiteScheduler {
         catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] consecration-blessing pass threw: {}", t.getMessage());
         }
+
+        // 4. R4c — couple temple financial health + village piety into building
+        // condition decay / priest abandonment (a daily per-village pass).
+        try {
+            long now = level.getGameTime();
+            for (Village v : vdata.getAllVillages()) {
+                TempleProsperity.tickVillage(level, v, vdata, now);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] temple-prosperity pass threw: {}", t.getMessage());
+        }
     }
 
     /** Groups loaded PRIEST NPCs by their village id (one entity pass). */

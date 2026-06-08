@@ -4118,3 +4118,155 @@ take avoids partial-stock waste; the candle factor composes with
 5. Confirm R4a money is unaffected by candle burning (the temple's `BuildingEconomy`
    treasury doesn't change when candles are consumed — stock and money are
    separate).
+
+---
+
+## R4c — Temple prosperity ↔ decay ↔ abandonment (2026-06-08)
+
+The R4 payoff: temple financial health (R4a) + village piety now drive the
+EXISTING `BuildingCondition` decay, plus a priest-vacate trigger. A solvent,
+devout temple flourishes (holds MAINTAINED); a sustainedly insolvent, low-piety
+one decays through the ladder and — after a long deficit window — its priest
+leaves, after which the existing resident-less path takes it to RUINED.
+Recoverable if income/piety return before abandonment.
+
+### Disposition (findings, verified on branch)
+
+- **Decay machinery** — `VillageAgingManager.tickBuildingDecay` degrades EVERY
+  non-NEW building by `BuildingCondition.degrade()` once per `DEGRADE_INTERVAL`
+  (7d), but it's gated inside `evaluateAging` which only runs every `CHECK_INTERVAL`
+  (3d), so an actual degrade fires when `currentTick` is divisible by BOTH → ~every
+  21d (slow). Builders (`BuilderMaintenanceGoal`) repair occupied buildings back
+  up, so in practice only un-repaired/abandoned buildings reach DILAPIDATED→RUINED
+  ("abandoned only"). `BuildingCondition` has `degrade()`/`repair()` + the
+  DILAPIDATED output penalty. This is the path to inject into.
+- **Insolvency signal (R4a)** — `BuildingEconomy.getTreasury()`; a temple is
+  solvent for a day when it can cover `PRIEST_DAILY_WAGE + TEMPLE_DAILY_UPKEEP`
+  (= 14). No persisted insolvency counter existed → added `daysInsolvent`.
+- **Village piety aggregate — MISMATCH: none exists.** Computed one
+  (`villagePiety` = average `primaryStrength` of loaded village residents;
+  neutral 0.4 when none loaded).
+- **Vacate mechanism** — `TownspersonMob.clearAssignedBuilding()` (sets
+  `assignedBuildingId = null`). No cleaner profession-change/migration vacate that
+  fits; used the prompt's minimal: unassign → the building is resident-less and
+  `PriestBehavior` self-disables (it gates on a non-null building).
+- **Re-staffing — MISMATCH: not automatic.** `VillageInhabitantPopulator` runs
+  ONCE at village spawn and "never repopulates" (VillageSavedData comment). So
+  recovery-BEFORE-abandonment is automatic, but re-staffing a repaired vacant
+  temple relies on the existing manual/populator path, not an auto-rehire.
+  Flagged.
+- **Cadence** — `RiteScheduler.dailyTick` runs once/day (`ReligionRiteTickSystem`
+  interval 24000) — the natural hook for a daily per-village prosperity pass.
+
+### Design / decisions
+
+- **`TempleProsperity` (new, Npc.Religion)**, called per village from
+  `RiteScheduler.dailyTick` — a religion-specific nudge that calls the SAME
+  `setCondition`/`degrade`/`repair` as `VillageAgingManager` (the prompt's allowed
+  alternative). VillageAgingManager is UNTOUCHED — its slow base decay keeps
+  running for all buildings; only religious buildings get the financial coupling,
+  so other buildings are unaffected. Avoids a Decoration→Religion dependency.
+- Per religious building, daily:
+  - **Solvency** — `treasury ≥ 14` → `resetDaysInsolvent`, else
+    `incrementDaysInsolvent` (the persisted counter).
+  - **Abandonment** — `daysInsolvent ≥ ABANDON_DAYS (21)` → `vacatePriest`
+    (`clearAssignedBuilding` on the loaded PRIEST staffing it); the now-vacant
+    temple decays to RUINED via the base path; counter reset. Last resort.
+  - **Decay** (nudge every `NUDGE_DAYS=3`) — `daysInsolvent ≥ DECAY_DAYS (7)`,
+    lowered to 4 when village piety `< LOW_PIETY (0.25)` (low piety amplifies):
+    degrade one ladder step, but a STAFFED temple bottoms at DILAPIDATED (RUINED
+    only once vacant); the recurring nudge re-degrades builder repairs so it stays
+    visibly run-down while insolvent.
+  - **Flourish** — solvent + piety `≥ HIGH_PIETY (0.5)` and not RUINED → `repair()`
+    one step toward MAINTAINED (counters base decay; the visible reward). A RUINED
+    temple is NOT auto-resurrected by piety — it recovers via builder/player repair
+    + re-staff.
+- Thresholds are bounded constants, clearly tunable. Insolvency uses a
+  forward-looking "can't cover a day's cost" check (order-independent, no
+  payment-log needed).
+
+### What shipped
+
+- `Village/Economy/BuildingEconomy.java` — `daysInsolvent` field (5th codec field,
+  `optionalFieldOf` → pre-R4c saves load at 0) + get/increment/reset.
+- `Npc/Religion/TempleProsperity.java` (new) — the financial+piety → decay/vacate
+  coupling.
+- `Npc/Religion/RiteScheduler.java` — daily per-village `TempleProsperity.tickVillage`
+  pass (pass #4 in `dailyTick`).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — R4a `BuildingEconomy` treasury (solvency); the daily
+   wage/upkeep tick (drains it); `villagePiety` (the modifier).
+2. **Downstream callers** — `BuildingCondition.degrade()/repair()` + `setCondition`
+   (the same ones VillageAgingManager uses); the DILAPIDATED output penalty
+   (layered on, NOT re-implemented — the financial driver just moves the condition,
+   the penalty is the existing consequence); `clearAssignedBuilding` (vacate) →
+   resident-less → existing RUINED path; R4b candle production/ceremonies stop
+   naturally with no priest; R2b/R3d hold no ceremonies at a vacant/RUINED temple.
+3. **Sibling systems** — other buildings' decay: UNCHANGED (the nudge only
+   processes religious buildings; VillageAgingManager untouched). R3e-2 shrines:
+   decay/abandon the SAME way (per-building economy + `isReligiousBuilding`
+   includes SHRINE). Village treasury: unaffected (this reads the building
+   economy). R4a/R4b: the money + candle deficits this consumes are unchanged.
+4. **Exhaustive switches** — no `BuildingCondition`/enum added; read/set via the
+   existing `degrade`/`repair` switches. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `TempleProsperity` (new — 1 inbound from RiteScheduler),
+  `BuildingEconomy` (+1 counter), `RiteScheduler` (1 pass). ONE hook into the
+  existing decay primitives — no parallel decay loop; abandonment reuses
+  `clearAssignedBuilding`; recovery reuses the existing builder/player repair.
+  Codec 5/16. No new enum/brain memory.
+
+### Deviations from prompt
+
+- **Coupling lives in a religion daily pass, not inside `VillageAgingManager`** —
+  the prompt's allowed alternative ("a religion-specific nudge that calls the same
+  setCondition/degrade"). Keeps other buildings' decay untouched and avoids a
+  Decoration→Religion dependency; the base decay still runs underneath.
+- **Re-staffing is NOT automatic** (the populator never repopulates). Recovery
+  BEFORE abandonment is automatic (solvency resets the counter + flourish-repair);
+  post-abandonment recovery needs the existing builder/player repair + a manual
+  re-staff. Flagged — an auto-rehire of vacant religious buildings is a clean
+  follow-up.
+- **Vacate is the minimal `clearAssignedBuilding`** — the ex-priest remains a
+  building-less PRIEST (PriestBehavior dormant) rather than being migrated/made
+  unemployed. Flagged.
+- **No village-piety aggregate existed** — added a simple loaded-resident average.
+
+### Out-of-scope but flagged
+
+- Alms / library books / recurring+player tithe → R4d. Ledger pruning → R4e.
+- Automatic re-staffing of a repaired vacant religious building (auto-rehire).
+- Fuller priest off-boarding (unemployment/migration) instead of a building-less
+  lingering PRIEST.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`BuildingEconomy` 5-arg ctor (only `create` calls it) + 5/16 codec; `repair()`
+climbs WEATHERED→MAINTAINED (flourish holds); RUINED guarded from piety
+auto-repair; `clearAssignedBuilding`/`getBounds`/`primaryStrength`/`isReligiousBuilding`
+signatures confirmed; nudge only touches religious buildings (no decay regression);
+no new enum/switch arm/brain memory.
+
+### Smoke test (user-runnable)
+
+1. Starve a temple: no offerings/tithes (economy < 14 br) and low village piety.
+   Over days, confirm `daysInsolvent` climbs; after ~7 days it degrades through the
+   ladder (every 3 days) to DILAPIDATED — faster than a normal building and even
+   with a builder around (the nudge re-degrades repairs). After ~21 insolvent days
+   the priest is unassigned (leaves the temple); the now-vacant temple goes RUINED
+   and holds no ceremonies/production.
+2. On a second temple, restore income (offerings/tithes) BEFORE day 21; confirm
+   `daysInsolvent` resets and decay stops; with high village piety + solvency,
+   confirm it climbs back to MAINTAINED (flourishing).
+3. Repair a RUINED/vacant temple via a builder/player and re-staff it (existing
+   populate path — NOT automatic); confirm it resumes production + ceremonies.
+4. Keep a temple solvent (steady offerings) in a high-piety village; confirm it
+   stays MAINTAINED (the visible reward) and never decays.
+5. Confirm NON-religious buildings' decay is unchanged (the base ~21-day cadence;
+   no financial coupling).

@@ -33,30 +33,42 @@ public final class BuildingEconomy {
                     Codec.LONG.optionalFieldOf("totalRevenue", 0L)
                             .forGetter(b -> b.totalRevenue),
                     Codec.LONG.optionalFieldOf("totalSpent", 0L)
-                            .forGetter(b -> b.totalSpent)
+                            .forGetter(b -> b.totalSpent),
+                    // R4c — consecutive days the building couldn't sustain its
+                    // upkeep+wage (drives temple decay/abandonment). Optional so
+                    // pre-R4c saves load at 0.
+                    Codec.INT.optionalFieldOf("daysInsolvent", 0)
+                            .forGetter(b -> b.daysInsolvent)
             ).apply(i, BuildingEconomy::new));
 
     private final UUID buildingId;
     private long treasury;
     private long totalRevenue;
     private long totalSpent;
+    private int  daysInsolvent;
 
     public BuildingEconomy(UUID buildingId, long treasury,
-                           long totalRevenue, long totalSpent) {
-        this.buildingId   = buildingId;
-        this.treasury     = treasury;
-        this.totalRevenue = totalRevenue;
-        this.totalSpent   = totalSpent;
+                           long totalRevenue, long totalSpent, int daysInsolvent) {
+        this.buildingId    = buildingId;
+        this.treasury      = treasury;
+        this.totalRevenue  = totalRevenue;
+        this.totalSpent    = totalSpent;
+        this.daysInsolvent = daysInsolvent;
     }
 
     public static BuildingEconomy create(UUID buildingId, long starterFunds) {
-        return new BuildingEconomy(buildingId, starterFunds, 0, 0);
+        return new BuildingEconomy(buildingId, starterFunds, 0, 0, 0);
     }
 
     public UUID getBuildingId()    { return buildingId; }
     public long getTreasury()      { return treasury; }
     public long getTotalRevenue()  { return totalRevenue; }
     public long getTotalSpent()    { return totalSpent; }
+
+    /** R4c — consecutive days this building couldn't cover its daily costs. */
+    public int  getDaysInsolvent()       { return daysInsolvent; }
+    public void incrementDaysInsolvent() { daysInsolvent++; }
+    public void resetDaysInsolvent()     { daysInsolvent = 0; }
 
     public boolean canAfford(long bronze) { return treasury >= bronze; }
 
