@@ -42,7 +42,19 @@ public final class TreasuryTickHandler {
         tterrag1112.life_in_the_village.Npc.Laws.LawTaxHooks
                 .resumeSubsidiesIfFunded(village);
 
+        // R4a — religious buildings each debit a daily upkeep ONCE (deduped here
+        // across however many clergy a building has).
+        java.util.Set<java.util.UUID> upkeepCharged = new java.util.HashSet<>();
+
         for (TownspersonMob npc : npcs) {
+            // R4a — clergy draw their wage from THEIR building's BuildingEconomy
+            // (a shrine priest from the shrine's economy), not the village
+            // treasury, and the building pays its upkeep. Civic wages below are
+            // unchanged (PRIEST returns 0 from wageForProfession).
+            if (npc.getProfession() == Profession.PRIEST) {
+                payClergyFromBuildingEconomy(npc, level, village, data, upkeepCharged);
+            }
+
             long wage = wageForProfession(npc.getProfession());
             if (wage > 0) {
                 // Kingdom law: MINIMUM_WAGE — apply floor if the village's
@@ -92,5 +104,47 @@ public final class TreasuryTickHandler {
             case MERCHANT         -> VillageTreasury.merchantWage();
             default               -> 0L;
         };
+    }
+
+    /**
+     * R4a — pays a clergy member their daily wage out of THEIR building's
+     * {@link tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy}
+     * (via {@link NpcEconomy#businessPay}, the canonical building-economy → wallet
+     * path) and debits the building's daily upkeep once. The wage is capped by
+     * what the economy can afford, so a poor temple underpays (a deficit signal
+     * for R4c — no decay yet). Civic festival boons (village treasury) are
+     * untouched.
+     */
+    private static void payClergyFromBuildingEconomy(
+            TownspersonMob npc, ServerLevel level, Village village,
+            VillageSavedData data, java.util.Set<java.util.UUID> upkeepCharged) {
+        java.util.UUID buildingId = npc.getAssignedBuildingId().orElse(null);
+        if (buildingId == null) return;
+        var economy = data.getOrCreateBuildingEconomy(buildingId);
+
+        // Wage — floored by the kingdom MINIMUM_WAGE law, capped by the economy.
+        long wage = tterrag1112.life_in_the_village.Kingdom.KingdomLawEffects
+                .applyMinimumWage(data, village.getId(),
+                        tterrag1112.life_in_the_village.Village.Economy.EconomicBalance.PRIEST_DAILY_WAGE);
+        long pay = Math.min(wage, economy.getTreasury());
+        if (pay > 0) {
+            CurrencyValue amount = CurrencyValue.of(pay);
+            // businessPay re-checks canAfford(pay) — true since pay ≤ treasury —
+            // withdraws, credits the wallet (+ visual), and marks dirty.
+            NpcEconomy.businessPay(buildingId, npc, amount, level, data);
+            tterrag1112.life_in_the_village.Entities.HouseholdWealthManager
+                    .contributeToPool(npc, amount, data);
+        }
+
+        // Upkeep — once per religious building per day.
+        if (upkeepCharged.add(buildingId)) {
+            long upkeep = Math.min(
+                    tterrag1112.life_in_the_village.Village.Economy.EconomicBalance.TEMPLE_DAILY_UPKEEP,
+                    economy.getTreasury());
+            if (upkeep > 0) {
+                economy.withdraw(upkeep);
+                data.setDirty();
+            }
+        }
     }
 }

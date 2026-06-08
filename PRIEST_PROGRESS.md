@@ -3809,3 +3809,158 @@ recovered via the R3e-2b `FAITH_KEY` stamp; `PilgrimageDeparture` wired once.
 6. Confirm this is distinct from R3e-3a visitor pilgrims (residents keep their
    name/identity and travel in; visitors spawn at the host and are transient) and
    that a save/reload mid-journey resumes + completes (R3e-3b-1 persistence).
+
+---
+
+## R4a — Temple economy core: income → temple, clergy wages, upkeep (2026-06-08)
+
+First phase of R4 (religious economy). The religious building's `BuildingEconomy`
+is now the money hub: offerings + tithes flow IN; clergy wages + a daily upkeep
+flow OUT — so a temple can run a surplus or a deficit. Civic festival boons stay
+in the village treasury (untouched).
+
+### Disposition (findings, verified on branch)
+
+- **Central question — does a worker draw a wage from its `BuildingEconomy`
+  today? NO.** The `BuildingEconomy` javadoc ("the NPC draws a wage from this
+  treasury at end of work day") is **aspirational**. The real wage paths:
+  - `TreasuryTickHandler.tick` (once/day per village, from `TickSystems`'
+    daily `%24000` gate) pays GUARD/STOCKPILE_KEEPER/INNKEEPER/MERCHANT via
+    `NpcEconomy.payWage` — from the **village treasury**. **PRIEST returns 0L**
+    (`wageForProfession` default) → clergy are unpaid today.
+  - `WorkplaceAssignmentManager.tickWeeklyPay` is **player-only** (pays from
+    thin air via `CoinHelper`).
+  - `Business.payAllWorkers` pays from the Business's own `treasuryBronze` (not
+    `BuildingEconomy`); clergy have no Business.
+  - `AbstractProductionBehavior` uses `BuildingEconomy` for production-input
+    **purchases**, not wages.
+  - `NpcEconomy.businessPay(buildingId, seller, amount, level, data)` IS the
+    canonical **building-economy → wallet** path (withdraw + credit + visual +
+    setDirty), but all-or-nothing (`canAfford(amount)`).
+- **Two balance configs (mismatch flagged):** civic wages live in the
+  `Village/Economy/Currency/EconomyBalance` registry record
+  (`Treasury(10,2,1,8,5,4,6)` — small bronze/day). The prompt directs the clergy
+  line into the static `Village/Economy/EconomicBalance` class. Followed the
+  prompt (clergy is a new line; `EconomicBalance` is the documented balance home)
+  and flagged the split.
+- **Offerings already routed:** `MakeOfferingVerb:82` —
+  `vdata.getOrCreateBuildingEconomy(buildingId).depositRevenue(10L)`. Left as-is.
+- **Tithe is NOT an economic flow today:** `handleTithe` only bumps piety (the
+  debit "lands in the recurring auto-pay follow-up"). R4a implements the debit +
+  routes it to the building economy.
+- **No separate "donation" path:** religious giving today == offerings (routed);
+  `DonateHerbsVerb` is apothecary, not religious. Flagged (offerings ARE the
+  donation path).
+- **Civic boons:** `village.depositToTreasury(...)` in `handleHarvestThanksgiving`
+  / `handleSignatureRite` / `RiteScheduler` consecration — the civic flows that
+  STAY in the village treasury. Untouched.
+
+### Design / decisions
+
+- **Reuse the one daily wage tick** (`TreasuryTickHandler`) — no parallel payroll.
+  Added a PRIEST branch in the per-NPC loop that pays from the priest's assigned
+  **building** economy via `NpcEconomy.businessPay` with a **pre-capped** amount
+  (`min(wage, economy.getTreasury())`) so a poor temple underpays (businessPay's
+  all-or-nothing `canAfford` is satisfied by the capped amount). Wage floored by
+  the kingdom `MINIMUM_WAGE` law, then capped by the economy. A shrine/chapel
+  priest draws from THAT building's economy (the per-building economy is keyed by
+  the priest's `assignedBuildingId`, so R3e-2 minority clergy are automatically
+  correct).
+- **Upkeep** — debited once per religious building per day, deduped via a local
+  `Set<UUID>` across however many clergy a building has.
+- **Tithe** — `handleTithe` now debits the payer's wallet (`min(TITHE_AMOUNT,
+  wallet)`) and deposits it into the rite venue's `BuildingEconomy`, resolved via
+  the new `BuildingFaith.buildingIdAtLocation(rite.location())`. On top of the
+  existing piety effect; skipped gracefully if the payer is broke / no building.
+- **Rates** (`EconomicBalance`, daily, matching the wage cadence):
+  `PRIEST_DAILY_WAGE = 10`, `TEMPLE_DAILY_UPKEEP = 4`, `TITHE_AMOUNT = 8`. Sized
+  so a temple needs ~14 br/day income (≈1.5 offerings @10 or 2 tithes @8) to stay
+  solvent; a neglected temple drains 14/day → deficit (no decay yet — R4c).
+
+### What shipped
+
+- `Village/Economy/EconomicBalance.java` — `PRIEST_DAILY_WAGE`,
+  `TEMPLE_DAILY_UPKEEP`, `TITHE_AMOUNT`.
+- `Village/Economy/Currency/TreasuryTickHandler.java` — `payClergyFromBuildingEconomy`
+  (wage via `businessPay` + per-building upkeep), called for PRIEST in the daily
+  loop; civic wage path unchanged.
+- `Npc/Religion/RiteExecutor.java` — `handleTithe` routes the tithe payment into
+  the venue's `BuildingEconomy`.
+- `Npc/Religion/BuildingFaith.java` — `buildingIdAtLocation` helper.
+- Offerings (`MakeOfferingVerb`) + civic boons (`depositToTreasury`): unchanged.
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `MakeOfferingVerb` (offerings → economy, already),
+   `handleTithe` (tithe → economy, new), `BuildingFaith`/rite venue (which
+   building's economy). No separate donation path (offerings cover it).
+2. **Downstream callers** — the daily wage tick (now also pays PRIEST from the
+   building economy), `NpcEconomy.businessPay`/`getOrCreateBuildingEconomy`,
+   `VillageSavedData` persistence (setDirty on each mutation), `HouseholdWealthManager`
+   (clergy wage contributes to the household pool like other wages).
+3. **Sibling systems** — village treasury: civic boons untouched, and PRIEST is
+   excluded from the village-treasury `wageForProfession` (returns 0L), so clergy
+   are NOT double-paid. R3e-2 shrine clergy draw from the shrine's own economy
+   (per-building keying). Other business workers' wage path is unchanged (the
+   PRIEST branch is additive + profession-gated).
+4. **Exhaustive switches** — `wageForProfession(Profession)` has a `default`; the
+   PRIEST handling is a separate profession-gated `if`, not a new switch arm. No
+   enum added. Confirmed.
+
+### Simplification Sweep
+
+- Economy classes in scope: `TreasuryTickHandler` (the one daily wage tick — PRIEST
+  added, not a religion payroll), `NpcEconomy.businessPay` (the one building-economy
+  → wallet path, reused), `BuildingEconomy`/`getOrCreateBuildingEconomy` (the one
+  income hub — offerings + tithe + upkeep all hit it), `EconomicBalance` (rates),
+  `BuildingFaith` (+1 venue→building helper). No parallel wage/treasury/income
+  path. No codec change (`BuildingEconomy` flows only).
+
+### Deviations from prompt
+
+- **Clergy rates live in the static `EconomicBalance`** (per the prompt), while
+  civic wages live in the `EconomyBalance` registry record — a documented split,
+  flagged. A later pass could migrate clergy rates into the registry config for
+  data-pack tuning.
+- **No `BuildingEconomy` wage mechanism existed to "reuse"** — the javadoc claim
+  was aspirational. Implemented the wage draw via the canonical building-economy →
+  wallet method (`businessPay`) inside the existing daily wage tick — i.e. reused
+  the wage TICK + the building-economy payment primitive, rather than a
+  pre-existing clergy-wage path (there was none).
+- **Upkeep is per-building/day, deduped** — a temple with multiple clergy charges
+  upkeep once (the norm is 1 priest/building per `BuildingInhabitantRegistry`).
+
+### Out-of-scope but flagged
+
+- Deficit→decay→abandonment → R4c (a deficit is now POSSIBLE but has no
+  consequence). Production↔consumption → R4b. Alms / library books /
+  recurring+player tithe → R4d. Ledger pruning → R4e.
+- Migrating clergy rates into the `EconomyBalance` registry config for tuning.
+- A distinct "donation" verb (today offerings are the donation path).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`businessPay`/`applyMinimumWage`/`contributeToPool`/`NpcWallet.spend`/`toBronze`
+signatures cross-checked; PRIEST excluded from the village-treasury wage (no
+double-pay); upkeep deduped per building; no codec change; no new enum/switch arm;
+no new brain memory.
+
+### Smoke test (user-runnable)
+
+1. At a temple, make several offerings (`make_offering` verb) and run tithes;
+   confirm the temple building's `BuildingEconomy` treasury grows (offerings +10
+   each, tithes +8 each, debited from the payer's wallet).
+2. Advance one in-game day; confirm the temple priest's wallet grows by the
+   PRIEST wage (≤10, capped by the economy) and the temple economy drops by the
+   wage + 4 upkeep.
+3. Leave a temple un-attended (no offerings/tithes) for several days; confirm its
+   economy trends toward 0 (wage+upkeep drain) and the priest is underpaid when it
+   hits 0 — no decay yet, just a low/zero balance.
+4. In a Sunstead village with a Tidecall SHRINE (R3e-2), confirm the shrine priest
+   draws from the SHRINE's own economy (offerings at the shrine fund the shrine
+   priest), independent of the temple.
+5. Run a grand festival / consecration / harvest; confirm the civic boon still
+   lands in the VILLAGE treasury (not the temple economy) — `/building`-style
+   readouts show the village treasury rising, the temple economy unchanged by it.

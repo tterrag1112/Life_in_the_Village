@@ -408,6 +408,24 @@ public final class RiteExecutor {
         RiteProfile profile = ReligionContent.profileFor(villageReligionId, Rite.TITHE);
         String religionId = payer.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
         payer.getPiety().adjustBelief(religionId, profile.scalePiety(0.03f));
+
+        // R4a — the tithe is a real economic flow: the payer gives bronze to the
+        // rite venue's BuildingEconomy (capped by their wallet), on top of the
+        // piety. Civic boons (village treasury) are unaffected.
+        Village village = payer.getAssignedVillageName()
+                .flatMap(VillageSavedData.get(level)::getVillageByName).orElse(null);
+        if (village != null) {
+            BuildingFaith.buildingIdAtLocation(level, village, rite.location()).ifPresent(buildingId -> {
+                long give = Math.min(
+                        tterrag1112.life_in_the_village.Village.Economy.EconomicBalance.TITHE_AMOUNT,
+                        payer.getWallet().toBronze());
+                if (give > 0 && payer.getWallet().spend(
+                        tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue.of(give))) {
+                    VillageSavedData.get(level).getOrCreateBuildingEconomy(buildingId).depositRevenue(give);
+                    VillageSavedData.get(level).setDirty();
+                }
+            });
+        }
         return RiteOutcome.SUCCESSFUL;
     }
 

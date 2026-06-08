@@ -84,6 +84,25 @@ public class EconomicBalance {
     public static final long COMPLEX_TASK_REWARD = 16L;
 
     // =========================================================================
+    // Religious economy (Religion Rework R4a) — daily flows through a religious
+    // building's BuildingEconomy. (Civic wages live in the EconomyBalance
+    // registry config; clergy are a new line and sit here per R4a.)
+    // =========================================================================
+
+    /** Daily clergy wage, drawn from the staffed building's BuildingEconomy
+     *  (capped by what it can afford — a poor temple underpays). */
+    public static final long PRIEST_DAILY_WAGE = 10L;
+
+    /** Modest daily upkeep debited from a religious building's BuildingEconomy.
+     *  Small enough that a healthily-attended temple stays solvent; a neglected
+     *  one trends negative (R4c turns that into decay). */
+    public static final long TEMPLE_DAILY_UPKEEP = 4L;
+
+    /** Bronze a tithe routes from the payer's wallet into the temple economy
+     *  (capped by the payer's wallet). */
+    public static final long TITHE_AMOUNT = 8L;
+
+    // =========================================================================
     // Business costs
     // =========================================================================
 

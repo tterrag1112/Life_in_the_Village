@@ -176,6 +176,24 @@ public final class BuildingFaith {
     }
 
     /**
+     * R4a — the id of the religious building standing at {@code loc} (its origin),
+     * or empty when none. Lets a rite route its economic flow (e.g. a tithe) into
+     * the right building's {@code BuildingEconomy} from the rite's venue.
+     */
+    public static java.util.Optional<UUID> buildingIdAtLocation(ServerLevel level,
+                                                                Village village, BlockPos loc) {
+        if (loc == null) return java.util.Optional.empty();
+        VillageSavedData data = VillageSavedData.get(level);
+        for (UUID bid : village.getBuildingIds()) {
+            Building b = data.getBuildingById(bid).orElse(null);
+            if (b == null || !isReligiousBuilding(b.getType())) continue;
+            BlockPos origin = b.getShape().getOrigin();
+            if (origin != null && origin.equals(loc)) return java.util.Optional.of(bid);
+        }
+        return java.util.Optional.empty();
+    }
+
+    /**
      * The served test's building-aware core: is there a loaded PRIEST in the
      * village whose building faith equals {@code faith}? Covers both a dominant
      * temple/chapel priest and a minority shrine priest with one scan.
