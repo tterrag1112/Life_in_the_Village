@@ -123,6 +123,7 @@ public final class TravellerLayer implements MapLayer {
             case CARAVAN_EXPORT      -> 0xFFE0B040; // amber — laden, outbound
             case CARAVAN_PROCUREMENT -> 0xFF40C0E0; // cyan  — buying run
             case BOAT                -> 0xFF60A0FF; // blue  — sea
+            case PILGRIM             -> 0xFFC080F0; // violet — pilgrimage
             // Future traveller types until they get a bespoke icon.
             default                  -> 0xFFCCCCCC;
         };
@@ -133,6 +134,7 @@ public final class TravellerLayer implements MapLayer {
             case CARAVAN_EXPORT      -> "Export caravan";
             case CARAVAN_PROCUREMENT -> "Procurement caravan";
             case BOAT                -> "Boat caravan";
+            case PILGRIM             -> "Pilgrim";
             default                  -> "Traveller";
         };
     }

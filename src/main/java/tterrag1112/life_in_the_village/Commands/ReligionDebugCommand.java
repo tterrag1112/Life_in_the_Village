@@ -67,7 +67,61 @@ public final class ReligionDebugCommand {
                                     return b.buildFuture();
                                 })
                                 .executes(ReligionDebugCommand::handleShrine)))
+                // R3e-3b-1 — send a realized resident on a pilgrimage to a
+                // route-connected destination village.
+                .then(Commands.literal("pilgrimage")
+                        .then(Commands.argument("npc", UuidArgument.uuid())
+                                .then(Commands.argument("destVillage", StringArgumentType.string())
+                                        .executes(ReligionDebugCommand::handlePilgrimage))))
         );
+    }
+
+    // ── /religion pilgrimage ─────────────────────────────────────────────
+
+    private static int handlePilgrimage(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        java.util.UUID npcId = UuidArgument.getUuid(ctx, "npc");
+        String destName = StringArgumentType.getString(ctx, "destVillage");
+
+        TownspersonMob npc = TownspersonMob.findByUUID(level, npcId).orElse(null);
+        if (npc == null || !npc.isAlive()) {
+            src.sendFailure(Component.literal("No realized NPC " + npcId));
+            return 0;
+        }
+        if (npc.isVisitor()) {
+            src.sendFailure(Component.literal("That NPC is a visitor, not a resident."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Village home = npc.getAssignedVillageName()
+                .flatMap(data::getVillageByName).orElse(null);
+        if (home == null) {
+            src.sendFailure(Component.literal("That NPC has no home village."));
+            return 0;
+        }
+        Village dest = data.getVillageByName(destName).orElse(null);
+        if (dest == null) {
+            src.sendFailure(Component.literal("No village " + destName));
+            return 0;
+        }
+        if (home.getId().equals(dest.getId())) {
+            src.sendFailure(Component.literal("Destination is the home village."));
+            return 0;
+        }
+        var route = data.getRouteBetween(home.getId(), dest.getId()).orElse(null);
+        if (route == null) {
+            src.sendFailure(Component.literal(
+                    "No trade route between " + home.getName() + " and " + dest.getName()
+                            + " (R3e-3b-1 requires a route-connected destination)."));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Village.Travel.PilgrimageSavedData.get(level)
+                .dispatchPilgrimage(npc, route.getRouteId(), home.getId(), dest.getId(),
+                        level.getGameTime());
+        src.sendSuccess(() -> Component.literal(
+                "§a" + npc.getNpcName() + "§r departs on pilgrimage to §f" + dest.getName()), false);
+        return 1;
     }
 
     // ── /religion shrine ─────────────────────────────────────────────────

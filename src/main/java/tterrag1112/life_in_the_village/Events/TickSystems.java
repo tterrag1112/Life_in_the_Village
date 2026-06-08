@@ -115,6 +115,19 @@ class BoatCaravanTickSystem implements TickSubsystem {
     }
 }
 
+/** Religion R3e-3b — drives resident pilgrimages (single-member travellers). */
+class PilgrimageTickSystem implements TickSubsystem {
+    @Override public String name()     { return "pilgrimages"; }
+    @Override public int    interval() { return 20; }
+    @Override public int    priority() { return 119; }
+
+    @Override
+    public void tick(TickContext ctx) {
+        tterrag1112.life_in_the_village.Village.Travel.PilgrimageSavedData.get(ctx.level())
+                .tick(ctx.level(), ctx.villageData());
+    }
+}
+
 class CompanyTickSystem implements TickSubsystem {
     @Override public String name()     { return "business"; }
     @Override public int    interval() { return 20; }

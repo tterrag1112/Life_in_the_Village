@@ -162,6 +162,25 @@ public final class KingdomMapScope {
                     villageName(data, b.getDestVillageId()),
                     summarizeCargo(b.getGoods())));
         }
+
+        // Religion R3e-3b — resident pilgrims (single-member land travellers).
+        // Reuses the land route polyline for the {origin,dest} village pair
+        // (destinations are route-connected), so no map-network change is needed.
+        for (tterrag1112.life_in_the_village.Village.Travel.Pilgrimage pg
+                : tterrag1112.life_in_the_village.Village.Travel.PilgrimageSavedData
+                        .get(level).getAllPilgrimages()) {
+            if (!viewable.contains(pg.getOriginVillageId())
+                    && !viewable.contains(pg.getDestVillageId())) continue;
+            out.add(new TravellerSnapshot(
+                    pg.groupId(), TravellerType.PILGRIM.ordinal(),
+                    pg.getOriginVillageId(), pg.getDestVillageId(),
+                    false,
+                    (float) pg.getProgress(), pg.isReversed(),
+                    1.0f,
+                    villageName(data, pg.getOriginVillageId()),
+                    villageName(data, pg.getDestVillageId()),
+                    ""));
+        }
         return out;
     }
 

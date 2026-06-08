@@ -3529,3 +3529,121 @@ machinery reuse.
 
 No code shipped (reverted clean). Awaiting the identity-fork decision to resume
 R3e-3b-1.
+
+---
+
+## R3e-3b-1 — Pilgrimage lifecycle infra, debug-triggered (2026-06-08)
+
+Resumed after the identity-fork decision: **option A (faithful caravan reuse, the
+identity limitation flagged and left for the shared/separate hardening the user
+will do).** Ships the full resident-pilgrimage lifecycle (convert → travel →
+return → reintegrate), map icon, and reload persistence, driven by a debug
+command — the autonomous decision is R3e-3b-2.
+
+### What shipped
+
+- `Village/Travel/Pilgrimage.java` (new) — a single-member `TravellingGroup`
+  (principal + home + route-connected destination + OUTBOUND/RETURNING + 8-field
+  codec). `getPath` mirrors `Caravan.getPath` (segment / graph route);
+  `onPathComplete` turns OUTBOUND around; `getSpeedMultiplier` = 1.0.
+- `Village/Travel/PilgrimageSavedData.java` (new) — owns + ticks pilgrimages via
+  `TravellingGroupEngine`; `realizePilgrim`/`dehydratePilgrim` copy the caravan
+  principal machinery (find-by-UUID, discard on dehydrate, fresh fallback);
+  `dispatchPilgrimage` converts a realized resident (assigns the PILGRIM role);
+  `reintegrate` clears the role + applies a modest boon (piety +0.05, mood +15) on
+  return. **Robustness add over caravans:** reintegration fresh-spawns the
+  principal at home if it was lost while unobserved, so no adherent is left a
+  permanent traveller ("no NPCs lost").
+- `Npc/Roles/NpcRoleTypes.java` — new `PILGRIM` role (the away-state mirror of
+  CARAVAN_PRINCIPAL; Conditional lifetime).
+- `Npc/Brain/Behaviors/Trade/PilgrimTravelBehavior.java` (new) — drives realized
+  road-walking + progress, mirroring `CaravanMerchantBehavior`; universal, self-
+  gated on the PILGRIM role. Registered WORK @0 in `TownspersonMob.makeBrain`
+  before `configureBrain` (so it pre-empts profession work while on pilgrimage,
+  same idiom as the WORK @0 GreetPlayer).
+- `Village/Travel/TravellerType.java` + `Gui/.../TravellerLayer.java` — `PILGRIM`
+  enum value + icon (violet) + label arms.
+- `Gui/.../KingdomMapScope.java` — a pilgrim gather block (reuses the land route
+  polyline for the {origin,dest} pair — destinations are route-connected, so no
+  map-network change).
+- `Events/TickSystems.java` + `TickSubsystemRegistry.java` — `PilgrimageTickSystem`
+  (priority 119, interval 20) registered alongside the caravan systems.
+- `Commands/ReligionDebugCommand.java` — `/religion pilgrimage <npc> <destVillage>`
+  the producer: sends a realized resident on a pilgrimage to a route-connected
+  destination (validates resident-not-visitor, home/dest villages, and a route).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — the debug command (producer); `getRouteBetween`
+   (route-connected gate); the engine constants (SPAWN/DESPAWN radii, base speed).
+2. **Downstream callers** — `TravellingGroupEngine` (drives the group);
+   `KingdomMapScope`/`TravellerLayer` (map); `PilgrimTravelBehavior` (realized
+   walk); `TownspersonMob` roles (PILGRIM away-state); persistence (new SavedData).
+3. **Sibling systems** — R3e-3a VISITOR pilgrims: DISTINCT — a resident pilgrim
+   keeps its identity/profession and is never routed through `VisitorFluxEngine`;
+   the PILGRIM role is consumed ONLY by `PilgrimTravelBehavior` + `PilgrimageSavedData`
+   (grep-confirmed), so no caravan/visitor code mis-handles it. Home population/
+   needs are entity-scan-based, and the principal is discarded while away (like
+   caravans), so it isn't double-counted. Caravan code untouched.
+4. **Exhaustive switches** — `TravellerType`: `byId` bounds-safe; `iconColor`/
+   `typeLabel` got explicit PILGRIM arms (had defaults); `KingdomMapScope` got the
+   gather block. `NpcRoleTypes` is a registry (no switch). No new EventType/Rite.
+
+### Simplification Sweep
+
+A thin specialization of the TravellingGroup lifecycle: reuses the interface,
+`TravellingGroupEngine`, the route-path resolution (`Caravan.resolveSegmentBlocks`
+/ `GraphTradeRouteEstablisher`), the map DTO/polyline, and the role component.
+New: `Pilgrimage` + `PilgrimageSavedData` + the PILGRIM role + the travel behavior
++ the command + tick registration. No parallel traveller/away framework; no new
+brain memory (uses WALK_TARGET) → no freeze trap; codec at 8/16 fields.
+
+### Deviations from prompt
+
+- **Identity limitation (approved, option A):** principal handling copies the
+  caravan Phase-7c machinery, so a pilgrim discarded while unobserved is re-spawned
+  fresh (identity may reset). Preserved when the player follows (the smoke test);
+  reintegration always returns *an* adherent home (no permanent traveller). To be
+  hardened for caravans + pilgrims together in the user's separate pass.
+- **Debug-triggered only (the R3e-3b-1 split):** the autonomous decision (devout +
+  `isUnservedLocally` + a reachable same-faith grand festival) is R3e-3b-2.
+- **Festival attendance at the destination** is deferred to R3e-3b-2 (R3e-3b-1's
+  pilgrim arrives and turns around); the return boon is included so the lifecycle
+  has an observable payoff.
+
+### Out-of-scope but flagged
+
+- R3e-3b-2: autonomous departure decision + destination grand-festival attendance
+  (full co-religion benefit) + boon tuning.
+- The shared caravan/pilgrim principal-identity hardening (the user's separate
+  investigation).
+- A bespoke pilgrim map icon (currently a violet dot + "Pilgrim" label).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: all
+signatures cross-checked against the mirrored caravan code (`SavedDataType`,
+`RoleAssignment.conditional`, `getRouteBetween`/`getRouteId`, route path accessors,
+`findByUUID`, `setAssignedVillageName`, `getVillageCentre`); PILGRIM role consumed
+only by its two owners; TravellerType arms + gather complete; tick system
+registered; no new brain memory; codec 8/16.
+
+### Smoke test (user-runnable)
+
+1. Find a resident's UUID (e.g. via `/religion list` / an NPC tool) in a village
+   that has a TRADE ROUTE to another village. Run
+   `/religion pilgrimage <uuid> <destVillageName>`. Confirm the message and that
+   the NPC sets out toward the route (activity "On pilgrimage...").
+2. Open the kingdom map: confirm a violet PILGRIM icon moves along the route from
+   home toward the destination, then reverses and returns.
+3. Follow the pilgrim: confirm they walk the road, reach the destination village,
+   turn around, and walk home (same entity = identity preserved when followed).
+4. On arrival home, confirm they reintegrate as a normal resident (role cleared,
+   resumes normal behavior) with a small piety + mood boon.
+5. Save + reload mid-journey: confirm the pilgrimage resumes (persisted) and still
+   completes + reintegrates.
+6. Confirm `/religion pilgrimage` to a village with NO trade route is rejected
+   (route-connected destinations only, R3e-3b-1); confirm a visitor UUID is
+   rejected (residents only); confirm an ordinary villager (no pilgrimage) is
+   unaffected — the PILGRIM behavior is inert without the role.

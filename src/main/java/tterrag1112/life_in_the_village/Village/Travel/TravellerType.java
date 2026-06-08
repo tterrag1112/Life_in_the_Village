@@ -11,8 +11,10 @@ package tterrag1112.life_in_the_village.Village.Travel;
 public enum TravellerType {
     CARAVAN_EXPORT,
     CARAVAN_PROCUREMENT,
-    BOAT;
-    // Future: PILGRIM, ARMY, … — add an icon arm in TravellerLayer when added.
+    BOAT,
+    // Religion R3e-3b — a lone resident on a religious pilgrimage.
+    PILGRIM;
+    // Future: ARMY, … — add an icon arm in TravellerLayer when added.
 
     /** Safe lookup by ordinal for the network codec (unknown → export). */
     public static TravellerType byId(int id) {

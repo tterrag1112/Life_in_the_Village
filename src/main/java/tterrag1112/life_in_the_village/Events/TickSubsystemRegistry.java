@@ -99,6 +99,7 @@ public final class TickSubsystemRegistry {
         register(new VillageRealisationSystem());
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());
+        register(new PilgrimageTickSystem());
         register(new GraphEdgeRealizationSystem());
         register(new GreatRoadGenerationTickSystem());
         register(new ParallelismCleanupSystem());

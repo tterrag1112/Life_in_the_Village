@@ -1795,6 +1795,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .GreetPlayerBehavior()));
 
+        // Religion R3e-3b — pilgrimage travel, WORK @0 + universal (mirrors the
+        // MERCHANT caravan behavior's placement). Self-gates on the PILGRIM
+        // away-state role, so it pre-empts ordinary work ONLY while an adherent
+        // is on pilgrimage and is inert for everyone else.
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 0, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .Trade.PilgrimTravelBehavior()));
+
         // Liveliness L2 — hobby during idle WORK time, ABOVE the idle director
         // (P1 > the director's P2) so a hobby is preferred over the stroll/tidy.
         // Its checkExtraStartConditions self-gates on the work-satisfied

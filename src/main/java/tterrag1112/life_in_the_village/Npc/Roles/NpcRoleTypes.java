@@ -56,6 +56,13 @@ public final class NpcRoleTypes {
     public static final RoleType PARTY_MEMBER =
             register("party_member", RoleLifetime.Conditional.INSTANCE);
 
+    // ── Pilgrimage (Religion R3e-3b) ─────────────────────────────────────
+    /** Marks a resident who has departed on a religious pilgrimage as a
+     *  single-member traveller — the away-state mirror of CARAVAN_PRINCIPAL.
+     *  {@code PilgrimageSavedData} controls removal on return/reintegration. */
+    public static final RoleType PILGRIM =
+            register("pilgrim", RoleLifetime.Conditional.INSTANCE);
+
     // ── Greeter (transient) ──────────────────────────────────────────────
     public static final RoleType GREETING =
             register("greeting", RoleLifetime.Conditional.INSTANCE);
