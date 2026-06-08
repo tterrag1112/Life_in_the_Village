@@ -78,6 +78,11 @@ public final class RiteScheduler {
         for (var e : level.getEntities().getAll()) {
             if (!(e instanceof TownspersonMob npc)) continue;
             if (npc.getProfession() != Profession.PRIEST) continue;
+            // R3e-3a tie-in — a PILGRIM visitor's underlying profession is PRIEST,
+            // but a transient pilgrim is not village clergy: exclude visitors so
+            // they aren't handed ordinations/consecrations (which would churn the
+            // unpruned rite ledger). Resident clergy are never visitors.
+            if (npc.isVisitor()) continue;
             Village v = npc.getAssignedVillageName()
                     .flatMap(vdata::getVillageByName).orElse(null);
             if (v == null) continue;

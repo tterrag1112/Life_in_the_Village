@@ -96,7 +96,7 @@ public final class VisitorFluxEngine {
                     || rng.nextFloat() < remaining;
             if (!shouldSpawn) break;
             VisitorType type = pickType(cap.typeWeights(), rng);
-            spawnVisitor(level, village, vdata, type, bounds, now, rng);
+            spawnVisitor(level, village, vdata, type, bounds, now, rng, null);
             spawned++;
             remaining -= 1f;
         }
@@ -146,12 +146,33 @@ public final class VisitorFluxEngine {
         AABB bounds = village.getBounds(vdata).orElse(null);
         if (bounds == null) return Optional.empty();
         return Optional.ofNullable(spawnVisitor(level, village, vdata, type,
-                bounds, level.getGameTime(), level.getRandom()));
+                bounds, level.getGameTime(), level.getRandom(), null));
+    }
+
+    /**
+     * R3e-3a — spawn a visitor whose single itinerary stop is a SPECIFIC building
+     * (e.g. a PILGRIM pointed at a festival's venue), rather than the type's
+     * auto-picked target. Reuses the full visitor lifecycle (wallet, despawn,
+     * {@link VisitorState}); it does NOT itself enforce the capacity cap — the
+     * caller bounds the count against {@link VillageVisitorCapacity}.
+     */
+    public static Optional<TownspersonMob> spawnVisitorTo(ServerLevel level, Village village,
+                                                          VillageSavedData vdata,
+                                                          VisitorType type,
+                                                          UUID targetBuildingId) {
+        AABB bounds = village.getBounds(vdata).orElse(null);
+        if (bounds == null) return Optional.empty();
+        List<VisitorItinerary> itin = targetBuildingId == null ? null
+                : List.of(new VisitorItinerary(targetBuildingId, primaryActivityFor(type),
+                        primaryActivityFor(type).defaultDurationTicks()));
+        return Optional.ofNullable(spawnVisitor(level, village, vdata, type,
+                bounds, level.getGameTime(), level.getRandom(), itin));
     }
 
     private static TownspersonMob spawnVisitor(ServerLevel level, Village village,
                                                VillageSavedData vdata, VisitorType type,
-                                               AABB bounds, long now, RandomSource rng) {
+                                               AABB bounds, long now, RandomSource rng,
+                                               List<VisitorItinerary> itinOverride) {
         BlockPos edge = pickEdgePosition(level, bounds, rng);
         if (edge == null) return null;
         TownspersonMob npc = ModEntities.TOWNSPERSON.get()
@@ -176,8 +197,10 @@ public final class VisitorFluxEngine {
                 Math.max(1, type.walletMax() - type.walletMin() + 1));
         npc.getWallet().receive(bronze);
 
-        // Plan a basic single-stop itinerary based on type.
-        List<VisitorItinerary> itin = planItinerary(village, vdata, type);
+        // Plan a basic single-stop itinerary based on type (or use the caller's
+        // explicit target, e.g. a pilgrim pointed at a festival venue).
+        List<VisitorItinerary> itin = itinOverride != null
+                ? itinOverride : planItinerary(village, vdata, type);
         long expectedDeparture = now + Math.max(DAY, itin.stream()
                 .mapToLong(s -> s.expectedDurationTicks()).sum() + DAY);
         npc.getVisitorState().beginVisit(type, /* origin */ null,

@@ -67,6 +67,12 @@ public class EventEffects {
             EventAttendance.applyVillageWideOverride(level, event, village, data);
         }
 
+        // R3e-3a — a grand festival draws PILGRIM visitors of the festival's
+        // faith, who converge on the venue and swell the crowd (no-op for every
+        // non-grand-festival event).
+        tterrag1112.life_in_the_village.Npc.Visitor.PilgrimConvergence
+                .onFestivalStart(level, event, village, data);
+
         // Announce to nearby players
         announceEvent(level, event, village, data, true);
     }

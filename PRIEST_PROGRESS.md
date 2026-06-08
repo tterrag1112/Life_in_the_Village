@@ -3148,3 +3148,159 @@ reconciled (BuildingFaith into scheduler + PriestBehavior).
    /grand/vigil at the temple, generic holy day via `checkCulturalHolyDay`.
 6. No NPC freeze (no new brain memory); rite officiation, R3e-2 clergy, R3e-1
    reconciliation, and the grand-festival supersede all intact.
+
+---
+
+## R3e-3a — Pilgrim arrival / convergence (2026-06-08)
+
+First half of pilgrimage (R3e-3): a village's grand religious festival draws
+bounded PILGRIM visitors of the festival's faith, who converge on the venue,
+swell the celebration, and despawn on the normal visitor lifecycle. The
+resident-departure half (an adherent leaving and returning) is R3e-3b.
+
+### Disposition (findings, verified on branch)
+
+- **`VisitorFluxEngine`** — `spawnVisitor(level, village, vdata, type)` is the
+  public on-demand entry (returns `Optional<TownspersonMob>`); it does NOT itself
+  enforce the cap (the daily `tickVillage` does, via `VillageVisitorCapacity`).
+  The private spawn builds a one-stop itinerary via `planItinerary` (for PILGRIM,
+  `Activity.PRAY` → first TEMPLE/CHAPEL/SHRINE). Gap flagged: the auto-pick lands
+  on the FIRST religious building, so a minority-faith pilgrim could be sent to
+  the dominant temple, not its shrine — so the caller must specify the venue.
+- **`VisitorType.PILGRIM` — MISMATCH flagged:** its `underlyingProfession()` is
+  **PRIEST**. Three consequences traced: (a) `EventAttendance.applyVillageWideOverride`
+  SKIPS PRIEST, so a pilgrim is NOT given the R2b eventOverride — it converges via
+  its visitor itinerary instead (outcome identical: present at the venue). (b)
+  `PriestBehavior` self-gates on a non-null assigned building; a visitor's
+  buildingId is null, so a pilgrim never officiates/fronts. (c)
+  `RiteScheduler.buildPriestsByVillage` groups ALL loaded PRIEST NPCs → a pilgrim
+  would be handed an ordination (latent today; festival pilgrims make it more
+  likely). Fixed with a visitor guard (below).
+- **`BuildingFaith` (R3e-2/2b)** — `religiousBuildingsByFaith(faith→venue)` gives
+  the festival venue; `CeremonyBlessings.FAITH_KEY` stamps the festival faith
+  (R3e-2b). The served test `hasSeatedPriestOfFaith` already excludes pilgrims
+  (no building → resolveFaith null → no match), so a visiting pilgrim does NOT
+  falsely mark resident adherents "served" — confirmed, no guard needed there.
+- **`EventEffects.onEventStart`** — the festival-ACTIVE hook (category-aware,
+  already calls `applyVillageWideOverride` for RELIGIOUS_RITE). The natural,
+  once-per-festival trigger point.
+- **`FaithReconciliation` (R3e-1)** — a same-faith attendee gets full benefit; a
+  faith-tagged pilgrim is a co-religionist, so the R3d-1 crowd pulse + one-shot
+  blessing benefit them fully. Over-inclusion would self-correct (reduced
+  benefit), but tagging makes it exact.
+
+### Design / decisions
+
+- **Trigger on grand festivals only** (`HARVEST_HOME` / `GREAT_WEAVING` /
+  `TIDES_RETURN` / `FOUNDING_DAY`, R3d-2) — the year's biggest, annual, unambiguous
+  "grand religious festival." A `drawsPilgrims(EventType)` predicate (switch +
+  default; not exhaustive). Signature rites / cultural holy days are an easy
+  later addition to that predicate (flagged).
+- **Spawn directly on festival start; do NOT mint a `PILGRIM_CONVERGENCE` event.**
+  Pilgrims attend the EXISTING grand-festival gathering — a separate convergence
+  event would be redundant. `PILGRIM_CONVERGENCE` (the flux-driven path) is left
+  untouched.
+- **New thin trigger `Npc/Visitor/PilgrimConvergence`** — resolves faith (FAITH_KEY
+  → dominant) + venue (`religiousBuildingsByFaith`), bounds the count to remaining
+  visitor capacity, and calls a new `VisitorFluxEngine.spawnVisitorTo(..., venueId)`
+  per pilgrim. 2–4 pilgrims, clamped to `maxConcurrent − current loaded visitors`
+  (the same accounting `tickVillage` uses) — never exceeds the cap.
+- **`VisitorFluxEngine.spawnVisitorTo`** — a minimal overload that points the
+  visitor's single itinerary stop at a SPECIFIC building (the festival venue),
+  reusing the entire spawn/wallet/despawn/`VisitorState` lifecycle (the private
+  spawn just took an optional `itinOverride`; both existing callers pass null).
+- **Faith tag** — `tagFaith` drops the spawn-time culture seed if it differs and
+  seeds the festival faith at DEVOUT (0.6), so the pilgrim reads as a same-faith
+  adherent (full benefit) for BOTH a dominant and a shrine festival.
+
+### What shipped
+
+- `Npc/Visitor/PilgrimConvergence.java` (new) — the festival-start trigger.
+- `Npc/Visitor/VisitorFluxEngine.java` — `spawnVisitorTo` (targeted-itinerary)
+  overload + `itinOverride` plumbing through the private spawn.
+- `Village/Event/EventEffects.java` — `onEventStart` calls
+  `PilgrimConvergence.onFestivalStart` (no-op for non-grand events).
+- `Npc/Religion/RiteScheduler.java` — `buildPriestsByVillage` excludes visitors
+  (tie-in fix: a PILGRIM's PRIEST profession must not draw an ordination).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — the R3d-2 grand-festival scheduler → gathering ACTIVE →
+   `onEventStart`; `BuildingFaith` (faith + venue); `VillageVisitorCapacity` (the
+   bound). All read-only here.
+2. **Downstream callers** — `VisitorFluxEngine.spawnVisitorTo` (extra bounded
+   spawns, cap honoured); the visitor itinerary/`VisitorGoal` (pilgrims walk to
+   the venue to PRAY = attend); `FaithReconciliation` (same-faith full benefit via
+   the R3d-1 crowd pulse + one-shot rite); the despawn lifecycle (pilgrims leave a
+   day later). `applyVillageWideOverride` SKIPS pilgrims (PRIEST) — they attend via
+   itinerary, not the R2b override (deviation, same outcome).
+3. **Sibling systems** — R2b attendance (pilgrims converge via itinerary), R3d-1
+   fronting (pilgrims have no building → never front), R3d-2 grand festivals (the
+   trigger), the economy `VisitorChannel`/`estimateFlux` (a few extra transient
+   visitors → incidental trade; no surprise — they use the standard wallet + the
+   cap is unchanged). `RiteScheduler` ordination/consecration scans now skip
+   visitors. The R3e-2 served test already excludes pilgrims (no building).
+4. **Exhaustive switches** — none added; `drawsPilgrims` has a `default`. No new
+   enum / EventType / Rite / brain memory.
+
+### Simplification Sweep
+
+- Classes in scope: `PilgrimConvergence` (new, 1 inbound call from EventEffects),
+  `VisitorFluxEngine` (+1 overload, lifecycle reused), `EventEffects` (1 trigger
+  line), `RiteScheduler` (1-line visitor guard). This is a thin trigger over
+  `spawnVisitor` — NO parallel spawn path, NO cap bypass, NO new visitor
+  mechanism. The capacity cap + itinerary + despawn are all reused as-is.
+
+### Deviations from prompt
+
+- **Pilgrims attend via their visitor ITINERARY, not the R2b eventOverride.**
+  `VisitorType.PILGRIM.underlyingProfession()` is PRIEST, and
+  `applyVillageWideOverride` deliberately skips PRIEST (so real clergy officiate
+  rather than congregate), so a pilgrim never receives the eventOverride. Pointing
+  the pilgrim's itinerary at the festival venue (VisitorGoal → PRAY there)
+  achieves the same convergence more reliably for a visitor. Outcome identical:
+  present at the venue, full co-religion benefit.
+- **Added a visitor guard to `RiteScheduler.buildPriestsByVillage`** — a tie-in
+  correction the PILGRIM=PRIEST overlap forced. Latent before this phase (the flux
+  engine already spawns pilgrim-priests); festival convergence makes it more
+  likely, so fixed here rather than deferred.
+- **Grand festivals only.** "High holy day" in the prompt is realized as the four
+  grand festivals (the clearest "grand religious festival"); signature rites /
+  cultural holy days are a one-line `drawsPilgrims` extension, flagged.
+
+### Out-of-scope but flagged
+
+- **R3e-3b — resident departure:** a realized adherent leaving the village as a
+  traveller on pilgrimage and returning (the traveller/caravan map layer).
+- **Wider pilgrim draw:** extend `drawsPilgrims` to signature rites / cultural
+  high holy days if those should also attract visitors.
+- **Faith-scoped festival attendance** (still coarse from R3e-2b) — unchanged here.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`spawnVisitorTo` overload + `itinOverride` threaded through the private spawn (both
+existing callers pass null); trigger wired once in `onEventStart`, gated on
+`drawsPilgrims`; capacity bound mirrors `tickVillage`; faith tag makes pilgrims
+co-religionists; visitor guard added to the ordination/consecration scan; no new
+enum/brain memory; accessors (`isVisitor`, `getPiety`, `getVisitorState`)
+confirmed.
+
+### Smoke test (user-runnable)
+
+1. Advance a Sunstead village to its grand festival (Harvest Home @ Harvest
+   Equinox). Confirm 2–4 PILGRIM visitors spawn at the village edge, walk to the
+   temple (the festival venue), and gather there — swelling the crowd.
+2. Confirm the pilgrims benefit FULLY (same-faith): watch the R3d-1 crowd-bless /
+   festival mood + piety land on them like resident Sunstead adherents.
+3. Confirm a SMALL village isn't mobbed — the pilgrim count is clamped to the
+   remaining visitor capacity (`/visitor` capacity vs current); at cap, zero
+   pilgrims spawn.
+4. Confirm a NON-festival day spawns no extra pilgrims (only the normal flux).
+5. Confirm a shrine-faith grand festival (R3e-2b, e.g. a Tidecall shrine's Tides'
+   Return) draws pilgrims of the SHRINE faith, pointed at the SHRINE, benefiting
+   fully — while the dominant faith's NPCs at that festival get reduced benefit.
+6. Confirm the pilgrims despawn on the normal visitor lifecycle (~a day after the
+   festival), and that none were handed an ordination (the visitor guard) or
+   started officiating/fronting (no building).
