@@ -5054,3 +5054,142 @@ enum/codec/brain memory.
    (a small calming touch, no remembrance).
 5. Confirm a village with no graveyard / an NPC with no cared-about buried deceased
    degrades gracefully — the hobby simply doesn't resolve a grave (no error).
+
+---
+
+## R5c — Ancestor veneration (Forge Creed at the graves) (2026-06-08)
+
+Final phase of R5 + a capstone tying R3 Forge content to the R5 death loop. The
+Forge Creed's Ancestor Oath is now sworn AT the graveyard, and Forge adherents
+venerate their ancestors there — a faith-specific payoff distinct from R5b's
+grief mourning. **Completes R5 (the death loop).**
+
+### Disposition (findings, verified on branch)
+
+- **ANCESTOR_OATH venue (R3e-2b)** — `checkSignatureRite` → `scheduleSignatureForFaith`
+  maps FORGE_CREED → `ANCESTOR_OATH` @ "Ancestor Day", then `scheduleEvent(…,
+  faithId, Building venue)` pins the gathering location to the faith's BUILDING
+  origin (the Forge building). The location flows to the blessing rite
+  (`CeremonyBlessings.attach` → `scheduleBlessingRite`), which is where R2b
+  attendance + R3d-1 fronting converge. → Relocating = changing the location passed.
+  Since `scheduleEvent` only used the Building for its origin, refactored its venue
+  param **Building → BlockPos** so a NON-building location (the graveyard) can be
+  passed.
+- **R5a/R5b** — `GraveyardSavedData.getGraveyard(villageId)` → `Graveyard.centre`
+  (the oath venue); `GraveVisit` (the grave-visiting machinery) extends for
+  veneration.
+- **R3c Ancestor-Keepers** — the Forge order; R3d-1 fronting walks the priest to
+  the LINKED RITE's location, so with the oath relocated to the graveyard the
+  Ancestor-Keeper priest fronts there automatically (no fronting change needed).
+- **Faith gate** — veneration is gated to FORGE_CREED primary (the ancestor faith);
+  others don't venerate (sparse-friendly; a `ReligionContent` opt-in could extend
+  it later).
+- **Reverence/resolve channel** — used `MoodTrigger.FESTIVAL_ATTENDED` (the bounded
+  religious-observance mood, daily-cap 0.2) — DISTINCT from R5b's grief-comfort
+  `LETTER_FROM_FRIEND`, so worship and mourning don't share a budget.
+
+### Design / decisions
+
+- **Oath at the graveyard** — `scheduleEvent`'s venue param refactored Building →
+  BlockPos (an `originOf(Building)` helper feeds the signature/grand/vigil callers).
+  In `scheduleSignatureForFaith`, for `FORGE_CREED` + `ANCESTOR_OATH` the location
+  becomes the **graveyard centre** when one exists, else the Forge building origin
+  (R5a graceful fallback). R2b congregation + R3d-1 Ancestor-Keeper fronting then
+  follow the rite to the graveyard — no scheduler/fronting fork.
+- **Veneration** — `GraveVisit.contemplate` now: (R5b) grief-ease + remembrance for
+  a cared-about grave (universal mourning), a contemplative touch for a general
+  non-venerator; PLUS (R5c) for a Forge adherent (`isAncestorVenerator`), a
+  `venerate` — a reverence/resolve mood (`FESTIVAL_ATTENDED +4`) + a small Forge
+  piety deepening (the ancestor-connection). The two effects are ADDITIVE on
+  DISTINCT channels (a grieving Forge adherent gets both; no shared budget).
+- **Draw** — `GraveVisit.drawsToGrave` = a bereaved NPC (cared-about grave) OR a
+  Forge venerator where a graveyard exists; `NpcHobbyPreference` boosts `visit_grave`
+  for it (replacing R5b's bereaved-only condition), so Forge adherents venerate
+  regularly.
+- Bounded: the veneration mood is daily-capped (FESTIVAL_ATTENDED 0.2), the piety
+  bump is small, and the hobby cadence limits frequency — a steady practice, not a
+  farm.
+
+### What shipped
+
+- `Village/Event/VillageEventScheduler.java` — `scheduleEvent` venue Building →
+  BlockPos (+ `originOf` helper); the Forge Ancestor Oath relocates to the
+  graveyard (fallback to the Forge building).
+- `Village/Graveyard/GraveVisit.java` — `isAncestorVenerator`, `venerate`,
+  `drawsToGrave`; `contemplate` adds the Forge veneration alongside R5b grief.
+- `Npc/Hobby/NpcHobbyPreference.java` — the grave draw now uses `drawsToGrave`
+  (bereaved + Forge venerators).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `checkSignatureRite`/ANCESTOR_OATH + its venue resolution
+   (now graveyard-aware), `BuildingFaith` (the fallback building), R5a graveyard,
+   R3c Ancestor-Keepers, `FaithReconciliation`/piety (the Forge gate).
+2. **Downstream callers** — the gathering venue (relocated → the blessing rite at
+   the graveyard → R2b attendance + R3d-1 fronting converge there), R5b `GraveVisit`
+   (extended for veneration), mood (`FESTIVAL_ATTENDED`)/piety channels.
+3. **Sibling systems** — R5b grief mourning: NO double-dip — veneration uses a
+   DIFFERENT mood channel (`FESTIVAL_ATTENDED`) than the grief comfort
+   (`LETTER_FROM_FRIEND`); both can target graves and coexist. R3 Forge content
+   (oath/funeral/order) unchanged. Other faiths: unaffected — their signatures
+   still fire at their building (only FORGE_CREED+ANCESTOR_OATH relocates), and
+   they don't venerate.
+4. **Exhaustive switches** — no new enum/`Rite`/`EventType` (ANCESTOR_OATH exists);
+   `HobbyActivity` switches unchanged; the `scheduleEvent` venue type change has a
+   single 7-arg overload (no ambiguity), 3 callers + the delegator updated.
+   Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `VillageEventScheduler` (one venue-resolution change + the
+  Building→BlockPos generalization — not a scheduler fork), `GraveVisit` (veneration
+  reuses the R5b visit machinery + the mood/piety channels — not a new behavior),
+  `NpcHobbyPreference` (the draw extended). Veneration reuses `GraveVisit` + the
+  gathering venue + the order/faith layers; the oath relocation is one location
+  override. No new tick/behavior/enum/codec/brain memory.
+
+### Deviations from prompt
+
+- **Refactored `scheduleEvent`'s venue param (Building → BlockPos)** — needed so a
+  non-building location (the graveyard centre) can host the oath; a clean
+  generalization (only the origin was used), the 3 faith callers + the delegator
+  updated.
+- **The "kin-bond / ancestor-connection" is a Forge piety deepening** (worship
+  deepens ancestor faith) rather than a living-kin relationship bump (finding the
+  shared-ancestor kin is complex) — flagged.
+- **Faith-gated to FORGE_CREED directly** (the ancestor faith); sparse-friendly —
+  other faiths don't venerate. A `ReligionContent` opt-in for additional faiths is
+  a flagged extension.
+
+### Out-of-scope but flagged
+
+- Generalizing ancestor veneration to other faiths (beyond the Forge gate);
+  graveyard auto-placement (deferred). A living-kin bond on veneration; a dedicated
+  reverence MoodTrigger; relocating other Forge rites (funeral) to the graveyard.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`scheduleEvent` Building→BlockPos (single 7-arg overload, no ambiguity; delegator +
+3 callers pass `originOf(venue)`/`loc`); the Forge oath relocates to
+`Graveyard.centre` with the building fallback; `GraveVisit.venerate` uses
+`FESTIVAL_ATTENDED` (distinct from grief `LETTER_FROM_FRIEND`) + a Forge piety bump;
+`drawsToGrave` covers bereaved + venerators; no new enum/codec/brain memory.
+
+### Smoke test (user-runnable)
+
+1. In a FORGE_CREED village WITH a graveyard, advance to Ancestor Day; confirm the
+   Ancestor Oath gathering fires AT the graveyard centre (not the Forge building),
+   fronted by the Ancestor-Keeper priest (R3d-1), with Forge adherents congregating
+   there (R2b).
+2. Confirm a FORGE_CREED village with NO graveyard keeps the oath at the Forge
+   building (graceful fallback, no error).
+3. Confirm Forge adherents periodically pick `visit_grave` (drawn even without a
+   personal loss) and, on visiting, get a reverence/resolve mood
+   (`FESTIVAL_ATTENDED`) + a small Forge piety bump — DISTINCT from the grief-ease,
+   and NOT sharing the grief comfort budget (a grieving Forge adherent gets both).
+4. Confirm a NON-Forge faith's adherents do NOT venerate (grief mourning still works
+   per R5b), and their signature rites still fire at their own building.
+5. Confirm veneration is bounded (the FESTIVAL_ATTENDED daily cap + the hobby
+   cadence — not a buff farm).

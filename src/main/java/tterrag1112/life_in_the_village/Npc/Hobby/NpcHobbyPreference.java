@@ -118,11 +118,12 @@ public final class NpcHobbyPreference {
             if (def.skillGain().isPresent() && def.skillGain().get() == primary) {
                 s += SKILL_INTEREST_BONUS;
             }
-            // R5b — draw the bereaved to the grave (a cared-about deceased buried
-            // in this village). Only computed for the visit_grave candidate.
+            // R5b/R5c — draw to the grave: the bereaved (a cared-about deceased
+            // buried here) OR a Forge Creed ancestor-venerator where a graveyard
+            // exists. Only computed for the visit_grave candidate.
             if (def.id().equals("visit_grave")
                     && tterrag1112.life_in_the_village.Village.Graveyard.GraveVisit
-                            .caredAboutGrave(level, npc).isPresent()) {
+                            .drawsToGrave(level, npc)) {
                 s += BEREAVEMENT_BOOST;
             }
             float cultureMultiplier = tterrag1112.life_in_the_village.Cultures

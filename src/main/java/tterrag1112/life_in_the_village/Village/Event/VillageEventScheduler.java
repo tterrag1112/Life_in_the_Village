@@ -206,7 +206,7 @@ public class VillageEventScheduler {
         if (!vigilToday) return;
 
         if (alreadyScheduledToday(data, village, VillageEvent.EventType.VIGIL, religionId, currentTick)) return;
-        scheduleEvent(level, village, data, VillageEvent.EventType.VIGIL, currentTick, religionId, venue);
+        scheduleEvent(level, village, data, VillageEvent.EventType.VIGIL, currentTick, religionId, originOf(venue));
     }
 
     /**
@@ -287,7 +287,26 @@ public class VillageEventScheduler {
         if (eff != litDay) return;
 
         if (alreadyScheduledToday(data, village, type, religionId, currentTick)) return;
-        scheduleEvent(level, village, data, type, currentTick, religionId, venue);
+
+        // R5c — the Forge Creed's Ancestor Oath is sworn AT the graveyard (before
+        // the ancestors' graves) when one exists; otherwise it falls back to the
+        // Forge building (R5a graceful pattern). Other faiths' signatures stay at
+        // their building.
+        net.minecraft.core.BlockPos loc = originOf(venue);
+        if (religionId.equals(ReligionRegistry.FORGE_CREED)
+                && type == VillageEvent.EventType.ANCESTOR_OATH) {
+            loc = tterrag1112.life_in_the_village.Village.Graveyard.GraveyardSavedData.get(level)
+                    .getGraveyard(village.getId())
+                    .map(tterrag1112.life_in_the_village.Village.Graveyard.Graveyard::centre)
+                    .orElse(loc);
+        }
+        scheduleEvent(level, village, data, type, currentTick, religionId, loc);
+    }
+
+    /** The origin of a venue building, or null. */
+    private static net.minecraft.core.BlockPos originOf(
+            tterrag1112.life_in_the_village.Village.Building venue) {
+        return venue == null ? null : venue.getShape().getOrigin();
     }
 
     /** Loaded village NPCs currently carrying MELANCHOLY. */
@@ -344,7 +363,7 @@ public class VillageEventScheduler {
         if (eff != litDay) return;
 
         if (alreadyScheduledToday(data, village, type, religionId, currentTick)) return;
-        scheduleEvent(level, village, data, type, currentTick, religionId, venue);
+        scheduleEvent(level, village, data, type, currentTick, religionId, originOf(venue));
     }
 
     /** True when today (liturgical day) is the village religion's grand-festival
@@ -554,11 +573,11 @@ public class VillageEventScheduler {
                                       VillageEvent.EventType type,
                                       long currentTick,
                                       String faithId,
-                                      tterrag1112.life_in_the_village.Village.Building venue) {
+                                      net.minecraft.core.BlockPos venueLocation) {
         VillageEvent event = VillageEvent.create(village.getId(), type, currentTick);
         if (faithId != null) event.putEventData(CeremonyBlessings.FAITH_KEY, faithId);
-        if (venue != null && venue.getShape().getOrigin() != null) {
-            event.setLocation(venue.getShape().getOrigin());
+        if (venueLocation != null) {
+            event.setLocation(venueLocation);
         }
         data.addEvent(event);
         // R2a — attach the coordinated blessing rite (seasonal harvest +
