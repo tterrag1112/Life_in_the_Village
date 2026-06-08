@@ -64,6 +64,16 @@ public final class TempleProsperity {
             if (b == null || !BuildingFaith.isReligiousBuilding(b.getType())) continue;
             BuildingEconomy econ = data.getOrCreateBuildingEconomy(bid);
 
+            // R4c-2 — auto-rehire: a functional (repaired, not RUINED), vacant,
+            // SOLVENT religious building gets a priest again — preferring the
+            // dormant R4c-abandoned ex-priest. The solvency gate ties recovery to
+            // renewed giving and avoids re-abandon churn ("don't churn").
+            if (b.getCondition().isFunctional()
+                    && econ.getTreasury() >= DAILY_COST
+                    && findAssignedPriest(level, village, data, bid).isEmpty()) {
+                restaff(level, village, data, b);
+            }
+
             // Solvency signal — can it cover a day's costs?
             if (econ.getTreasury() >= DAILY_COST) econ.resetDaysInsolvent();
             else econ.incrementDaysInsolvent();
@@ -131,14 +141,55 @@ public final class TempleProsperity {
      *  true when a priest was vacated. */
     private static boolean vacatePriest(ServerLevel level, Village village,
                                         VillageSavedData data, UUID buildingId) {
+        return findAssignedPriest(level, village, data, buildingId)
+                .map(p -> { p.clearAssignedBuilding(); return true; })
+                .orElse(false);
+    }
+
+    /** The loaded PRIEST currently assigned to {@code buildingId}, if any. */
+    private static java.util.Optional<TownspersonMob> findAssignedPriest(
+            ServerLevel level, Village village, VillageSavedData data, UUID buildingId) {
         AABB bounds = village.getBounds(data).map(b -> b.inflate(32)).orElse(null);
-        if (bounds == null) return false;
-        for (TownspersonMob m : level.getEntitiesOfClass(TownspersonMob.class, bounds,
-                npc -> npc.getProfession() == Profession.PRIEST
-                        && npc.getAssignedBuildingId().map(buildingId::equals).orElse(false))) {
-            m.clearAssignedBuilding();
-            return true;
+        if (bounds == null) return java.util.Optional.empty();
+        return level.getEntitiesOfClass(TownspersonMob.class, bounds,
+                        npc -> npc.getProfession() == Profession.PRIEST
+                                && npc.getAssignedBuildingId().map(buildingId::equals).orElse(false))
+                .stream().findFirst();
+    }
+
+    /** A dormant, building-less PRIEST in the village (the R4c-abandoned ex-priest),
+     *  excluding visitors and away pilgrims — the preferred re-staff source. */
+    private static java.util.Optional<TownspersonMob> findDormantPriest(
+            ServerLevel level, Village village, VillageSavedData data) {
+        AABB bounds = village.getBounds(data).map(b -> b.inflate(32)).orElse(null);
+        if (bounds == null) return java.util.Optional.empty();
+        return level.getEntitiesOfClass(TownspersonMob.class, bounds,
+                        npc -> npc.isAlive()
+                                && npc.getProfession() == Profession.PRIEST
+                                && !npc.isVisitor()
+                                && !npc.getRoles().hasRole(
+                                        tterrag1112.life_in_the_village.Npc.Roles.NpcRoleTypes.PILGRIM)
+                                && npc.getAssignedBuildingId().isEmpty()
+                                && npc.getAssignedVillageName()
+                                        .map(n -> n.equals(village.getName())).orElse(false))
+                .stream().findFirst();
+    }
+
+    /** Re-staffs a functional vacant religious building: rehire a dormant
+     *  ex-priest where possible (re-applying the building's faith + order), else
+     *  spawn a fresh priest via the populator path (which applies faith + order
+     *  itself). */
+    private static void restaff(ServerLevel level, Village village,
+                                VillageSavedData data, Building building) {
+        TownspersonMob priest = findDormantPriest(level, village, data).orElse(null);
+        if (priest != null) {
+            priest.assignToBuilding(building.getId(), village.getName());
+            BuildingFaith.applyClergyFaith(level, village, priest, building);
+            ClergyOrders.assignClergyOrder(level, priest);
+        } else {
+            tterrag1112.life_in_the_village.Village.Buildings.Inhabitants.VillageInhabitantPopulator
+                    .spawnWorkerInBuilding(level, building, village, Profession.PRIEST);
         }
-        return false;
+        data.setDirty();
     }
 }

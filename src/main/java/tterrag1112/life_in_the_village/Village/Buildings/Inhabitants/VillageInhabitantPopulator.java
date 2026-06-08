@@ -189,6 +189,19 @@ public final class VillageInhabitantPopulator {
     // NPC spawn helper
     // =========================================================================
 
+    /**
+     * Religion Rework R4c-2 — public single-worker spawn for re-staffing a
+     * functional vacant building (e.g. a recovered temple). Reuses the full
+     * inhabitant spawn path: profession + building assignment, and — for a PRIEST
+     * — the building's faith + clergy order (R3e-2). Returns the spawned NPC, or
+     * null on failure.
+     */
+    public static TownspersonMob spawnWorkerInBuilding(ServerLevel level, Building building,
+                                                       Village village, Profession profession) {
+        return spawnNpcInBuilding(level, building, village, profession,
+                FamilyRole.HEAD, new java.util.Random());
+    }
+
     private static TownspersonMob spawnNpcInBuilding(ServerLevel level,
                                                      Building building,
                                                      Village village,

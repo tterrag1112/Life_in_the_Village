@@ -4270,3 +4270,136 @@ no new enum/switch arm/brain memory.
    stays MAINTAINED (the visible reward) and never decays.
 5. Confirm NON-religious buildings' decay is unchanged (the base ~21-day cadence;
    no financial coupling).
+
+---
+
+## R4c-2 — Temple re-staffing (auto-rehire) (2026-06-08)
+
+A focused fix-up completing R4c's recoverable loop. R4c made an insolvent temple
+decay and (after 21 insolvent days) the priest abandon it (`clearAssignedBuilding`),
+but flagged two gaps: the populator "runs once / never repopulates" so a
+repaired vacant temple was never re-staffed, and the vacated priest lingered as a
+dormant building-less PRIEST. This closes it: a functional, vacant, solvent
+religious building gets a priest again — preferring to rehire the dormant
+ex-priest — with the correct building faith.
+
+### Disposition (findings, verified on branch)
+
+- **`TempleProsperity` (R4c)** — the daily per-village pass over religious
+  buildings; the natural hook for the re-staff check (no new tick). `vacatePriest`
+  already scans the building's assigned priest — refactored to share that lookup.
+- **Populator spawn path** — `VillageInhabitantPopulator.spawnNpcInBuilding(level,
+  building, village, profession, familyRole, rng)` is **private** and runs once at
+  spawn; for a PRIEST it already applies the building faith + clergy order (R3e-2,
+  lines added there). Exposed a thin public wrapper `spawnWorkerInBuilding(...,
+  PRIEST)` (FamilyRole.HEAD) to REUSE that exact path for the fresh-spawn fallback
+  — no duplication of the spawn logic.
+- **Assignment API** — `assignToBuilding(buildingId, villageName)` (re-assign) +
+  `clearAssignedBuilding()` (vacate). A dormant ex-priest after R4c is a
+  `Profession.PRIEST` with `assignedBuildingId` empty but `assignedVillageName`
+  intact (clearAssignedBuilding only nulls the building) → findable in the village.
+- **Faith re-apply** — `BuildingFaith.applyClergyFaith(level, village, npc,
+  building)` + `ClergyOrders.assignClergyOrder(level, npc)` (R3e-2) re-apply the
+  building's faith + order to a rehired priest (a recovered shrine → a same-faith
+  Tidewarden).
+- **Functional predicate** — `BuildingCondition.isFunctional()` (`!= RUINED`). A
+  RUINED temple must be repaired (builder/player) before it can be staffed —
+  matches the existing model.
+
+### Design / decisions
+
+- **One check in the existing `TempleProsperity` per-building loop** (no new tick,
+  no parallel staffing): a building that `isFunctional()`, is **vacant**
+  (`findAssignedPriest` empty), and is **solvent** (`treasury ≥ DAILY_COST`) is
+  re-staffed via `restaff`.
+- **`restaff`** — prefer `findDormantPriest` (a building-less village PRIEST,
+  excluding visitors + away pilgrims) → `assignToBuilding` + re-apply faith/order;
+  else `VillageInhabitantPopulator.spawnWorkerInBuilding(..., PRIEST)` (the
+  populator path applies faith/order itself).
+- **Solvency gate** — re-staff only when the building can currently afford a
+  priest. This satisfies the prompt's "don't churn" guard (a broke vacant temple
+  isn't repeatedly staffed→re-abandoned on 21-day cycles) and ties recovery to
+  renewed giving (offerings accumulate → solvent → re-staffed), which is
+  thematically right. Flagged as a deviation from the literal "functional vacant".
+- **Guards** — one priest per building (`findAssignedPriest` skip when staffed);
+  never staff RUINED (`isFunctional`); dormant-priest reuse can't duplicate (once
+  assigned, the priest is no longer "dormant" for the next building).
+
+### What shipped
+
+- `Village/Buildings/Inhabitants/VillageInhabitantPopulator.java` — public
+  `spawnWorkerInBuilding` wrapper over the existing private spawn path.
+- `Npc/Religion/TempleProsperity.java` — the re-staff check + `restaff`,
+  `findDormantPriest`, `findAssignedPriest` (vacatePriest refactored to share it).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — R4c state (vacant building + dormant ex-priest);
+   `BuildingCondition.isFunctional` (the repaired gate); building economy solvency.
+2. **Downstream callers** — the populator spawn path (fresh fallback) +
+   `assignToBuilding` (rehire); `applyClergyFaith`/`assignClergyOrder` (faith +
+   order); R4a wages / R4b candle production / R2b-R3d ceremonies all RESUME once a
+   priest is assigned (they self-gate on a staffed priest). R4c decay/abandon: a
+   re-staffed solvent building resets `daysInsolvent` (the existing solvency
+   update), so it won't immediately re-abandon.
+3. **Sibling systems** — R4c abandonment (the source of the dormant priest +
+   vacant building). R3e-2 shrine clergy: re-staff respects the building faith
+   (`applyClergyFaith`/`assignClergyOrder` resolve from the building). The initial
+   populator: a freshly-placed temple still staffs there at spawn (this pass only
+   fills a still-vacant one, and only when solvent). The pilgrimage system: away
+   pilgrims are excluded from the dormant pool (PILGRIM role check), so a traveling
+   priest isn't yanked into a re-staff.
+4. **Exhaustive switches** — none touched; no enum added. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `TempleProsperity` (the re-staff check + 3 helpers — one shared
+  with vacate), `VillageInhabitantPopulator` (+1 public wrapper reusing the private
+  spawn). No new tick/system; rehire reuses `assignToBuilding`; fresh spawn reuses
+  the populator path. Dormant-priest reuse can't duplicate. No new enum/codec/brain
+  memory.
+
+### Deviations from prompt
+
+- **Added a solvency gate to re-staffing** (the prompt said "functional vacant").
+  It is the prompt's "don't churn" guard made concrete — a broke vacant temple
+  isn't staffed→re-abandoned repeatedly — and ties recovery to renewed giving. If
+  unconditional re-staff is preferred, drop the `treasury ≥ DAILY_COST` clause.
+- **Fresh-spawn fallback exposes a public populator wrapper** (`spawnWorkerInBuilding`)
+  rather than calling the private method — reuse of the exact existing path.
+
+### Out-of-scope but flagged
+
+- R4d (alms / library books / recurring + player tithe), R4e (ledger pruning).
+- Fuller priest off-boarding on abandonment (R4c still leaves the ex-priest a
+  building-less PRIEST until rehired — which R4c-2 now consumes as the rehire
+  source, so the lingering is now bounded/useful).
+
+**This completes the R4c recoverable loop** (decay → abandonment → repair →
+re-staff → resume).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`spawnWorkerInBuilding`/`assignToBuilding`/`applyClergyFaith`/`assignClergyOrder`/
+`isFunctional`/`isVisitor`/`hasRole(PILGRIM)` signatures confirmed; one priest per
+building (assigned-priest guard); dormant pool excludes visitors + pilgrims +
+already-assigned; RUINED never staffed; no new enum/codec/brain memory.
+
+### Smoke test (user-runnable)
+
+1. Drive a temple to abandonment (R4c: starve income for 21+ days) and confirm a
+   dormant building-less ex-priest remains in the village and the temple is vacant.
+2. Repair the temple (builder/player so it's no longer RUINED) and restore solvency
+   (offerings/tithes so its economy ≥ 14 br). On the next daily pass, confirm it is
+   re-staffed — reusing the DORMANT ex-priest (no new villager spawned) — with the
+   building's faith + order; then wages (R4a), candle production (R4b), and
+   ceremonies (R2b/R3d) resume.
+3. Confirm a still-RUINED (unrepaired) temple is NOT staffed (repair first).
+4. Confirm a recovered Tidecall SHRINE gets a same-faith (Tidewarden) priest.
+5. Confirm a freshly-placed temple still staffs via the normal populator at spawn
+   (this pass doesn't interfere).
+6. Confirm one priest per building (a staffed temple is never given a second
+   priest), and that a broke (insolvent) vacant temple is NOT re-staffed until
+   giving makes it solvent (no churn).
