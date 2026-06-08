@@ -73,7 +73,42 @@ public final class ReligionDebugCommand {
                         .then(Commands.argument("npc", UuidArgument.uuid())
                                 .then(Commands.argument("destVillage", StringArgumentType.string())
                                         .executes(ReligionDebugCommand::handlePilgrimage))))
+                // R5a — manually create a graveyard district at the executor's
+                // position (rows × cols grave slots). No auto-layout this phase.
+                .then(Commands.literal("graveyard")
+                        .executes(ctx -> handleGraveyard(ctx, 4, 4))
+                        .then(Commands.argument("rows",
+                                        com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, 16))
+                                .then(Commands.argument("cols",
+                                                com.mojang.brigadier.arguments.IntegerArgumentType.integer(1, 16))
+                                        .executes(ctx -> handleGraveyard(ctx,
+                                                com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "rows"),
+                                                com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "cols"))))))
         );
+    }
+
+    // ── /religion graveyard ──────────────────────────────────────────────
+
+    private static int handleGraveyard(CommandContext<CommandSourceStack> ctx, int rows, int cols) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) {
+            src.sendFailure(Component.literal("Run as a player (graveyard placed at your position)."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageAt(player.blockPosition()).orElse(null);
+        if (village == null) {
+            src.sendFailure(Component.literal("No village at your position."));
+            return 0;
+        }
+        var graveyard = tterrag1112.life_in_the_village.Village.Graveyard.GraveyardSavedData.get(level)
+                .createGraveyard(village.getId(), player.blockPosition(), rows, cols, 2);
+        src.sendSuccess(() -> Component.literal(
+                "Graveyard created in §f" + village.getName() + "§r with §a"
+                        + graveyard.capacity() + "§r grave slots."), false);
+        return 1;
     }
 
     // ── /religion pilgrimage ─────────────────────────────────────────────

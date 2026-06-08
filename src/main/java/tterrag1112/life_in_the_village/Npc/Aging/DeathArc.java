@@ -47,6 +47,10 @@ public final class DeathArc {
      */
     public static void onNpcDeath(TownspersonMob deceased, ServerLevel level) {
         if (deceased == null) return;
+        // R5a — bury the deceased in the village graveyard if one exists (capacity-
+        // bounded, reuse-oldest). No graveyard → no grave; the FUNERAL rite still
+        // remembers them (graceful fallback, never an error).
+        buryIfGraveyard(deceased, level);
         boolean ageNatural = deceased.isDyingNatural()
                 || deceased.getLifeStage() == LifeStage.ELDERLY;
         if (ageNatural) {
@@ -55,6 +59,31 @@ public final class DeathArc {
         if (deceased.getLifeStage() == LifeStage.ELDERLY) {
             checkUnfinishedBusinessRegret(deceased, level);
         }
+    }
+
+    /** R5a — record a grave for the deceased in their village graveyard (if any),
+     *  and place a minimal best-effort headstone marker. */
+    private static void buryIfGraveyard(TownspersonMob deceased, ServerLevel level) {
+        try {
+            var vdata = tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+            java.util.UUID villageId = deceased.getAssignedVillageName()
+                    .flatMap(vdata::getVillageByName)
+                    .map(tterrag1112.life_in_the_village.Village.Village::getId).orElse(null);
+            if (villageId == null) return;                       // no village → no grave
+            tterrag1112.life_in_the_village.Village.Graveyard.GraveyardSavedData.get(level)
+                    .bury(villageId, deceased.getUUID(), deceased.getNpcName(), level.getGameTime())
+                    .ifPresent(grave -> placeMarker(level, grave.slot()));
+        } catch (RuntimeException ex) {
+            LOGGER.warn("[DeathArc] burial failed for {}: {}", deceased.getNpcName(), ex.getMessage());
+        }
+    }
+
+    /** Minimal cosmetic headstone (a cobblestone wall) at the grave slot, only
+     *  when its chunk is loaded — the grave DATA is the source of truth, the
+     *  marker is best-effort. Elaborate headstone NBT is deferred to placement. */
+    private static void placeMarker(ServerLevel level, net.minecraft.core.BlockPos slot) {
+        if (slot == null || !level.isLoaded(slot)) return;
+        level.setBlockAndUpdate(slot, net.minecraft.world.level.block.Blocks.COBBLESTONE_WALL.defaultBlockState());
     }
 
     private static void seedPeacefulDeathMemories(TownspersonMob deceased, ServerLevel level) {

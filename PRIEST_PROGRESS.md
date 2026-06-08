@@ -4797,3 +4797,130 @@ change; prune is a capped map sweep on the existing daily tick.
 4. Confirm PENDING rites (e.g. a scheduled-but-unperformed marriage) and the
    player-piety values are untouched after pruning.
 5. Confirm a recently-completed rite (within 30 days) is still present.
+
+---
+
+## R5a — GRAVEYARD district + grave model + burial on death (2026-06-08)
+
+First phase of R5 (death loop / graves). Builds the foundation: a per-village
+graveyard with grave slots, a grave record (who lies in it), burial on death, and
+the `HobbyLocation.GRAVEYARD` resolution — so R5b's `visit_grave` has a target.
+
+### Disposition (findings, verified on branch)
+
+- **Decoration-district model — MISMATCH.** Parks/Plaza are PLACEMENT-time
+  (`ParkCandidateFinder` reserves, `ParkRenderer` renders) — NOT persisted
+  districts, so there's no saved-data district to mirror. The cemetery grave-slot
+  `DecorationTag` is **`HEADSTONE`**, which is **defined but UNUSED** (no existing
+  graveyard/emitter wires it). So "model on Parks/Plaza + reuse the emitter" isn't
+  literally available. → Built a PERSISTED `GraveyardSavedData` (mirroring the R4
+  saved-data pattern) with a **manual grid of grave slots** (the HEADSTONE-slot
+  semantics, manually placed per "no auto-layout"), not the auto-decoration
+  emitter. Flagged.
+- **Death hook** — `TownspersonMob.onNpcDeath(LivingDeathEvent)` →
+  `DeathArc.onNpcDeath(deceased, level)` is the canonical entry. Burial added
+  there.
+- **`handleFuneral`** — the FUNERAL rite (grief ease + "remembered kindly"). Burial
+  happens at DEATH (independent of the funeral-rite timing); the funeral's abstract
+  remembrance IS the no-graveyard fallback.
+- **`HobbyLocationResolver.GRAVEYARD`** — was `Optional.empty()`; now resolves to
+  the village graveyard's `visitTarget`.
+- **Persistence** — `VillageSavedData`'s codec is huge (47 fieldOf across nested
+  codecs), so a SEPARATE `GraveyardSavedData` (its own `SavedDataType`, UUID-keyed
+  map) is safer + matches the R4 store pattern (Pilgrimage/Rite SavedData).
+
+### Design / decisions
+
+- **`Grave`** (record + codec) — `deceasedId`, `name`, `deathTick`, `slot`
+  (BlockPos, the R5b navigation target), `epitaph`.
+- **`Graveyard`** (class + codec) — `villageId`, `centre`, `slots` (a fixed grid),
+  `graves`. `capacity = slots.size()`; **reuse-oldest** when full (bury at the
+  oldest grave's slot — capacity-bounded, no expansion); `visitTarget` = the
+  most-recent grave (else the centre).
+- **`GraveyardSavedData`** — per-village map; `createGraveyard(villageId, centre,
+  rows, cols, spacing)` (manual grid) + `bury(villageId, deceasedId, name, tick)`.
+- **Burial on death** (`DeathArc.buryIfGraveyard`) — resolve the deceased's village
+  → if a graveyard exists, record a grave (reuse-oldest) + place a **minimal
+  best-effort headstone** (a `COBBLESTONE_WALL`, only when the slot's chunk is
+  loaded; the DATA is the source of truth). No graveyard / no village → no grave,
+  the FUNERAL rite still remembers them (graceful, wrapped in try/catch — never an
+  error).
+- **Manual creation** — `/religion graveyard [rows] [cols]` (default 4×4 = 16
+  slots, spacing 2) at the executor's position, village resolved from position.
+
+### What shipped
+
+- `Village/Graveyard/Grave.java`, `Graveyard.java`, `GraveyardSavedData.java` (new).
+- `Npc/Aging/DeathArc.java` — burial hook (`buryIfGraveyard` + `placeMarker`).
+- `Npc/Hobby/HobbyLocationResolver.java` — `GRAVEYARD` resolves to the graveyard.
+- `Commands/ReligionDebugCommand.java` — `/religion graveyard` creation command.
+
+### Tie-In Audit
+
+1. **Upstream feeders** — NPC death (`DeathArc.onNpcDeath`, the canonical hook),
+   the manual `/religion graveyard` command, the deceased's village resolution.
+   The FUNERAL rite is unchanged (burial is at death, not in the rite).
+2. **Downstream callers** — `HobbyLocationResolver.GRAVEYARD` (now resolves → R5b
+   `visit_grave` can target it), `GraveyardSavedData` persistence. The
+   `visit_grave` hobby (R5b future consumer) becomes resolvable.
+3. **Sibling systems** — decoration districts (Parks/Plaza UNTOUCHED — graveyard
+   is a separate saved-data store, not the placement pass; no regression).
+   `RelationshipDispatcher`/other death reactions (DeathArc still runs them; burial
+   is an additive first step, wrapped in try/catch). R3e-2/R4 unaffected.
+4. **Exhaustive switches** — `HobbyLocation`: the `GRAVEYARD` arm is updated (no
+   new enum value). No new enum added. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `Grave`/`Graveyard`/`GraveyardSavedData` (new — the model +
+  one store), `DeathArc` (one burial hook on the existing death path), `HobbyLocationResolver`
+  (the GRAVEYARD arm), `ReligionDebugCommand` (creation). Reuses the R4 saved-data
+  pattern + the existing death hook — no parallel death handling. Capacity policy:
+  reuse-oldest (bounded). Manual creation via the command (no auto-layout). New
+  codec (GraveyardSavedData) is a separate store (no VillageSavedData cap risk); no
+  new brain memory.
+
+### Deviations from prompt
+
+- **Built a persisted `GraveyardSavedData`, not a Parks/Plaza-style district nor
+  the auto-decoration `HEADSTONE` emitter** — Parks aren't persisted and the
+  HEADSTONE tag is unused/unwired. The grave slots are a manual grid (the
+  HEADSTONE-slot semantics); wiring graveyards into the decoration pass pairs with
+  the deferred placement/auto-layout work, and the `HEADSTONE` tag is the hook for
+  that.
+- **Burial happens at DEATH** (`DeathArc`), not inside the FUNERAL rite — the grave
+  exists immediately; the funeral is the remembrance + the no-graveyard fallback.
+- **Minimal cosmetic marker** (one `COBBLESTONE_WALL`, best-effort/loaded-only);
+  elaborate headstone NBT deferred.
+
+### Out-of-scope but flagged
+
+- `visit_grave` behaviour + grief → R5b; ancestor veneration → R5c; authored
+  grave/headstone NBT + wiring the HEADSTONE decoration emitter / auto-layout for
+  graveyard placement. Optional epitaph/cause text is recorded-but-empty (a
+  death-cause feed is a later enhancement).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`Grave`/`Graveyard`/`GraveyardSavedData` codecs (BlockPos/UUIDUtil/unboundedMap);
+`SavedDataType` + `computeIfAbsent` (R4 pattern); `DeathArc` burial wrapped in
+try/catch + `level.isLoaded`/`setBlockAndUpdate`/`Blocks.COBBLESTONE_WALL`;
+`HobbyLocationResolver` GRAVEYARD arm returns `Optional<BlockPos>` (exhaustive
+switch intact); `getVillageAt`/`IntegerArgumentType` for the command; reuse-oldest
+capacity; no new enum/brain memory.
+
+### Smoke test (user-runnable)
+
+1. Stand in a village and run `/religion graveyard 4 4`; confirm a graveyard with
+   16 slots is created and `HobbyLocation.GRAVEYARD` now resolves (an NPC's
+   visit-graveyard hobby can target it — visiting itself is R5b).
+2. Kill a village NPC (e.g. `/kill` on a TownspersonMob); confirm a grave is
+   recorded (deceased name + death tick) at a free slot and a cobblestone-wall
+   marker appears there (if the slot's chunk is loaded).
+3. Kill enough NPCs to exceed 16; confirm the capacity policy = reuse-oldest (the
+   oldest grave's slot is reused) rather than erroring or growing unbounded.
+4. In a village with NO graveyard, kill an NPC; confirm it's handled gracefully (no
+   grave, no error; the FUNERAL rite still runs its remembrance).
+5. Save + reload; confirm the graveyard + its graves persist.
