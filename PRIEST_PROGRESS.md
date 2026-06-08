@@ -4403,3 +4403,135 @@ already-assigned; RUINED never staffed; no new enum/codec/brain memory.
 6. Confirm one priest per building (a staffed temple is never given a second
    priest), and that a broke (insolvent) vacant temple is NOT re-staffed until
    giving makes it solvent (no churn).
+
+---
+
+## R4d-1 — Recurring tithe (NPC + player) (2026-06-08)
+
+R4 income depth: the STEADY religious income that keeps a devout village's temple
+solvent (feeding R4a `BuildingEconomy` → R4c/R4c-2 solvency). Devout adherents
+weekly auto-tithe to their same-faith temple, and the player can opt into a weekly
+auto-tithe — both reusing the one R4a tithe primitive.
+
+### Disposition (findings, verified on branch)
+
+- **R4a tithe primitive** — `handleTithe` inlined: debit payer wallet
+  (`min(TITHE_AMOUNT, wallet)` → `wallet.spend`) → `getOrCreateBuildingEconomy
+  (buildingId).depositRevenue`. Extracted to `Tithing.contribute(data, npc,
+  buildingId, amount)` and refactored `handleTithe` to call it (one path).
+- **`MakeOfferingVerb`** (the player-verb model) — a `PlayerVerb` shown at a PRIEST;
+  it deposits 10 br to the temple economy "from thin air" (NO player-coin debit) +
+  bumps player piety in `RiteSavedData`. MISMATCH flagged: a tithe must actually
+  COST the player (a recurring commitment), so the player tithe debits coins.
+- **Player coins** — `CoinHelper.countCoins(player)` / `removeCoins(player,
+  amount)` (affordability-gated, returns false if short) is the player debit.
+- **Player piety + opt-in** — `RiteSavedData.getOrCreatePlayerPiety`. Added a
+  persisted `autoTitheTemple` map (playerId → temple building id) to RiteSavedData
+  (3rd codec field, `optionalFieldOf` → pre-R4d saves load empty).
+- **Cadence** — `RiteScheduler.dailyTick` runs daily (`ReligionRiteTickSystem`
+  interval 24000); weekly + per-payer-staggered (by UUID `Math.floorMod(hash,7)`)
+  so payments don't spike. `EconomicBalance.TITHE_AMOUNT` = 8.
+- **Recipient building** — NPC: `BuildingFaith.religiousBuildingsByFaith(village)
+  .get(faith)` (their same-faith venue; a minority → their shrine; unserved → no
+  local tithe). Player: the stored opted-in temple.
+
+### Design / decisions
+
+- **One primitive, two tithers** — `Tithing.contribute` (NPC wallet → economy) is
+  the shared R4a primitive (also used by `handleTithe`); `contributePlayer`
+  (player coins → economy) is its player counterpart. Both deposit to the same
+  `BuildingEconomy`; no parallel payment path.
+- **NPC recurring** (`tickNpcTithes`) — weekly staggered; each loaded, devout
+  (`primaryStrength ≥ 0.2`, i.e. FAITHFUL+), served (same-faith building exists),
+  affordable adherent tithes `TITHE_AMOUNT` to their faith's building + a small
+  piety/attendance. Visitors + away pilgrims excluded; lapsed/unserved skip.
+- **Player auto-tithe** (`tickPlayerTithes` + `PayTitheVerb`) — the `pay_tithe`
+  verb at a priest TOGGLES the opt-in (records playerId → that temple, setting the
+  player's faith to the temple's if they have none; toggling again opts out).
+  Weekly staggered, the recurring pass debits the online player's coins
+  (affordability-gated) → the temple economy + player piety; opts out
+  automatically if the temple is gone/RUINED.
+- Bounded + anti-runaway: weekly cadence, fixed `TITHE_AMOUNT`, affordability-
+  gated (poor payers skip, never negative).
+
+### What shipped
+
+- `Npc/Religion/Tithing.java` (new) — the recurring engine + the shared
+  `contribute` primitive.
+- `Npc/Religion/RiteExecutor.java` — `handleTithe` routes through
+  `Tithing.contribute` (the same primitive).
+- `Npc/Religion/RiteSavedData.java` — `autoTitheTemple` opt-in map (codec field +
+  `isAutoTithe`/`setAutoTithe`/`clearAutoTithe`/`autoTitheTemples`).
+- `Npc/Verbs/Impl/PayTitheVerb.java` (new) + `PlayerVerbRegistry` registration —
+  the player opt-in toggle.
+- `Npc/Religion/RiteScheduler.java` — daily `Tithing.tick` pass (#5 in dailyTick).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `PietyComponent` (devout eligibility / player piety),
+   wallet + `CoinHelper` (affordability), `BuildingFaith` (recipient building),
+   the daily religion tick (cadence).
+2. **Downstream callers** — the tithe primitive (`contribute`) → temple
+   `BuildingEconomy` (income) → R4c `TempleProsperity` solvency (steady income
+   reduces abandonment) + R4c-2 re-staff (solvency gate). The R4a one-shot tithe
+   (`handleTithe`) still works (now via the same primitive). The player verb/flag
+   system (`RiteSavedData`).
+3. **Sibling systems** — R3e served/unserved: an unserved adherent (no same-faith
+   building) doesn't tithe locally — consistent. R4a/R4c: this is the income that
+   makes "stay solvent" achievable. Pilgrimage: away pilgrims excluded from the
+   NPC tithe scan.
+4. **Exhaustive switches** — none added; no new enum. Profession checks are `==`.
+   Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `Tithing` (new — the engine + 1 shared primitive, 2 inbound:
+  RiteScheduler tick + handleTithe), `RiteSavedData` (+1 opt-in map),
+  `PayTitheVerb` (new, 1 registration), `RiteExecutor`/`RiteScheduler` (wiring).
+  NPC + player tithe both reuse `contribute`/`contributePlayer` (one deposit path)
+  on the one daily tick — not two payment systems. No new tick. Codec: RiteSavedData
+  gains 1 field (3 total). No new enum/brain memory.
+
+### Deviations from prompt
+
+- **The player tithe DEBITS the player's coins** (`CoinHelper.removeCoins`), unlike
+  `MakeOfferingVerb`'s free offering — a recurring tithe is a real cost. Flagged
+  as an intentional difference from the offering model.
+- **`PayTitheVerb` uses the generic priest dialogue tree** (as MakeOfferingVerb
+  does) rather than a dedicated set/cancel message — the toggle works; a bespoke
+  tithe dialogue (distinct pledge/cancel text) is polish, flagged.
+- **The player tithes to the temple they opted in at** (stored building id),
+  regardless of where they roam; auto-opts-out if it's gone/RUINED.
+
+### Out-of-scope but flagged
+
+- Alms + library books → R4d-2; ledger pruning → R4e.
+- Wealth-scaled tithe amount (kept a flat `TITHE_AMOUNT`); a dedicated
+  pledge/cancel dialogue tree; a UI indicator of the player's pledge status.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`CoinHelper.countCoins/removeCoins`, `NpcWallet.toBronze/spend`,
+`RiteSavedData` codec (3 fields, `apply` arity), `VerbResult.success(treeId)` (a
+dialogue-tree id, not plain text — used the generic priest tree), `VerbContext`
+record accessors, `BuildingFaith.religiousBuildingsByFaith/resolveFaith` confirmed;
+weekly stagger by UUID; affordability-gated; no new enum/brain memory.
+
+### Smoke test (user-runnable)
+
+1. Populate a village with several devout adherents (piety ≥ 0.2) of the local
+   faith. Over a week, confirm their wallets are debited ~8 br (staggered across
+   days) and the temple's `BuildingEconomy` treasury rises — keeping it solvent
+   (watch R4c: `daysInsolvent` stays 0, no decay/abandonment).
+2. Confirm a poor adherent (no coins) and a lapsed one (piety < 0.2) do NOT tithe;
+   confirm a minority adherent tithes to their SHRINE's economy, not the temple.
+3. At a priest, use "Pledge tithe": confirm it opts you in. Over a week, confirm a
+   weekly coin deduction + your player piety rising; use it again to cancel and
+   confirm deductions stop. Confirm it's skipped when you have no coins (no
+   negative balance).
+4. Confirm a well-attended (devout) temple measurably trends solvent / avoids the
+   R4c abandonment that an un-tithed temple falls into.
+5. Confirm the R4a one-shot tithe rite still deposits to the temple economy (the
+   shared primitive is unchanged behaviourally).

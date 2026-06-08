@@ -42,19 +42,28 @@ public class RiteSavedData extends SavedData {
                                     UUID_STRING_KEY,
                                     PietyComponent.CODEC)
                             .optionalFieldOf("playerPiety", Map.of())
-                            .forGetter(d -> Map.copyOf(d.playerPiety))
+                            .forGetter(d -> Map.copyOf(d.playerPiety)),
+                    // R4d-1 — player auto-tithe opt-in: playerId → the temple
+                    // building they tithe to. Optional so pre-R4d saves load empty.
+                    com.mojang.serialization.Codec.unboundedMap(
+                                    UUID_STRING_KEY, UUID_STRING_KEY)
+                            .optionalFieldOf("autoTitheTemple", Map.of())
+                            .forGetter(d -> Map.copyOf(d.autoTitheTemple))
             ).apply(i, RiteSavedData::fromCodec)));
 
-    private final Map<UUID, RiteExecution>     rites       = new HashMap<>();
-    private final Map<UUID, PietyComponent>    playerPiety = new HashMap<>();
+    private final Map<UUID, RiteExecution>     rites           = new HashMap<>();
+    private final Map<UUID, PietyComponent>    playerPiety     = new HashMap<>();
+    private final Map<UUID, UUID>              autoTitheTemple = new HashMap<>();
 
     public RiteSavedData() {}
 
     private static RiteSavedData fromCodec(List<RiteExecution> rites,
-                                           Map<UUID, PietyComponent> playerPiety) {
+                                           Map<UUID, PietyComponent> playerPiety,
+                                           Map<UUID, UUID> autoTitheTemple) {
         RiteSavedData d = new RiteSavedData();
         if (rites != null) for (RiteExecution r : rites) d.rites.put(r.riteId(), r);
         if (playerPiety != null) d.playerPiety.putAll(playerPiety);
+        if (autoTitheTemple != null) d.autoTitheTemple.putAll(autoTitheTemple);
         return d;
     }
 
@@ -104,6 +113,27 @@ public class RiteSavedData extends SavedData {
 
     public Map<UUID, PietyComponent> allPlayerPieties() {
         return java.util.Collections.unmodifiableMap(playerPiety);
+    }
+
+    // ── Player auto-tithe opt-in (R4d-1) ─────────────────────────────────────
+
+    /** True when {@code playerId} has opted into the recurring auto-tithe. */
+    public boolean isAutoTithe(UUID playerId) { return autoTitheTemple.containsKey(playerId); }
+
+    /** Opt {@code playerId} into auto-tithing to {@code templeBuildingId}. */
+    public void setAutoTithe(UUID playerId, UUID templeBuildingId) {
+        autoTitheTemple.put(playerId, templeBuildingId);
+        setDirty();
+    }
+
+    /** Opt {@code playerId} out of auto-tithing. */
+    public void clearAutoTithe(UUID playerId) {
+        if (autoTitheTemple.remove(playerId) != null) setDirty();
+    }
+
+    /** Snapshot of the opt-in map (playerId → temple building id). */
+    public Map<UUID, UUID> autoTitheTemples() {
+        return java.util.Collections.unmodifiableMap(new HashMap<>(autoTitheTemple));
     }
 
     public void markDirty() { setDirty(); }

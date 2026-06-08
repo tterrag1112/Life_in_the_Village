@@ -80,6 +80,13 @@ public final class RiteScheduler {
         } catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] temple-prosperity pass threw: {}", t.getMessage());
         }
+
+        // 5. R4d-1 — recurring tithe (devout NPCs + opted-in players) → the steady
+        // income that keeps a devout village's temple solvent. Weekly, staggered.
+        try { Tithing.tick(level, level.getGameTime()); }
+        catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] tithe pass threw: {}", t.getMessage());
+        }
     }
 
     /** Groups loaded PRIEST NPCs by their village id (one entity pass). */

@@ -415,16 +415,9 @@ public final class RiteExecutor {
         Village village = payer.getAssignedVillageName()
                 .flatMap(VillageSavedData.get(level)::getVillageByName).orElse(null);
         if (village != null) {
-            BuildingFaith.buildingIdAtLocation(level, village, rite.location()).ifPresent(buildingId -> {
-                long give = Math.min(
-                        tterrag1112.life_in_the_village.Village.Economy.EconomicBalance.TITHE_AMOUNT,
-                        payer.getWallet().toBronze());
-                if (give > 0 && payer.getWallet().spend(
-                        tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue.of(give))) {
-                    VillageSavedData.get(level).getOrCreateBuildingEconomy(buildingId).depositRevenue(give);
-                    VillageSavedData.get(level).setDirty();
-                }
-            });
+            BuildingFaith.buildingIdAtLocation(level, village, rite.location()).ifPresent(buildingId ->
+                    Tithing.contribute(VillageSavedData.get(level), payer, buildingId,
+                            tterrag1112.life_in_the_village.Village.Economy.EconomicBalance.TITHE_AMOUNT));
         }
         return RiteOutcome.SUCCESSFUL;
     }

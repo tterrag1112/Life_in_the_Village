@@ -116,6 +116,8 @@ public final class PlayerVerbRegistry {
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.RequestBlessingVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.ConfessVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.MakeOfferingVerb());
+        // R4d-1 — player auto-tithe opt-in.
+        register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.PayTitheVerb());
         // Phase 3 task 21: medicine & healer verbs.
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.RequestTreatmentVerb());
         register(new tterrag1112.life_in_the_village.Npc.Verbs.Impl.DonateHerbsVerb());
