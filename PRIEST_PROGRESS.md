@@ -3304,3 +3304,166 @@ confirmed.
 6. Confirm the pilgrims despawn on the normal visitor lifecycle (~a day after the
    festival), and that none were handed an ordination (the visitor guard) or
    started officiating/fronting (no building).
+
+---
+
+## R3e-3b — Resident pilgrimage: DISPOSITION + SUB-SPLIT PROPOSAL (no code shipped) (2026-06-08)
+
+Per the prompt's instruction ("the disposition is the bulk of the work… if, after
+mapping, this is too large for one clean pass, STOP and propose a sub-split rather
+than forcing it"), this entry maps the caravan realized↔traveller↔return
+lifecycle, specifies the pilgrim mirror, and **proposes a two-way vertical split**.
+No code shipped — awaiting greenlight on the split + two design forks.
+
+### Mapped caravan lifecycle (the pattern to mirror)
+
+- **`TravellingGroup`** (interface) + **`TravellingGroupEngine.tick`** (stateless,
+  generic): resolves `getPath()` (a plain `List<BlockPos>`; `computePosition`
+  interpolates by index — **no TradeRoute required by the engine itself**),
+  promotes simulated→spawned within `SPAWN_RADIUS=80` / demotes within
+  `DESPAWN_RADIUS=128`, advances progress (`BASE_PROGRESS_PER_TICK=0.002 ×
+  speedMult`) while simulated, fires `onPathComplete` once at progress≥1.0. This is
+  the **genuinely reusable core**.
+- **`Roster`**: persistent `principalId` (the pooled real villager, tracked by
+  UUID across spawn/despawn) + `originBuildingId` + transient spawned-id lists.
+  Reusable for a single-member pilgrim (principal = the resident).
+- **`Caravan implements TravellingGroup`** (concrete): 12-field codec, but
+  **trade-coupled** — `routeId`→`TradeRoute`, `getPath`/`getSpeedMultiplier` via
+  `WorldRoadGraph` edge maintenance, goods/shoppingList/guardCount/`CaravanKind`,
+  economy settlement on delivery. NOT a generic base.
+- **`CaravanSavedData`** owns storage + `tick`:
+  - **Conversion (resident→traveller)** = dispatch: `villageData.reserveIdleMerchant(villageId)`
+    draws a MERCHANT principal; `Caravan.create(...)` records origin/dest/principal;
+    realization assigns `NpcRoleTypes.CARAVAN_PRINCIPAL` + `setCaravanId`.
+  - **Realize** (`spawnCaravanEntities`): find the pooled principal entity by UUID
+    (or spawn fresh on inconsistency), position at the path point, assign role.
+  - **Demote** (`despawnCaravanEntities`): `mob.discard()` but KEEP the away-state
+    (the role component / `caravanId`) so it re-realizes later.
+  - **Return + reintegration** = `tick`, state==RETURNING && progress≥1.0:
+    `clearCaravanRoles(mob)` (drops the away-state → normal resident) then despawn
+    + remove the caravan.
+- **Away-state representation**: `TownspersonMob.setCaravanId/isCaravanMember`
+  (a `CARAVAN_ID` entityData string) + the **role component**
+  (`NpcRoleTypes.CARAVAN_PRINCIPAL/ESCORT`). The old `currentExpeditionId` was
+  migrated INTO the role component (6.3.2.a). So the away-state is **caravan-role-
+  specific**, not a generic "resident is away" flag.
+- **Map layer**: `KingdomMapScope` GATHERS snapshots by iterating
+  `CaravanSavedData` + `BoatCaravanSavedData`, attaching `TravellerType`
+  explicitly; `TravellerSnapshot` (network DTO, keyed to its route polyline by the
+  **unordered village pair**); `TravellerLayer.iconColor/typeLabel` (switches WITH
+  `default` arms — a new enum value renders generic until given arms);
+  `ClientTravellerCache` interpolates client-side over the **synced route polyline
+  for the village pair**.
+
+### Pilgrim mirror — what's reusable vs new
+
+- **Reuse as-is**: `TravellingGroup` + `TravellingGroupEngine` + `Roster` + the map
+  DTO/cache + the engine's realized-vs-simulated + despawn/respawn radii.
+- **New (the bulk)**: `TravellerType.PILGRIM` (+ TravellerLayer arms + KingdomMapScope
+  gather block); a `Pilgrimage implements TravellingGroup` (single principal,
+  home/dest village, progress, OUTBOUND/RETURNING, its OWN path + codec); a
+  `PilgrimageSavedData` (store + `tick` + dispatch/decision + conversion +
+  reintegration + boon + persistence) registered alongside `CaravanSavedData.tick`.
+- **Design forks (NOT cleanly reusable — these are why a sub-split is warranted)**:
+  1. **Away-state**: the caravan away-state is `NpcRoleTypes.CARAVAN_PRINCIPAL` +
+     `setCaravanId`. A pilgrim needs its OWN away-state (a new
+     `NpcRoleTypes.PILGRIM` role mirroring CARAVAN_PRINCIPAL) — reusing the caravan
+     role would mis-flag a pilgrim as a caravan member (and could trip
+     `CaravanMerchantBehavior`/`isCaravanMember` consumers). Population/needs
+     correctness while away rides on this role.
+  2. **Map polyline for a non-trade village pair**: the map draws a traveller by
+     interpolating a **route polyline keyed by the village pair**, which exists
+     only for TradeRoute-connected pairs. A pilgrim to a same-faith festival
+     village with no trade route has **no polyline → can't be drawn**. Options:
+     (a) restrict destinations to route-connected villages (reuses the polyline
+     machinery, simplest); (b) compute + sync a road-graph polyline for the pair;
+     (c) straight-line fallback.
+  3. **Reintegration headcount/economy**: confirm an away pilgrim doesn't trip
+     "missing worker"/needs alarms at home (caravans solved this via the role
+     component — the new PILGRIM role must be excluded from the same scans).
+
+### Why this is too large for one clean pass
+
+A faithful mirror is ~6–8 new/changed files including a **new codec-bearing
+`PilgrimageSavedData`**, a new `TravellingGroup` impl with its own path strategy,
+**map-network wiring** (gather + polyline for non-route pairs), a **new role +
+away-state** with population/economy tie-ins, and a tick-loop registration —
+none of which I can compile-verify (sandbox blocks maven). Shipping that in one
+unverifiable pass is exactly the "works in isolation, downstream untested"
+regression the project guards against. The enum also must NOT land speculatively
+(no-speculative-enum rule) — it ships WITH its producer.
+
+### Proposed sub-split (vertical; each slice has a real consumer + is verifiable)
+
+- **R3e-3b-1 — Pilgrimage lifecycle infra (debug-triggered).** `TravellerType.PILGRIM`
+  (+ TravellerLayer icon/label arms + KingdomMapScope gather), `Pilgrimage`
+  TravellingGroup (single principal, home/dest, path, codec), `PilgrimageSavedData`
+  (store + engine tick + RETURNING-complete reintegration + persistence + tick
+  registration), the new `NpcRoleTypes.PILGRIM` away-state + conversion/reintegration,
+  and a `/religion pilgrimage <destVillage>` debug command as the **producer**
+  (forces a realized adherent's full convert→travel→return→reintegrate cycle).
+  Delivers + verifies the WHOLE lifecycle, the map icon, and reload correctness —
+  no autonomous decision yet, so the enum has a concrete consumer (the command).
+- **R3e-3b-2 — Autonomous decision + festival attendance + boon.** The realized-only,
+  bounded, occasional decision (devout + `isUnservedLocally` + a reachable
+  same-faith village with a grand festival due via R3d-2/`BuildingFaith`),
+  destination festival attendance (full co-religion benefit), and the modest
+  return boon — layered on the R3e-3b-1 infra.
+
+### Open questions for greenlight (these change R3e-3b-1's scope)
+
+- **Away-state**: new `NpcRoleTypes.PILGRIM` role (recommended) vs. generalize the
+  existing away-flag?
+- **Destination reachability**: restrict pilgrim destinations to TradeRoute-
+  connected same-faith villages (recommended for R3e-3b-1 — reuses the map
+  polyline) vs. add a road-graph/straight-line polyline fallback now?
+
+### Tie-In Audit (of the proposed work)
+
+1. **Upstream feeders** — the decision trigger (R3e-3b-2): eligible adherent
+   (`isUnservedLocally` + piety) + destination (R3d-2 grand-festival schedule +
+   `BuildingFaith` faith match + route reachability).
+2. **Downstream callers** — `TravellingGroupEngine` (drives the group),
+   `KingdomMapScope`/`TravellerLayer`/`ClientTravellerCache` (map), the new
+   `PilgrimageSavedData` tick, `TownspersonMob` resident↔traveller (new PILGRIM
+   role), persistence.
+3. **Sibling systems** — R3e-3a VISITOR pilgrims (DISTINCT path — a resident
+   pilgrim keeps their real profession/identity and is never routed through
+   `VisitorFluxEngine`; confirmed no cross-talk), home-village population/needs
+   while away (the new role must be excluded like CARAVAN roles), R2b attendance
+   at the host festival.
+4. **Exhaustive switches** — `TravellerType` (`byId` is bounds-safe;
+   `TravellerLayer.iconColor/typeLabel` have `default` arms — PILGRIM needs
+   explicit arms; `KingdomMapScope` gather needs a pilgrim block). `NpcRoleTypes`
+   if a PILGRIM role is added.
+
+### Simplification Sweep (of the proposed work)
+
+The pilgrim path is a **thin specialization** of the TravellingGroup lifecycle
+(single member, religious dest/return boon), NOT a copy of Caravan — it reuses the
+interface + engine + Roster + map DTO, and adds only `Pilgrimage` +
+`PilgrimageSavedData` + the enum/role/command. Genuinely shared: engine, Roster,
+map DTO/cache, despawn/respawn. Pilgrim-specific: the group impl, its SavedData,
+the away role, the decision, the boon. No parallel traveller/away framework.
+
+### Deviations from prompt
+
+- **No code shipped this phase.** The prompt explicitly authorized a STOP +
+  sub-split proposal if mapping showed the work too large for one clean pass; it
+  is (new codec SavedData + map-network + away-role + 3 design forks, all
+  unverifiable here). Proposing R3e-3b-1 / R3e-3b-2 instead of forcing it.
+- The "reuse the caravan conversion/reintegration SITES" framing doesn't hold
+  literally — those sites are caravan-role/merchant-specific
+  (`reserveIdleMerchant`, `clearCaravanRoles`, CARAVAN_PRINCIPAL). The pilgrim
+  reuses the PATTERN (TravellingGroup lifecycle) with its own role + SavedData.
+
+### Out-of-scope but flagged
+
+- R3e-3b-1 + R3e-3b-2 as proposed. Map polyline for non-route village pairs (fork 2)
+  if the user wants unrestricted destinations. The autonomous decision tuning.
+
+### Build verification
+
+No code shipped — nothing to compile. (Sandbox blocks maven.neoforged.net
+regardless.) The next sub-phase will carry the standard build-verification-deferred
+note. This entry is the durable disposition the sub-split builds on.
