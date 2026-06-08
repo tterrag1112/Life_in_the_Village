@@ -4,13 +4,23 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Letters.BookCategory;
+import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Scribal.BookRecord;
+import tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue;
+import tterrag1112.life_in_the_village.Npc.Traits.TraitAxis;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.EconomicBalance;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingCondition;
 import tterrag1112.life_in_the_village.Village.Village;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -48,6 +58,24 @@ public final class TempleProsperity {
     private static final float HIGH_PIETY = 0.50f;
     /** Neutral piety used when no villagers are loaded to sample. */
     private static final float NEUTRAL_PIETY = 0.4f;
+
+    // ── R4d-2 surplus spending ───────────────────────────────────────────────
+    /** Runway kept untouched so good works never cause insolvency (R4c). */
+    private static final long  SOLVENCY_BUFFER = 7 * DAILY_COST;   // a week's costs
+    /** Surplus spent per (weekly) pass — bounded, anti-runaway. */
+    private static final long  SPEND_PER_PASS  = 40L;
+    private static final int   SPEND_PERIOD_DAYS = 7;
+    /** A villager with less than this is "needy" (alms recipient). */
+    private static final long  NEEDY_THRESHOLD = 50L;
+    private static final long  ALMS_PER_NPC    = 12L;
+    private static final int   MAX_ALMS_RECIPIENTS = 3;
+    private static final int   ALMS_MOOD       = 8;
+    /** Cost to author + stock one religious library book. */
+    private static final long  BOOK_COST       = 20L;
+    /** Don't flood the library — cap temple-stocked religious books. */
+    private static final int   RELIGIOUS_BOOK_CAP = 6;
+    /** Topic prefix tagging a temple-stocked religious book (for the cap count). */
+    private static final String RELIGION_TOPIC = "religion.";
 
     /**
      * Daily per-village pass (called from {@link RiteScheduler#dailyTick}). Updates
@@ -115,6 +143,11 @@ public final class TempleProsperity {
                     data.markDirty();
                 }
             }
+
+            // R4d-2 — a temple with genuine surplus spends it on good works
+            // (alms + library books). Only surplus ABOVE the solvency buffer is
+            // spent, so R4c is never undermined.
+            spendSurplus(level, village, data, b, econ, currentTick);
         }
     }
 
@@ -155,6 +188,119 @@ public final class TempleProsperity {
                         npc -> npc.getProfession() == Profession.PRIEST
                                 && npc.getAssignedBuildingId().map(buildingId::equals).orElse(false))
                 .stream().findFirst();
+    }
+
+    // ── R4d-2 — surplus → good works (alms + library books) ──────────────────
+
+    /**
+     * Spends a religious building's GENUINE surplus (treasury above
+     * {@link #SOLVENCY_BUFFER}) on alms + library books, weekly + staggered. Needs
+     * a seated priest (good works are clergy-led); a {@code TraitAxis.COMPASSION}
+     * priest favours alms. Bounded by {@link #SPEND_PER_PASS}; never dips below the
+     * buffer, so R4c solvency is untouched.
+     */
+    private static void spendSurplus(ServerLevel level, Village village,
+                                     VillageSavedData data, Building building,
+                                     BuildingEconomy econ, long currentTick) {
+        long surplus = econ.getTreasury() - SOLVENCY_BUFFER;
+        if (surplus <= 0) return;                                  // at/below buffer → nothing
+        long day = currentTick / DAY;
+        if ((day + Math.floorMod(building.getId().hashCode(), SPEND_PERIOD_DAYS)) % SPEND_PERIOD_DAYS != 0) {
+            return;                                                // weekly, staggered
+        }
+        TownspersonMob priest = findAssignedPriest(level, village, data, building.getId()).orElse(null);
+        if (priest == null) return;                                // no clergy → no good works
+
+        long budget = Math.min(surplus, SPEND_PER_PASS);
+        // Compassion ∈ [-1,1] → alms share ∈ [0.1,0.9] (Callous gives little).
+        float compassion = priest.getTraitVector().get(TraitAxis.COMPASSION);
+        float almsShare = Math.max(0.1f, Math.min(0.9f, 0.5f + compassion * 0.4f));
+        long almsBudget = Math.round(budget * almsShare);
+
+        long spent = distributeAlms(level, village, data, econ, almsBudget, currentTick);
+        spent += stockLibraryBook(level, village, data, econ, building, priest,
+                budget - spent, currentTick);
+        if (spent > 0) data.setDirty();
+    }
+
+    /** Tops up the neediest loaded villagers (wallet &lt; {@link #NEEDY_THRESHOLD})
+     *  from the temple economy + a small mood lift. Returns bronze spent. */
+    private static long distributeAlms(ServerLevel level, Village village,
+                                       VillageSavedData data, BuildingEconomy econ,
+                                       long budget, long now) {
+        if (budget <= 0) return 0L;
+        AABB bounds = village.getBounds(data).map(b -> b.inflate(32)).orElse(null);
+        if (bounds == null) return 0L;
+        List<TownspersonMob> needy = new ArrayList<>(level.getEntitiesOfClass(
+                TownspersonMob.class, bounds,
+                m -> m.isAlive() && !m.isVisitor()
+                        && m.getAssignedVillageName().map(n -> n.equals(village.getName())).orElse(false)
+                        && m.getWallet().toBronze() < NEEDY_THRESHOLD));
+        needy.sort(Comparator.comparingLong(m -> m.getWallet().toBronze()));
+
+        long spent = 0L;
+        int given = 0;
+        for (TownspersonMob m : needy) {
+            if (given >= MAX_ALMS_RECIPIENTS || spent >= budget) break;
+            long alm = Math.min(ALMS_PER_NPC, Math.min(budget - spent, econ.getTreasury() - SOLVENCY_BUFFER));
+            if (alm <= 0) break;
+            econ.withdraw(alm);
+            m.getWallet().receive(CurrencyValue.of(alm));
+            m.getMood().applyWithRawMagnitude(MoodTrigger.GIFT_RECEIVED, ALMS_MOOD, now);
+            spent += alm;
+            given++;
+        }
+        return spent;
+    }
+
+    /** Authors one religious book of the faith's {@code preferredBookCategories}
+     *  (reviving the dead field) and stocks the village library, funded by surplus.
+     *  Bounded by {@link #RELIGIOUS_BOOK_CAP}. Returns bronze spent. */
+    private static long stockLibraryBook(ServerLevel level, Village village,
+                                         VillageSavedData data, BuildingEconomy econ,
+                                         Building building, TownspersonMob priest,
+                                         long budget, long now) {
+        if (budget < BOOK_COST) return 0L;
+        if (econ.getTreasury() - SOLVENCY_BUFFER < BOOK_COST) return 0L;
+        UUID libraryId = firstLibrary(village, data);
+        if (libraryId == null) return 0L;                          // no library to stock
+
+        String faith = BuildingFaith.resolveFaith(level, village, building);
+        if (faith == null) return 0L;
+        Religion religion = ReligionRegistry.get(faith);
+        if (religion == null || religion.preferredBookCategories().isEmpty()) return 0L;
+
+        LibraryCatalogue cat = data.getOrCreateLibraryCatalogue(libraryId);
+        long stocked = cat.all().stream()
+                .filter(r -> r.topicsCovered().stream().anyMatch(t -> t.startsWith(RELIGION_TOPIC)))
+                .count();
+        if (stocked >= RELIGIOUS_BOOK_CAP) return 0L;              // library full of faith books
+
+        List<BookCategory> prefs = religion.preferredBookCategories();
+        BookCategory category = prefs.get((int) (stocked % prefs.size())); // rotate for variety
+        String title = religion.displayName() + " — " + readable(category);
+
+        BookRecord record = new BookRecord(
+                UUID.randomUUID(), title, priest.getNpcName(),
+                java.util.Optional.of(priest.getUUID()),
+                List.of(RELIGION_TOPIC + faith, "category." + category.name().toLowerCase()),
+                java.util.Optional.empty(), 3, now, 1);
+        cat.acquire(record);
+        econ.withdraw(BOOK_COST);
+        return BOOK_COST;
+    }
+
+    private static UUID firstLibrary(Village village, VillageSavedData data) {
+        for (UUID bid : village.getBuildingIds()) {
+            Building b = data.getBuildingById(bid).orElse(null);
+            if (b != null && b.getType() == BuildingType.LIBRARY) return bid;
+        }
+        return null;
+    }
+
+    private static String readable(BookCategory c) {
+        String n = c.name().toLowerCase();
+        return Character.toUpperCase(n.charAt(0)) + n.substring(1);
     }
 
     /** A dormant, building-less PRIEST in the village (the R4c-abandoned ex-priest),

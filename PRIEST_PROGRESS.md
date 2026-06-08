@@ -4535,3 +4535,140 @@ weekly stagger by UUID; affordability-gated; no new enum/brain memory.
    R4c abandonment that an un-tithed temple falls into.
 5. Confirm the R4a one-shot tithe rite still deposits to the temple economy (the
    shared primitive is unchanged behaviourally).
+
+---
+
+## R4d-2 — Temple surplus outflows: alms + library books (2026-06-08)
+
+R4 outflow depth. A flourishing temple now spends genuine SURPLUS on good works:
+**alms** for the village's needy and **religious books** for the library —
+reviving the dead `Religion.preferredBookCategories`. One spend hook in the R4c
+`TempleProsperity` daily pass; the solvency buffer protects R4c.
+
+### Disposition (findings, verified on branch)
+
+- **`TempleProsperity` (R4c)** — the daily per-village pass + the solvency model
+  (`DAILY_COST = wage+upkeep = 14`). The spend hook lives here (no new tick).
+  Surplus = `treasury − SOLVENCY_BUFFER` (a week's runway = 98); spend only above
+  it so R4c is never undermined.
+- **`BuildingEconomy.withdraw`** funds the spend; each alm/book re-checks
+  `treasury − buffer` so spending never crosses the buffer.
+- **Recipients / wealth signal** — no poverty stat exists; wallet balance is the
+  proxy. Neediest = loaded village residents with `getWallet().toBronze() <
+  NEEDY_THRESHOLD`, lowest first. NPC alms go via `npc.getWallet().receive`
+  (`CoinHelper` is PLAYER-inventory-side — MISMATCH flagged; the recipients are
+  NPCs).
+- **Compassion** — `npc.getTraitVector().get(TraitAxis.COMPASSION)` ∈ [-1,1]
+  (Callous −1 … Compassionate +1). Scales the alms share.
+- **Library** — `VillageSavedData.getOrCreateLibraryCatalogue(libraryBuildingId)`
+  (keyed by the LIBRARY building); a book is `new BookRecord(...)` + `cat.acquire`
+  (the `ScholarBehavior` path). **MISMATCH: `BookRecord` has NO category field**
+  (category drives the subject, not stored) and **`ProceduralBookFactory` only
+  authors ledgers** (`generateVillageLedger`), not categorized books — so I author
+  the `BookRecord` directly (the catalogue's native unit) and encode the category
+  in the title/topics. `Religion.preferredBookCategories()` (the dead field) drives
+  WHICH category to author — its first consumer.
+
+### Design / decisions
+
+- **One `spendSurplus` hook** per religious building (end of the per-building loop),
+  weekly + staggered by building UUID; needs a seated priest (good works are
+  clergy-led — a vacant building doesn't spend). `budget = min(surplus,
+  SPEND_PER_PASS=40)`.
+- **Alms / book split by compassion** — `almsShare = clamp(0.5 + compassion·0.4,
+  0.1, 0.9)`: a Compassionate priest gives ~0.9 to alms, a Callous one ~0.1 (more
+  to books). Alms first, then books from the remainder.
+- **Alms** (`distributeAlms`) — the ≤3 neediest (`< NEEDY_THRESHOLD=50`) loaded
+  villagers each get up to `ALMS_PER_NPC=12` from the economy + a small mood lift
+  (`GIFT_RECEIVED`), never dipping below the buffer.
+- **Books** (`stockLibraryBook`) — if a village LIBRARY exists and it holds fewer
+  than `RELIGIOUS_BOOK_CAP=6` faith books (counted by a `religion.<faith>` topic
+  tag), author one `BookRecord` of a rotated preferred category (title = faith +
+  category; author = the priest; topics tag the faith + category), `acquire` it,
+  and withdraw `BOOK_COST=20`. A Sunstead temple stocks its categories
+  (RELIGIOUS/HISTORY/GUIDE), a Tidecall shrine its own (RELIGIOUS/TRAVELOGUE).
+- **Per-building** — `resolveFaith`/`getOrCreateBuildingEconomy` are per-building,
+  so a shrine's surplus funds its own faith's works (R3e-2).
+- Bounded + tunable: weekly cadence, per-pass cap, buffer floor, recipient/book
+  caps.
+
+### What shipped
+
+- `Npc/Religion/TempleProsperity.java` — `spendSurplus` + `distributeAlms` +
+  `stockLibraryBook` + `firstLibrary`/`readable` helpers + the surplus constants;
+  one call added at the end of the per-building loop.
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `TempleProsperity` surplus signal, `BuildingEconomy`
+   balance, the wallet wealth proxy (recipients), `TraitVector` COMPASSION,
+   `Religion.preferredBookCategories` (now consumed).
+2. **Downstream callers** — `BuildingEconomy.withdraw` (each spend), villager
+   `getWallet().receive` + mood (alms), `LibraryCatalogue.acquire` (books). The
+   solvency buffer is re-checked per withdraw so R4c's `daysInsolvent`/decay is
+   never triggered by spending.
+3. **Sibling systems** — R4c (the buffer keeps spending from causing abandonment),
+   R4d-1 tithe income (funds the surplus), `LibrarianBehavior` (curates the
+   now-stocked faith books — they're normal `BookRecord`s), R3e-2 shrines (own
+   surplus → own faith's works via per-building keying).
+4. **Exhaustive switches** — none added; no new enum. The `readable(BookCategory)`
+   helper is string formatting, not a switch. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `TempleProsperity` (the one surplus hook + helpers — alms +
+  books in ONE pass, not two ticks). Books reuse `BookRecord` + `LibraryCatalogue.
+  acquire` (the existing authoring/stock path, as `ScholarBehavior` uses), not a
+  new book pipeline. Alms reuse the wallet + mood. The buffer (`treasury − 98`)
+  re-checked per spend protects R4c. No new tick/enum/codec/brain memory.
+
+### Deviations from prompt
+
+- **NPC alms use `getWallet().receive`, not `CoinHelper`** — `CoinHelper` debits/
+  credits a player's inventory; the alms recipients are NPC villagers, whose money
+  is their `NpcWallet`. (Player-side alms would use CoinHelper, but recipients here
+  are villagers.)
+- **Book authoring is `new BookRecord(...)` + `LibraryCatalogue.acquire`, not
+  `ProceduralBookFactory`** — `ProceduralBookFactory` only generates village
+  ledgers, and `BookRecord` carries no `BookCategory`. So `preferredBookCategories`
+  is revived as the SUBJECT driver (it picks the category, encoded in the book's
+  title/topics), and the book is stocked as a normal catalogue record (the same
+  path `ScholarBehavior` uses).
+- **Books require a village LIBRARY** — if none exists, books aren't stocked (alms
+  still happen). Flagged.
+- The stocked faith book grants **no skill buff** (a devotional/lore book) — a
+  faith-skill buff is a possible enhancement, flagged.
+
+### Out-of-scope but flagged
+
+- Ledger pruning → R4e. A faith-skill buff on stocked books; a richer procedural
+  body for the religious book (currently a catalogue record only); player-side
+  alms; wealth-scaled alms beyond the flat per-NPC amount.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`getTraitVector().get(COMPASSION)`, `NpcWallet.receive`/`toBronze`,
+`BuildingEconomy.withdraw`, `BookRecord` 9-arg ctor, `LibraryCatalogue.acquire`/
+`all`, `getOrCreateLibraryCatalogue(UUID)`, `Religion.preferredBookCategories`/
+`displayName`, `BuildingFaith.resolveFaith`, `firstLibrary` (BuildingType.LIBRARY)
+confirmed; surplus only spent above the buffer (re-checked per withdraw → R4c
+intact); per-pass + recipient + book caps; no new enum/codec/brain memory.
+
+### Smoke test (user-runnable)
+
+1. Give a temple a large surplus (many offerings/tithes so its `BuildingEconomy`
+   ≫ 98 br). On its weekly spend day, confirm the poorest ≤3 villagers (wallet
+   < 50) gain coins + a mood lift and the temple surplus drops — but never below
+   ~98 (the solvency buffer; R4c `daysInsolvent` stays 0).
+2. Compare a Compassionate priest's temple (more to alms) vs a Callous one's
+   (less alms, more books).
+3. Confirm a religious book of the religion's `preferredBookCategories` is added to
+   the village LIBRARY catalogue (up to 6), and a Sunstead temple stocks different
+   categories than a Tidecall one. With no library present, confirm no book is
+   stocked (alms still occur).
+4. Confirm a temple AT/BELOW the buffer (treasury ≤ 98) spends NOTHING (R4c
+   protected).
+5. Confirm a shrine with surplus funds its OWN faith's alms/books (its economy,
+   its faith's book categories).
