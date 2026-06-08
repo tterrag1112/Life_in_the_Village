@@ -437,6 +437,10 @@ public final class RiteExecutor {
         // Spec line 130: village-wide, +2d mood, food-need reduction,
         // treasury bonus — religion-scaled (R3a; Sunstead's harvest is bigger).
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.HARVEST_THANKSGIVING);
+        // R4b — burn candles from the venue's stock; a candle-short temple holds
+        // a dimmer rite (the multiplier composes with the RiteProfile scaling).
+        CeremonyCandles.Lighting light = CeremonyCandles.light(level, village,
+                rite.location(), CeremonyCandles.candleCost(rite.type()));
         String name = village.getName();
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
@@ -445,7 +449,9 @@ public final class RiteExecutor {
             // faith at full mood; minorities get a reduced mood + a syncretic
             // drift toward the officiating faith (no own-faith credit).
             FaithReconciliation.applyCommunalBenefit(npc, religionId,
-                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(12), profile.scalePiety(0.02f), now);
+                    MoodTrigger.FESTIVAL_ATTENDED,
+                    Math.round(profile.scaleMood(12) * light.effectMultiplier()),
+                    profile.scalePiety(0.02f) * light.effectMultiplier(), now);
             npc.getPiety().recordRiteAttendance(now);
         }
         // Treasury bonus — small gesture from the village to mark the
@@ -462,6 +468,8 @@ public final class RiteExecutor {
         // Lighter cousin of harvest thanksgiving — mood only; religion-scaled
         // (R3a; Tidecall's tide feasts are bigger, the Loom's quieter).
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.FEAST_DAY);
+        CeremonyCandles.Lighting light = CeremonyCandles.light(level, village,
+                rite.location(), CeremonyCandles.candleCost(rite.type()));
         String name = village.getName();
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
@@ -469,7 +477,8 @@ public final class RiteExecutor {
             // R3e-1 — mood-only feast; minorities still attend but benefit less
             // (no piety either way, so no syncretic drift here).
             FaithReconciliation.applyCommunalBenefit(npc, religionId,
-                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(8), 0f, now);
+                    MoodTrigger.FESTIVAL_ATTENDED,
+                    Math.round(profile.scaleMood(8) * light.effectMultiplier()), 0f, now);
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;
@@ -492,13 +501,17 @@ public final class RiteExecutor {
         // daily scan reads to grant the ongoing village blessing — no new
         // building/codec field.
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.CONSECRATION);
+        CeremonyCandles.Lighting light = CeremonyCandles.light(level, village,
+                rite.location(), CeremonyCandles.candleCost(rite.type()));
         String name = village.getName();
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
             // R3e-1 — cross-faith reconciliation (see handleHarvestThanksgiving).
             FaithReconciliation.applyCommunalBenefit(npc, religionId,
-                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), profile.scalePiety(0.03f), now);
+                    MoodTrigger.FESTIVAL_ATTENDED,
+                    Math.round(profile.scaleMood(10) * light.effectMultiplier()),
+                    profile.scalePiety(0.03f) * light.effectMultiplier(), now);
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;
@@ -513,6 +526,8 @@ public final class RiteExecutor {
         // martial-resolve via a higher profile scale, others mourning-comfort).
         if (village == null) return RiteOutcome.DISRUPTED;
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.VIGIL);
+        CeremonyCandles.Lighting light = CeremonyCandles.light(level, village,
+                rite.location(), CeremonyCandles.candleCost(rite.type()));
         String name = village.getName();
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
@@ -520,7 +535,8 @@ public final class RiteExecutor {
             // R3e-1 — mood-only vigil; cross-faith attendees get the reduced
             // comfort (no piety either way).
             FaithReconciliation.applyCommunalBenefit(npc, religionId,
-                    MoodTrigger.LETTER_FROM_FRIEND, profile.scaleMood(8), 0f, now);
+                    MoodTrigger.LETTER_FROM_FRIEND,
+                    Math.round(profile.scaleMood(8) * light.effectMultiplier()), 0f, now);
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;
@@ -557,6 +573,10 @@ public final class RiteExecutor {
         // gatherings + calendar days — no per-faith handler.
         if (village == null) return RiteOutcome.DISRUPTED;
         RiteProfile profile = ReligionContent.profileFor(religionId, rite.type());
+        // R4b — a grand festival burns more candles than a signature rite
+        // (candleCost keys on rite.type()); a candle-short venue runs dim.
+        CeremonyCandles.Lighting light = CeremonyCandles.light(level, village,
+                rite.location(), CeremonyCandles.candleCost(rite.type()));
         String name = village.getName();
         List<TownspersonMob> attendees = new ArrayList<>();
         for (var entity : level.getEntities().getAll()) {
@@ -566,7 +586,9 @@ public final class RiteExecutor {
             // The relationship "binding ring" below still includes everyone at
             // the festival regardless of faith (it is social, not devotional).
             FaithReconciliation.applyCommunalBenefit(npc, religionId,
-                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), profile.scalePiety(0.03f), now);
+                    MoodTrigger.FESTIVAL_ATTENDED,
+                    Math.round(profile.scaleMood(10) * light.effectMultiplier()),
+                    profile.scalePiety(0.03f) * light.effectMultiplier(), now);
             npc.getPiety().recordRiteAttendance(now);
             attendees.add(npc);
         }

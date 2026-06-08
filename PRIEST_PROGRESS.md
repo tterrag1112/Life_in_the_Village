@@ -3964,3 +3964,157 @@ no new brain memory.
 5. Run a grand festival / consecration / harvest; confirm the civic boon still
    lands in the VILLAGE treasury (not the temple economy) — `/building`-style
    readouts show the village treasury rising, the temple economy unchanged by it.
+
+---
+
+## R4b — Production ↔ consumption: candles burned at ceremonies (2026-06-08)
+
+Second phase of R4. Closes the temple GOODS loop (distinct from the R4a money
+hub): the priest already PRODUCES candles into building storage but nothing
+consumed them. Now village-wide ceremonies burn candles from the venue's stock,
+and a candle-short temple holds a dimmer ceremony.
+
+### Disposition (findings, verified on branch)
+
+- **Production** — `PriestBehavior.tickProducing` produces
+  `ProfessionSupplyChain.getOutputs(PRIEST)` = `WHITE_CANDLE, BOOK, GOLDEN_APPLE,
+  EXPERIENCE_BOTTLE`, **rotated by day** (`outputs.get((gameTime/24000)%size)`),
+  one item per `PRODUCE_TICKS` (200t) while inputs exist, deposited via
+  `NpcBehaviorHelpers.depositToBuilding`. So `WHITE_CANDLE` is produced ~1 day in
+  4. (Note: `WHITE_CANDLE` is BOTH a PRIEST input and output.) Left production
+  unchanged per the prompt; the modest candle costs below are sustainable for a
+  producing temple (see Sustainability).
+- **Storage primitives** — `BuildingStorageAccess.countItem(level, building,
+  item)` (int) + `takeItem(level, building, item, count)`. **`takeItem` is
+  partial-consuming but reports all-or-nothing** (it shrinks stacks as it goes and
+  returns `remaining==0`), so calling it when short would drain the partial stock
+  AND return false. → Used **count-then-take**: `take = min(have, cost)` so the
+  lit/dim decision is clean and partial stock isn't silently wasted on a query.
+- **Venue resolution** — reused the R4a `BuildingFaith.buildingIdAtLocation(
+  rite.location())` → the venue building (a shrine festival's `rite.location()` is
+  the shrine origin → consumes the shrine's candles; consecration's location is
+  the consecrated building's origin).
+- **Effect coupling** — the communal handlers apply the village-wide effect via
+  `FaithReconciliation.applyCommunalBenefit(npc, faith, trigger, scaledMood,
+  scaledPiety, now)` where the magnitudes are `RiteProfile`-scaled. The candle
+  multiplier composes by multiplying those already-scaled magnitudes BEFORE the
+  cross-faith reconciliation: `RiteProfile × candleFactor × cross-faith`. No new
+  scaler.
+- **Money vs stock** — confirmed `BuildingEconomy` (R4a money) and
+  `BuildingStorageAccess` (item stock) are separate subsystems; this phase touches
+  only stock. No cross-wire.
+
+### Design / decisions
+
+- **One helper `CeremonyCandles`** (Npc.Religion), hit by all consuming
+  ceremonies (no per-handler copy-paste):
+  - `candleCost(rite)` (switch + default): `GRAND_FESTIVAL=4`,
+    `HARVEST_THANKSGIVING/SIGNATURE_RITE/CONSECRATION=2`, `FEAST_DAY/VIGIL=1`,
+    everything else (personal rites) `0`.
+  - `light(level, village, venue, cost)` → `Lighting(effectMultiplier, lit)`:
+    count-then-take up to `cost` `WHITE_CANDLE` from the venue building; `lit`
+    when the full cost was in stock (×1.0), else dim (×`DIM_MULTIPLIER=0.6`).
+    A `cost≤0` / unresolvable venue → lit (no penalty), so personal rites and
+    venue-less rites are unaffected.
+- **Hooked into the 5 village-wide communal handlers** (`handleHarvestThanksgiving`,
+  `handleFeastDay`, `handleConsecration`, `handleVigil`, `handleSignatureRite`):
+  one `light(...)` call per ceremony (single consume), then each attendee's
+  mood/piety is `Math.round(scaled × effectMultiplier)`. Never a hard cancel — a
+  dim ceremony still fires, just lesser.
+
+### What shipped
+
+- `Npc/Religion/CeremonyCandles.java` (new) — `candleCost` + `light` (the one
+  consumption + lighting helper).
+- `Npc/Religion/RiteExecutor.java` — the 5 communal handlers consume candles once
+  and scale their effect by the lighting multiplier.
+
+### Sustainability
+
+A grand festival (annual per faith) burns 4; signature/harvest/consecration burn
+2; feast/vigil burn 1. The priest produces ~1 candle per 4 days (rotation) — i.e.
+~7/month — so a producing temple sustains routine holy days + the annual grand
+festival; a neglected/under-producing temple runs dim. If the day-rotation makes
+candles too sporadic in practice, bumping the candle slot in the production
+rotation is a flagged follow-up (production left untouched here per the prompt).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `PriestBehavior` production (the candle supply, into
+   building storage), `BuildingStorageAccess.countItem/takeItem`,
+   `BuildingFaith.buildingIdAtLocation` (venue → building).
+2. **Downstream callers** — the 5 `RiteExecutor` communal handlers (consume +
+   couple), `RiteProfile`/`ReligionContent` (the candle factor multiplies the
+   scaled magnitude), `FaithReconciliation` (cross-faith reconciliation still
+   composes correctly — it receives the candle-reduced magnitudes and applies the
+   per-attendee faith factor on top).
+3. **Sibling systems** — R4a money: SEPARATE (`BuildingEconomy` vs item storage —
+   no cross-wire). R2b/R3d attendance: unaffected (consumption is at rite-execute
+   time, not attendance). R3d-1 crowd-bless: NOT candle-coupled (single consume in
+   the one-shot handler avoids double-consume / carrying lit-state across the
+   festival window) — flagged. Other behaviors' building-storage use: untouched
+   (candles are a distinct item; `takeItem` is the shared primitive).
+4. **Exhaustive switches** — `candleCost(Rite)` has a `default`; no `Rite`/enum
+   added. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `CeremonyCandles` (new — 1 consumption + 1 cost method, 5
+  inbound handler sites), `RiteExecutor` (the 5 handlers, edited). One helper hit
+  by all consuming ceremonies; the reduction multiplier COMPOSES with the existing
+  `RiteProfile`/`FaithReconciliation` scaling (multiplies the scaled magnitude),
+  not a replacement. Reuses `BuildingStorageAccess` (no parallel stock) and the
+  R4a `buildingIdAtLocation` venue resolver. No new enum/codec/brain memory.
+
+### Deviations from prompt
+
+- **Flavor is encoded in the EFFECT, not separate text.** A dim ceremony literally
+  lands less mood/piety (×0.6) — that IS the "dimmer" outcome. A player-facing
+  "candlelit vs dim" announcement/memory line is a light nice-to-have, flagged
+  (the communal handlers write no per-NPC memory to hang it on; the festival
+  announcement is in the scheduler, out of this phase's scope).
+- **The R3d-1 crowd-bless is not candle-coupled** — consumption + coupling live in
+  the one-shot communal handler (single consume). Coupling the sustained crowd
+  pulses too would double-consume or require carrying the lit-state in the
+  gathering's eventData across the window. Flagged for a later pass if the crowd
+  pulses should also dim.
+- **Personal rites (offering/confession) don't consume** — `candleCost` returns 0
+  for them (kept light per the prompt's "your call"); a single-candle flavor for
+  them is flagged.
+
+### Out-of-scope but flagged
+
+- Books → temple library (R4d, `preferredBookCategories`); blessed consumables
+  (golden apple / exp bottle) handed to participants. Money flows (R4a). Decay
+  (R4c). Candle-coupling the crowd-bless; player-facing lit/dim flavor text;
+  a per-rite candle flavor for personal rites; production-rotation tuning if
+  candles prove too sporadic.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`countItem`/`takeItem`/`buildingIdAtLocation` signatures cross-checked; all 5
+handlers route through the one `CeremonyCandles.light` (grep-verified); count-then-
+take avoids partial-stock waste; the candle factor composes with
+`RiteProfile`×`FaithReconciliation`; `candleCost` switch has a default; money
+(R4a) untouched; no new enum/codec/brain memory.
+
+### Smoke test (user-runnable)
+
+1. Let a priest run for a few days so `WHITE_CANDLE` accumulates in the temple
+   storage (check the temple's containers). Trigger a grand festival / holy day;
+   confirm the candle count drops by the ceremony's cost (grand 4, signature/
+   harvest/consecration 2, feast/vigil 1) and the ceremony lands at FULL effect
+   (full mood/piety on attendees).
+2. Empty the temple's candle stock (or withhold production); trigger another
+   ceremony; confirm it STILL fires but at REDUCED effect (×0.6 mood/piety) — a
+   dim ceremony, never cancelled.
+3. Over repeated ceremonies, confirm a well-producing temple stays lit
+   (production keeps candles in stock); a neglected one runs dim.
+4. In a village with a Tidecall SHRINE (R3e-2), stock candles at the shrine and
+   trigger the shrine's grand festival; confirm it consumes the SHRINE's candles,
+   not the temple's.
+5. Confirm R4a money is unaffected by candle burning (the temple's `BuildingEconomy`
+   treasury doesn't change when candles are consumed — stock and money are
+   separate).
