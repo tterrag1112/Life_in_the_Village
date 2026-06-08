@@ -4924,3 +4924,133 @@ capacity; no new enum/brain memory.
 4. In a village with NO graveyard, kill an NPC; confirm it's handled gracefully (no
    grave, no error; the FUNERAL rite still runs its remembrance).
 5. Save + reload; confirm the graveyard + its graves persist.
+
+---
+
+## R5b — visit_grave + grief / remembrance (2026-06-08)
+
+Makes the `visit_grave` hobby functional on the R5a graveyard: the bereaved walk
+out to a kin's grave, grief eases gradually, and remembrance is recorded — the
+legible heart of the death loop.
+
+### Disposition (findings, verified on branch)
+
+- **Hobby perform** — `HobbyBehavior` walks to the hobby's `HobbyLocation` then
+  poses for `durationTicks` (`WALKING → PERFORMING → LEAVING`). `VISIT_GRAVE` was
+  **pose-only** (a no-op in `performTick`/`equipForActivity`); R5a made
+  `HobbyLocation.GRAVEYARD` resolve, so the walk now works — only the EFFECT was
+  missing.
+- **Grief surface** — a death applies a MOOD low to survivors via `MoodProducer`
+  (`FAMILY_DEATH` −60 for KIN/SPOUSE, `CLOSE_FRIEND_DEATH` −35); there is **NO
+  persistent grief `HealthCondition`** (no MELANCHOLY on death). `handleFuneral`
+  eases grief with `MoodTrigger.LETTER_FROM_FRIEND` (a comfort channel,
+  daily-stack-capped at 0.2 → 20/day). → Easing = the same comfort channel; the
+  per-day cap is the natural anti-double-dip + anti-farm.
+- **Relationships** — `npc.getNpcRelationships().getScore(UUID)` persists by UUID
+  (so it works for a DEAD deceased) → find the cared-about buried deceased.
+- **Remembrance memory** — no "remembrance" `MemoryType` exists; reused
+  `SHARED_HARDSHIP` (POSITIVE), keyed to the deceased's UUID. (A dedicated type
+  would be a speculative enum — avoided.)
+
+### Design / decisions
+
+- **`GraveVisit` (new, Village.Graveyard)** — the brains:
+  - `caredAboutGrave(level, npc)` — the buried deceased with the highest positive
+    relationship (≥ `MIN_CARE=20`); empty when none / no graveyard.
+  - `visitTarget(level, npc)` — that cared-about grave's slot, else the graveyard's
+    general `visitTarget`; empty with no graveyard.
+  - `contemplate(level, npc, now)` — the once-per-visit effect: a bereaved visitor
+    gets a bounded grief-ease (`LETTER_FROM_FRIEND +5`, the SAME daily-capped
+    channel as the funeral → no double-dip, gradual over repeated visits) + a
+    `SHARED_HARDSHIP` remembrance memory; a general visitor gets a small
+    contemplative touch (`WEATHER_PLEASANT +2`).
+- **Resolver** — `HobbyLocationResolver.GRAVEYARD` now returns
+  `GraveVisit.visitTarget` (NPC-aware: the kin grave, else general).
+- **Effect hook** — `HobbyBehavior.startPerforming`: when the activity is
+  `VISIT_GRAVE`, call `GraveVisit.contemplate` ONCE on arrival (the pose continues
+  through PERFORMING). One `if`, not a new switch arm — the `HobbyActivity`
+  switches are untouched.
+- **The bereaved draw** — `NpcHobbyPreference.generate` adds `BEREAVEMENT_BOOST=0.6`
+  to the `visit_grave` candidate's score when `caredAboutGrave` is present (computed
+  only for that one candidate), so the recently-bereaved are more likely to pick it.
+
+### What shipped
+
+- `Village/Graveyard/GraveVisit.java` (new) — targeting + grief/remembrance effect.
+- `Npc/Hobby/HobbyLocationResolver.java` — `GRAVEYARD` → `GraveVisit.visitTarget`.
+- `Npc/Brain/Behaviors/HobbyBehavior.java` — `VISIT_GRAVE` arrival fires the effect.
+- `Npc/Hobby/NpcHobbyPreference.java` — `BEREAVEMENT_BOOST` for `visit_grave`.
+
+### Tie-In Audit
+
+1. **Upstream feeders** — hobby selection (the bereaved boost), `HobbyLocationResolver.GRAVEYARD`,
+   R5a `Graveyard`/`Grave` lookup, `NpcRelationships` (who cared), the death-mood
+   grief state.
+2. **Downstream callers** — `HobbyBehavior` (now performs VISIT_GRAVE), mood
+   (`LETTER_FROM_FRIEND`/`WEATHER_PLEASANT`), the memory log (remembrance),
+   `Graveyard.visitTarget`/`graveOf`.
+3. **Sibling systems** — `handleFuneral`: NO double-ease — both use the same
+   daily-capped `LETTER_FROM_FRIEND`, so the per-day cap bounds total recovery
+   (the funeral + visits share one comfort budget). The liveliness hobby/idle
+   system: `visit_grave` is one of the trait-weighted hobbies (fires correctly via
+   the L2 LEISURE wiring); the bereaved boost just lifts its score. R5c ancestor
+   veneration: a future consumer of the same grave visiting.
+4. **Exhaustive switches** — `HobbyActivity`: the existing pose-only arms are
+   unchanged; the effect is an `if` in `startPerforming`, not a switch arm. No new
+   enum. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `GraveVisit` (new — targeting + effect, 3 inbound: resolver,
+  HobbyBehavior, NpcHobbyPreference), `HobbyLocationResolver`/`HobbyBehavior`/
+  `NpcHobbyPreference` (one wiring each). `visit_grave` is one hobby-activity
+  implementation reusing the hobby behavior + R5a lookup + the mood/memory/relationship
+  paths — no parallel visit/grief framework. No new brain memory (reuses the hobby
+  cooldown); no new enum; no codec change.
+
+### Deviations from prompt
+
+- **Grief is a mood low (no persistent condition)**, so the ease is a bounded
+  mood lift on the funeral's comfort channel rather than "clearing a grief state";
+  the daily-stack cap is the anti-double-dip + anti-farm, and recovery is gradual
+  over days/visits.
+- **Remembrance reuses `SHARED_HARDSHIP`** (no dedicated `MemoryType`) — keyed to
+  the deceased; one memory per cared-about visit (bounded by the hobby cadence +
+  memory decay). A dedicated REMEMBERED type is a flagged enhancement.
+- **The bereaved draw couples `NpcHobbyPreference` → `GraveVisit`** (a graveyard +
+  relationship lookup), computed only for the `visit_grave` candidate.
+
+### Out-of-scope but flagged
+
+- Ancestor veneration (Forge Creed / Ancestor Oath at graves) → R5c; graveyard
+  auto-placement (deferred). A dedicated remembrance `MemoryType`; refreshing
+  (vs re-adding) the remembrance memory; scaling the draw/ease by grief recency.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+`getNpcRelationships().getScore`, `getMood().applyWithRawMagnitude`,
+`getMemory().add(NpcMemory.create(...))`, `MoodTrigger.LETTER_FROM_FRIEND`/`WEATHER_PLEASANT`,
+`MemoryType.SHARED_HARDSHIP`, R5a `Graveyard.graves/visitTarget`/`Grave.slot/deceasedId/name`,
+`GraveVisit.visitTarget` returns `Optional<BlockPos>` (resolver arm exhaustive),
+`generate(npc, level, rng)` params, `entity.level() instanceof ServerLevel`
+confirmed; the funeral + visit share the comfort cap (no double-ease); no new
+enum/codec/brain memory.
+
+### Smoke test (user-runnable)
+
+1. In a village with a graveyard, kill an NPC who has surviving kin / close friends
+   (high relationship). Confirm a grave is recorded (R5a) and the bereaved kin are
+   now drawn to `visit_grave` (the BEREAVEMENT_BOOST lifts it in their hobby
+   rotation).
+2. Watch a bereaved NPC pick `visit_grave`: confirm they walk to THAT specific
+   grave (the cared-about deceased's slot), pose, and on arrival their mood lifts a
+   little + a remembrance memory ("Visited X's grave…") appears.
+3. Over repeated visits/days, confirm grief eases GRADUALLY (not a one-visit cure,
+   not farmable — the LETTER_FROM_FRIEND daily cap bounds it, shared with the
+   funeral so no double-ease).
+4. Confirm a non-bereaved NPC can still do a general contemplative graveyard visit
+   (a small calming touch, no remembrance).
+5. Confirm a village with no graveyard / an NPC with no cared-about buried deceased
+   degrades gracefully — the hobby simply doesn't resolve a grave (no error).

@@ -152,7 +152,15 @@ public class HobbyBehavior extends Behavior<TownspersonMob> {
     private void startPerforming(TownspersonMob entity) {
         phase = Phase.PERFORMING;
         subTimer = 0;
-        equipForActivity(entity, activeDefinition.activities().get(0));
+        HobbyActivity activity = activeDefinition.activities().get(0);
+        equipForActivity(entity, activity);
+        // R5b — visiting a grave: ease grief + remember the deceased once, on
+        // arrival (the rest of PERFORMING is the contemplative pose).
+        if (activity == HobbyActivity.VISIT_GRAVE
+                && entity.level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            tterrag1112.life_in_the_village.Village.Graveyard.GraveVisit
+                    .contemplate(sl, entity, sl.getGameTime());
+        }
     }
 
     private void tickPerforming(TownspersonMob entity) {

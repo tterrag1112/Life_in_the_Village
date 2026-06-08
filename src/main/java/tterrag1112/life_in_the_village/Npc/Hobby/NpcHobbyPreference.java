@@ -35,6 +35,9 @@ public final class NpcHobbyPreference {
     public static final float RECENCY_PENALTY_PER_USE = 0.5f;
     /** Bonus added when the hobby's gain skill matches the NPC's primary skill. */
     public static final float SKILL_INTEREST_BONUS = 0.3f;
+    /** R5b — the recently-bereaved (a cared-about deceased buried locally) are
+     *  drawn to visit the grave. */
+    public static final float BEREAVEMENT_BOOST = 0.6f;
     /** Softmax temperature for session pick over top 5 candidates. */
     public static final float SOFTMAX_TEMPERATURE = 1.0f;
 
@@ -114,6 +117,13 @@ public final class NpcHobbyPreference {
             float s = def.traitWeight().score(traits);
             if (def.skillGain().isPresent() && def.skillGain().get() == primary) {
                 s += SKILL_INTEREST_BONUS;
+            }
+            // R5b — draw the bereaved to the grave (a cared-about deceased buried
+            // in this village). Only computed for the visit_grave candidate.
+            if (def.id().equals("visit_grave")
+                    && tterrag1112.life_in_the_village.Village.Graveyard.GraveVisit
+                            .caredAboutGrave(level, npc).isPresent()) {
+                s += BEREAVEMENT_BOOST;
             }
             float cultureMultiplier = tterrag1112.life_in_the_village.Cultures
                     .CultureResolver.hobbyWeightFor(culture, def.id());

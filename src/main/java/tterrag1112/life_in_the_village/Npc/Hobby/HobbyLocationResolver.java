@@ -50,12 +50,11 @@ public final class HobbyLocationResolver {
             case WATER_EDGE        -> resolveWaterEdge(villageOpt, level);
             case NATURE_TRAIL      -> resolveNatureTrail(villageOpt, level);
             case FRIEND_HOUSE      -> resolveFriendHouse(npc, data, level);
-            // R5a — the village graveyard (its most-recent grave, else the
-            // district centre); empty when the village has no graveyard yet.
-            case GRAVEYARD         -> villageOpt.flatMap(v ->
-                    tterrag1112.life_in_the_village.Village.Graveyard.GraveyardSavedData.get(level)
-                            .getGraveyard(v.getId())
-                            .map(tterrag1112.life_in_the_village.Village.Graveyard.Graveyard::visitTarget));
+            // R5a/R5b — the grave to visit: a cared-about deceased's grave when
+            // one is buried, else a general graveyard visit; empty when the
+            // village has no graveyard yet.
+            case GRAVEYARD         -> tterrag1112.life_in_the_village.Village.Graveyard
+                    .GraveVisit.visitTarget(level, npc);
         };
     }
 
