@@ -87,6 +87,14 @@ public final class RiteScheduler {
         catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] tithe pass threw: {}", t.getMessage());
         }
+
+        // 6. R4e — prune stale transient completed rites so the unpruned ledger
+        // stays bounded. The consecration SUCCESS marker + PENDING rites + the
+        // player-piety map are retained.
+        try { RiteSavedData.get(level).pruneStaleRites(level.getGameTime()); }
+        catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] ledger prune threw: {}", t.getMessage());
+        }
     }
 
     /** Groups loaded PRIEST NPCs by their village id (one entity pass). */

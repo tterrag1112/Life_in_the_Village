@@ -4672,3 +4672,128 @@ intact); per-pass + recipient + book caps; no new enum/codec/brain memory.
    protected).
 5. Confirm a shrine with surplus funds its OWN faith's alms/books (its economy,
    its faith's book categories).
+
+---
+
+## R4e — Rite-ledger pruning (2026-06-08)
+
+The R4 housekeeping finale. `RiteSavedData.rites` has grown unbounded since R1c
+(every completed rite stays forever). This prunes stale TRANSIENT completed rites
+past a retention window while RETAINING load-bearing markers, PENDING rites, and
+the player-piety map. **Completes R4 (the religious economy).**
+
+### Disposition — the marker audit (the central task)
+
+Grepped every reader of the rite ledger and classified each:
+
+- **`collectConsecrationMarkers`** (`RiteScheduler`) — reads CONSECRATION rites:
+  `SUCCESSFUL → consecrated` (THE marker), `PENDING → pending`. Consumed by
+  `applyConsecrationBlessings` (the ongoing village blessing) + `scheduleConsecrations`
+  (skip already-consecrated). → **`(CONSECRATION, SUCCESSFUL)` is a load-bearing
+  marker — RETAIN forever.** Pruning it would silently un-consecrate the building
+  (it re-schedules + loses its blessing). This is the #1 risk the phase guards.
+- **`hasPendingOrdination`** — reads PENDING ordination only (kept by the PENDING
+  rule). **`isOrdained` reads the clergy SPEC, not the ledger** — so a SUCCESSFUL
+  ORDINATION is NOT a marker → prunable. Confirmed.
+- **`dueRites`** (`RiteExecutor.runDue`, `PriestBehavior.findClaimableRite`) — PENDING/due
+  only. Kept.
+- **`getRite(id)`** — `PriestBehavior` re-fetch while officiating (the PENDING claim);
+  `AttendGatheringBehavior`/`PriestBehavior` `linkedRite` (a festival's blessing rite,
+  read only during its short active window). In-flight; safe to prune long after.
+- **`CommunityGatherings.all()`** (`inVillage` → `activeInVillage`/`activeNear`) — adds
+  all rites then **filters `isActiveAt`**; a completed rite's `gatheringStatus()` is
+  COMPLETED/CANCELLED (never active), so completed rites are already excluded.
+  `inVillage` has no direct non-active callers. Pruning completed rites is a no-op
+  for gathering queries. Confirmed.
+- **player-piety map** — a SEPARATE structure (`playerPiety`); NOT touched.
+
+**Classification:**
+- MARKER (retain forever): `(CONSECRATION, SUCCESSFUL)` — the ONLY one.
+- TRANSIENT (prunable after the window): every other completed rite
+  (SUCCESSFUL/SKIPPED/DISRUPTED of marriage, funeral, naming, coming-of-age,
+  blessing, confession, offering, tithe, harvest, feast, ordination, vigil,
+  purification, signature, grand).
+- PENDING: always kept (in-flight). player-piety: never touched.
+
+### Design / decisions
+
+- **One classifier in `RiteSavedData`** — `isMarker(r)` (the named, documented
+  marker set) + `isPrunable(r, now)` (PENDING → keep; marker → keep; else
+  `now − completedTick > RETENTION_TICKS`). The rule is in one place, the marker
+  set explicit + auditable.
+- **`pruneStaleRites(now)`** — collects prunable ids (capped at
+  `MAX_PRUNE_PER_PASS=500` so a huge ledger bounds gradually), removes them,
+  `setDirty`. Called from `RiteScheduler.dailyTick` (#6) — the existing daily
+  pass, no new tick/store.
+- **Retention window** — `RETENTION_TICKS = 30 in-game days`. Conservative: far
+  longer than any in-flight read of a completed rite (a festival's linked rite is
+  read only during its ≤½-day window) yet bounds the (high-frequency) rite ledger
+  to ~a month. Tunable.
+
+### What shipped
+
+- `Npc/Religion/RiteSavedData.java` — `isMarker`/`isPrunable`/`pruneStaleRites` +
+  the retention/cap constants. No codec change (just map removal).
+- `Npc/Religion/RiteScheduler.java` — daily `pruneStaleRites` pass (#6 in
+  `dailyTick`).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `RiteExecutor` (writes completed outcomes incl. the
+   consecration SUCCESS marker via `withOutcome`, which stamps `completedTick`);
+   the schedulers (write PENDING). The marker write is unchanged.
+2. **Downstream callers** — `collectConsecrationMarkers` (the marker reader —
+   `isMarker` retains exactly `(CONSECRATION, SUCCESSFUL)`, so it survives every
+   prune); `dueRites`/`getRite`/`ritesForVillage` consumers (PENDING/in-flight —
+   kept); `CommunityGatherings` (filters `isActiveAt` — completed rites already
+   excluded); player-piety readers (untouched map).
+3. **Sibling systems** — R3b-1 consecration (the ongoing blessing depends on the
+   marker surviving — it does), `TempleProsperity` (reads building economy, not
+   the ledger — unaffected), `/religion` debug listing (sees the last 30 days of
+   completed rites + all markers/pending).
+4. **Exhaustive switches** — `isMarker`/`isPrunable` branch on `Rite` +
+   `RiteOutcome` via `==` (not a `switch`); no enum added. The marker arm is the
+   single `CONSECRATION && SUCCESSFUL` condition. Confirmed.
+
+### Simplification Sweep
+
+- Classes in scope: `RiteSavedData` (the one classifier + one sweep), `RiteScheduler`
+  (one pass on the existing tick). The marker set is complete (the audit above) and
+  centralized in `isMarker`. No new tick/store/enum/codec/brain memory; pruning is
+  map removal + `setDirty`.
+
+### Deviations from prompt
+
+- **Retention window is 30 days** (the event store `pruneOldCompletedEvents` keeps
+  365). Chose tighter bounding for the higher-frequency rite ledger; 30 days still
+  vastly exceeds any in-flight read of a completed rite. Flagged — trivially
+  tunable to 365 for parity if preferred.
+
+### Out-of-scope but flagged
+
+- None new — this closes R4. (If future load-bearing completed-rite markers are
+  added, they MUST be added to `isMarker` — the single, documented place.)
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: the
+marker reader (`collectConsecrationMarkers` reads `SUCCESSFUL CONSECRATION`) is
+exactly what `isMarker` retains; PENDING + player-piety untouched;
+`CommunityGatherings` filters `isActiveAt`; ordination uses the spec not the
+ledger; `completedTick` is stamped by `withOutcome`; no codec/enum/brain-memory
+change; prune is a capped map sweep on the existing daily tick.
+
+### Smoke test (user-runnable)
+
+1. Run many rites of various types (weddings, funerals, namings, blessings,
+   offerings, festivals, ordinations) so the ledger grows; check the ledger size
+   (e.g. via a debug listing).
+2. Advance > 30 in-game days; confirm the transient completed rites are pruned and
+   the ledger size is bounded (only the last ~30 days of completed rites remain).
+3. **Consecrate a building, then advance past 30 days: confirm it STAYS
+   consecrated** — it is NOT re-scheduled for consecration and keeps its ongoing
+   daily blessing (the `(CONSECRATION, SUCCESSFUL)` marker survived).
+4. Confirm PENDING rites (e.g. a scheduled-but-unperformed marriage) and the
+   player-piety values are untouched after pruning.
+5. Confirm a recently-completed rite (within 30 days) is still present.

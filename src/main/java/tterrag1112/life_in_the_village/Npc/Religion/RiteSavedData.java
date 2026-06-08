@@ -97,6 +97,54 @@ public class RiteSavedData extends SavedData {
                 .toList();
     }
 
+    // ── Pruning (R4e) ────────────────────────────────────────────────────────
+
+    /** Keep this many in-game days of completed rites for history/debug; older
+     *  transient (non-marker) completed rites are pruned. Conservative — far
+     *  longer than any in-flight read of a completed rite (a festival's linked
+     *  rite is read only during its short active window). */
+    private static final long RETENTION_TICKS = 30L * 24000L;
+    /** Cap removals per daily pass so even a huge ledger is bounded gradually. */
+    private static final int  MAX_PRUNE_PER_PASS = 500;
+
+    /**
+     * R4e — the ONLY load-bearing completed-rite marker: a SUCCESSFUL
+     * {@link Rite#CONSECRATION} IS the durable "consecrated" marker (R3b-1).
+     * {@code RiteScheduler.collectConsecrationMarkers} reads it to grant the
+     * ongoing village blessing AND to skip re-consecrating the building — pruning
+     * it would silently un-consecrate the building. Everything else completed is
+     * transient: ordination reads the clergy spec (not the ledger), the schedulers
+     * read PENDING/due rites, and the gathering queries filter on {@code
+     * isActiveAt} (a completed rite is never active).
+     */
+    public static boolean isMarker(RiteExecution r) {
+        return r.type() == Rite.CONSECRATION && r.outcome() == RiteOutcome.SUCCESSFUL;
+    }
+
+    /** True when {@code r} is a transient completed rite past the retention window
+     *  — safe to drop. Never true for a PENDING (in-flight) rite or a marker. */
+    public static boolean isPrunable(RiteExecution r, long currentTick) {
+        if (r.outcome() == RiteOutcome.PENDING) return false;   // in-flight — keep
+        if (isMarker(r)) return false;                          // load-bearing — keep forever
+        return currentTick - r.completedTick() > RETENTION_TICKS;
+    }
+
+    /** Removes transient completed rites older than the retention window. Markers
+     *  + PENDING rites + the player-piety map are untouched. Returns the count
+     *  pruned. */
+    public int pruneStaleRites(long currentTick) {
+        List<UUID> toRemove = new ArrayList<>();
+        for (RiteExecution r : rites.values()) {
+            if (isPrunable(r, currentTick)) {
+                toRemove.add(r.riteId());
+                if (toRemove.size() >= MAX_PRUNE_PER_PASS) break;
+            }
+        }
+        for (UUID id : toRemove) rites.remove(id);
+        if (!toRemove.isEmpty()) setDirty();
+        return toRemove.size();
+    }
+
     // ── Player piety ────────────────────────────────────────────────────────
 
     public PietyComponent getOrCreatePlayerPiety(UUID playerId) {
