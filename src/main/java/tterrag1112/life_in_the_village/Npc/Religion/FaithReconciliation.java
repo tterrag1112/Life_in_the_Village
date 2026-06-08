@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
-import tterrag1112.life_in_the_village.Npc.Office.OfficeRegistry;
 import tterrag1112.life_in_the_village.Village.Village;
 
 /**
@@ -96,26 +95,17 @@ public final class FaithReconciliation {
     // ── Served / unserved ────────────────────────────────────────────────────
 
     /**
-     * The served/unserved test (one place). An NPC is an UNSERVED minority when
-     * their primary faith differs from the village's officiating faith, OR the
-     * village has no seated priest. Atheists (no primary faith) are not
+     * The served/unserved test (one place). Generalized in R3e-2: an NPC is
+     * SERVED when the village has a religious building of THEIR faith with a
+     * seated same-faith priest — a dominant-faith NPC by the temple/chapel, a
+     * minority by their own shrine (R3e-2). Otherwise they are unserved and
+     * fall back to solo private devotion. Atheists (no primary faith) are not
      * "unserved" — they have nothing to privately practice.
      */
     public static boolean isUnservedLocally(ServerLevel level, Village village, TownspersonMob npc) {
         if (village == null) return false;
         String mine = npc.getPiety().primaryReligion().orElse(null);
         if (mine == null) return false;                       // no faith → nothing to practice
-        String local = ReligionContent.villageReligionId(level, village);
-        if (!mine.equals(local)) return true;                 // minority faith → unserved locally
-        return !villageHasPriest(village);                    // own faith dominant but unstaffed
-    }
-
-    /** True when the village's VILLAGE_PRIEST office is seated (mirrors
-     *  {@code RiteExecutor.findPriest}). */
-    private static boolean villageHasPriest(Village village) {
-        return village.getOffices().get(OfficeRegistry.VILLAGE_PRIEST)
-                .filter(h -> !h.isVacant())
-                .flatMap(h -> h.holderUuid())
-                .isPresent();
+        return !BuildingFaith.hasSeatedPriestOfFaith(level, village, mine);
     }
 }

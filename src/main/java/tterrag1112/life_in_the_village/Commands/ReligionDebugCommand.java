@@ -58,7 +58,74 @@ public final class ReligionDebugCommand {
                         .then(Commands.argument("player", UuidArgument.uuid())
                                 .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 1f))
                                         .executes(ReligionDebugCommand::handleTithe))))
+                // R3e-2 — override the nearest shrine's patron faith and re-fix
+                // its seated priest's belief + order.
+                .then(Commands.literal("shrine")
+                        .then(Commands.argument("religionId", StringArgumentType.word())
+                                .suggests((c, b) -> {
+                                    for (Religion r : ReligionRegistry.all()) b.suggest(r.id());
+                                    return b.buildFuture();
+                                })
+                                .executes(ReligionDebugCommand::handleShrine)))
         );
+    }
+
+    // ── /religion shrine ─────────────────────────────────────────────────
+
+    private static int handleShrine(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        String religionId = StringArgumentType.getString(ctx, "religionId");
+        if (ReligionRegistry.find(religionId).isEmpty()) {
+            src.sendFailure(Component.literal("Unknown religion " + religionId));
+            return 0;
+        }
+        var player = src.getPlayer();
+        if (player == null) {
+            src.sendFailure(Component.literal("Run as a player (nearest-shrine lookup)."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageAt(player.blockPosition()).orElse(null);
+        if (village == null) {
+            src.sendFailure(Component.literal("No village at your position"));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Village.Building shrine = null;
+        double best = Double.MAX_VALUE;
+        for (java.util.UUID bid : village.getBuildingIds()) {
+            var b = data.getBuildingById(bid).orElse(null);
+            if (b == null || b.getType()
+                    != tterrag1112.life_in_the_village.Village.Buildings.BuildingType.SHRINE) continue;
+            double d = b.getShape().getOrigin().distSqr(player.blockPosition());
+            if (d < best) { best = d; shrine = b; }
+        }
+        if (shrine == null) {
+            src.sendFailure(Component.literal("No shrine in " + village.getName()));
+            return 0;
+        }
+        shrine.setPatronFaith(religionId);
+        data.markDirty();
+
+        // Re-fix the seated priest (belief + order) if one is loaded.
+        final tterrag1112.life_in_the_village.Village.Building shrineF = shrine;
+        TownspersonMob priest = level.getEntitiesOfClass(TownspersonMob.class,
+                        new net.minecraft.world.phys.AABB(shrineF.getShape().getOrigin()).inflate(48),
+                        m -> m.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.PRIEST
+                                && m.getAssignedBuildingId().map(shrineF.getId()::equals).orElse(false))
+                .stream().findFirst().orElse(null);
+        if (priest != null) {
+            priest.getSpecializationComponent().setLocked(false);
+            tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
+                    .applyClergyFaith(level, village, priest, shrineF);
+            tterrag1112.life_in_the_village.Npc.Religion.ClergyOrders
+                    .assignClergyOrder(level, priest);
+        }
+        final boolean fixed = priest != null;
+        src.sendSuccess(() -> Component.literal(
+                "Shrine in §f" + village.getName() + "§r now serves §a" + religionId
+                        + "§r" + (fixed ? " (priest re-consecrated)" : " (no loaded priest)")), false);
+        return 1;
     }
 
     // ── /religion list ────────────────────────────────────────────────────

@@ -220,6 +220,27 @@ public final class VillageInhabitantPopulator {
             npc.setFamilyRole(familyRole);
             npc.assignToBuilding(building.getId(), village.getName());
 
+            // Religion Rework R3e-2 — religious-building faith. A SHRINE adopts
+            // the village's largest unserved minority (overridable via
+            // /religion shrine) the first time it is staffed; the staffing
+            // priest then takes the BUILDING's faith (belief here, order below)
+            // instead of the village culture's. Temple/chapel leave patronFaith
+            // unset → derive the dominant, so single-faith villages are
+            // undisturbed.
+            if (tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
+                    .isReligiousBuilding(building.getType())) {
+                if (building.getType() == BuildingType.SHRINE
+                        && building.getPatronFaith() == null) {
+                    building.setPatronFaith(
+                            tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
+                                    .largestUnservedMinority(level, village));
+                    tterrag1112.life_in_the_village.Networking.VillageSavedData
+                            .get(level).markDirty();
+                }
+                tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
+                        .applyClergyFaith(level, village, npc, building);
+            }
+
             // Religion Rework R1b/R3c — locked clergy specialization at spawn.
             // For PRIEST this assigns the village religion's ORDER (R3c) — or
             // the generalist for an order-less religion; no-op for every other

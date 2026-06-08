@@ -2772,3 +2772,195 @@ imports reconciled (`FaithReconciliation` added to PriestBehavior, unused
    (own-faith upkeep while the seat is empty). Re-seat a priest → devotion stops.
 6. No NPC freeze (no new brain memory); rite officiation, fronting, and R2b
    attendance unaffected.
+
+---
+
+## R3e-2 — Building-faith + secondary shrines + minority clergy (2026-06-08)
+
+Second of the R3e multi-faith mini-arc. Makes a minority faith *locally served*
+by giving it a shrine that **carries its faith**, a priest of that faith, and a
+generalized served test — so a minority moves up the practice ladder from solo
+devotion (R3e-1) to a real congregation. Core shipped; shrine-faith **calendar**
+scheduling split to R3e-2b (see stretch decision). NBT hook **deferred** (no live
+faith-selection site).
+
+### Disposition (findings, verified on branch)
+
+- **Building.java codec** — 12 existing fields in `Building.CODEC`
+  (id/name/type/shape/structureId/buildingLevel/rotation/condition/variantId/
+  primaryColor/accentColor/roofColor) + the inner 4-field `SHAPE_CODEC`. Adding
+  `patronFaith` → **13 fields, well under the 16-field RecordCodecBuilder cap**.
+  `structureId` comes from the V2 planner; `variantId` defaults via
+  `BuildingVariant.defaultVariantId(type)` (type-keyed, in the placement layer).
+- **Culture/religion is resolved at the VILLAGE level** (`CultureResolver.of`
+  → kingdom → culture → one religion), so a fresh single-kingdom village seeds
+  **everyone on one faith @0.3** — minorities only arise from mixing
+  (migration/visitors/multi-culture). **Mismatch flagged:** "largest unserved
+  minority among existing NPCs" is usually EMPTY in a fresh village, so the
+  shrine-faith default needs a deterministic non-dominant fallback (handled).
+- **Spawn-belief flow** — `assignToBuilding` → `applyVillageCulture` sets the
+  culture religion @0.3 for ALL NPCs (incl. a shrine priest). `spawnNpcInBuilding`
+  (VillageInhabitantPopulator) has the `building` object in hand and already
+  calls `ClergyOrders.assignClergyOrder` right after `assignToBuilding` — the
+  natural hook for shrine faith + clergy belief.
+- **ClergyOrders.assignClergyOrder (R3c)** — resolved the order via
+  `villageReligionId(level, npc)` (dominant-only). Generalized to building faith.
+- **FaithReconciliation.isUnservedLocally (R3e-1)** — was "primary != dominant,
+  or no seated VILLAGE_PRIEST office holder." Generalized to "no seated same-faith
+  priest" (building-faith driven, covers temple AND shrine).
+- **Schedulers** — `VillageEventScheduler` (`checkCulturalHolyDay`,
+  `checkSignatureRite`, `checkGrandFestival`) + `RiteScheduler` are ALL keyed on
+  `villageReligionId`. Scheduling a non-dominant faith's calendar ceremonies
+  means iterating [dominant + shrine faiths] in each scheduler with per-faith
+  dedup/supersede — **large, multi-file, touches the supersede guards**. Split to
+  R3e-2b (decision below).
+- **Building→index gap** — `village.addBuilding` (adapter line 500) stores only
+  the building UUID; `data.buildingIndex` is not guaranteed populated at populate
+  time, so `getBuildingById` can be empty mid-spawn. Handled (belief fallback in
+  `clergyFaith`).
+- **No manual shrine-spawn command** exists; the populator is the spawn path.
+  `BuildingType.SHRINE` confirmed present (no new enum).
+
+### Design
+
+- **One canonical resolver** `Npc/Religion/BuildingFaith`:
+  - `isReligiousBuilding(type)`, `resolveFaith(level, village, building)`
+    (patronFaith ?? village dominant; null for non-religious),
+  - `clergyFaith(level, village, npc)` (building faith, falling back to the
+    priest's own primary belief when the index is cold at spawn — see gap above,
+    then village dominant),
+  - `applyClergyFaith(...)` (set a shrine priest's belief to the building faith
+    @`CLERGY_STRENGTH=0.6`; **no-op when faith already == the dominant seed**, so
+    temple/chapel priests + single-faith villages are untouched),
+  - `largestUnservedMinority(...)` (most-common non-dominant primary among loaded
+    village NPCs; deterministic first-non-dominant fallback when none),
+  - `hasSeatedPriestOfFaith(...)` (the served test core — one entity scan resolves
+    each loaded village priest's building faith).
+- **Minority clergy** wired in `spawnNpcInBuilding`: a SHRINE with no patron
+  adopts `largestUnservedMinority` (persisted via `markDirty`, same instance the
+  spawner registered); then `applyClergyFaith` sets the priest's belief; then the
+  existing `assignClergyOrder` (now building-faith-resolved) gives the Tidewardens.
+- **Served test** generalized in `isUnservedLocally` → `!hasSeatedPriestOfFaith`.
+- **Debug override** `/religion shrine <religionId>`: sets the nearest shrine's
+  patron faith and re-consecrates its loaded priest (unlock spec → `applyClergyFaith`
+  → `assignClergyOrder` → relock via assign).
+
+### What shipped
+
+- `Village/Building.java` — `patronFaith` field + 13th codec field
+  (`optionalFieldOf`, absent on pre-feature saves) + getter/setter.
+- `Npc/Religion/BuildingFaith.java` (new) — the canonical resolver (above).
+- `Npc/Religion/ClergyOrders.java` — order resolved by `BuildingFaith.clergyFaith`
+  (renamed the private `villageReligionId` → `clergyFaith`); no forked path.
+- `Npc/Religion/FaithReconciliation.java` — `isUnservedLocally` now building-aware
+  (`hasSeatedPriestOfFaith`); dropped the now-unused `OfficeRegistry` import + the
+  `villageHasPriest` helper.
+- `Village/Buildings/Inhabitants/VillageInhabitantPopulator.java` — shrine-faith
+  default + clergy belief at spawn (before the order assignment).
+- `Commands/ReligionDebugCommand.java` — `/religion shrine <religionId>` override.
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `spawnNpcInBuilding` now sets building faith + worker
+   belief; `villageReligionId` unchanged; `largestUnservedMinority` reads loaded
+   village NPC beliefs (the per-culture spawn seed is the source).
+2. **Downstream callers** — `ClergyOrders` (order by building faith),
+   `FaithReconciliation` served test (drives `SoloDevotionBehavior`, now dormant
+   for a served minority) + the R3e-1 cross-faith benefit (unchanged — minorities
+   still get reduced benefit at the dominant festival). `PriestBehavior`
+   fronting/officiating/bless aura is faith-agnostic over the village rite pool,
+   so a shrine priest already serves the congregation's officiated/personal rites
+   + bless aura + fronts village RELIGIOUS_RITE gatherings — no change needed for
+   the core. Schedulers left dominant-keyed (R3e-2b). NBT/structure selection —
+   deferred (no live site).
+3. **Sibling systems** — R3c orders (now building-faith), R3a/R3d effect tuning
+   (a shrine-faith ceremony, once R3e-2b schedules it, reads the shrine faith via
+   the same `ReligionContent` path), R2b attendance (unchanged).
+4. **Exhaustive switches** — `BuildingType`: no new value; `isReligiousBuilding`
+   is a 3-way `||`, not a switch. `PriestBehavior.kindOf` already handles
+   TEMPLE/CHAPEL/SHRINE — untouched. Confirmed no new enum.
+
+### Simplification Sweep
+
+- Classes in scope: `BuildingFaith` (new — 5 inbound sites: populator,
+  ClergyOrders, FaithReconciliation, ReligionDebugCommand, + self),
+  `Building`/`ClergyOrders`/`FaithReconciliation`/`VillageInhabitantPopulator`/
+  `ReligionDebugCommand` (edited). One resolver feeds every consumer; `ClergyOrders`
+  + `isUnservedLocally` were **generalized in place**, not forked. Field-cap
+  headroom: 13/16 on `Building`.
+- **Core vs R3e-2b:** shipped the building-faith attribute, minority clergy, and
+  the generalized served test (core). Deferred shrine-faith **calendar** scheduling
+  to R3e-2b because every scheduler is dominant-keyed and threading a second faith
+  through `checkCulturalHolyDay`/`checkSignatureRite`/`checkGrandFestival` +
+  `RiteScheduler` (with per-faith dedup + the supersede guards) is a large,
+  separable change. The shrine still upgrades the congregation solo→served via the
+  priest's presence (bless aura + officiating the village rite pool + fronting).
+
+### Deviations from prompt
+
+- **Served = "seated (loaded) same-faith priest."** `hasSeatedPriestOfFaith`
+  scans loaded entities, so "seated" means "loaded." In practice a village's
+  priests are co-loaded with their congregation (compact bounds, same chunks), so
+  this matches the spec intent; the rare edge (a dominant NPC far from an unloaded
+  priest doing occasional solo devotion) is acceptable flavor. This also makes the
+  test staffing-sensitive rather than office-sensitive — if a temple priest dies,
+  dominant NPCs fall back to solo devotion (a reasonable generalization of R3e-1's
+  office-vacancy behavior).
+- **Shrine-faith default fallback.** Because culture is village-level, a fresh
+  village has no minority population, so `largestUnservedMinority` returns the
+  first registered non-dominant religion when no real minority exists — so a
+  manually-spawned shrine still takes a distinct, testable faith. The
+  `/religion shrine` override is the authoritative control.
+- **Clergy belief strength 0.6.** A shrine priest is seeded DEVOUT (0.6) in the
+  shrine faith (vs the 0.3 culture seed) so they reliably register as a same-faith
+  servant; temple/chapel priests are left at their existing seed (no-op), so
+  single-faith villages are unchanged.
+
+### Out-of-scope but flagged
+
+- **R3e-2b — shrine-faith calendar scheduling.** Schedule the shrine faith's
+  holy-days/signature/grand festivals independently of the village dominant
+  (thread a faith arg through the three `VillageEventScheduler` checks +
+  `RiteScheduler`, per-faith dedup). Until then a minority is *served* (priest +
+  officiated rites + bless aura) but gets no faith-specific holy-day festival.
+- **NBT faith-aware structure/variant selection — DEFERRED (no live site).** The
+  only selection is `BuildingVariant.defaultVariantId(type)` in the V2 placement
+  layer (out of scope). The `patronFaith` field is now in place for the placement
+  work / R3e-2b to consume (`defaultVariantId`/structure pick keyed by faith with
+  a generic fallback). Adding an unconsumed hook now would violate "no speculative
+  hook."
+- **Pilgrimage → R3e-3.** Building placement/layout for shrines remains manual.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done:
+codec at 13/16 fields; `patronFaith` `optionalFieldOf` (pre-feature saves default
+to absent → temple/chapel derive dominant); all five `BuildingFaith` consumers
+grep-verified; no new enum/exhaustive-switch; `brainMemories()` untouched (no new
+brain memory); spawn-time index-gap handled via the `clergyFaith` belief fallback;
+removed-helper (`villageHasPriest`) has no dangling refs; unused `OfficeRegistry`
+import dropped.
+
+### Smoke test (user-runnable)
+
+1. In a Sunstead village, set a few NPCs to a Tidecall minority
+   (`/religion set <uuid> tidecall 0.3`). Manually spawn (or place) a SHRINE and
+   let it staff. Confirm the shrine takes the Tidecall faith (largest unserved
+   minority, or via `/religion shrine tidecall`) and its priest is a Tidecall
+   priest of the **Tidewardens** (check the priest's activity title / spec).
+2. Confirm the Tidecall NPCs now register as SERVED — they STOP solo private
+   devotion and gravitate to the shrine; they receive full (own-faith) benefit
+   from shrine-priest interactions (bless aura) while still getting REDUCED
+   benefit at the dominant Sunstead festivals (R3e-1 reconciliation intact).
+3. Confirm a single-faith Sunstead village (no shrine) is UNCHANGED from R3e-1:
+   temple/chapel priests stay dominant-faith, dominant NPCs are served, no solo
+   devotion.
+4. Confirm pre-existing buildings (saved before this phase, no `patronFaith`)
+   load cleanly and default to the dominant faith (temple/chapel unaffected).
+5. `/religion shrine sunstead` on the Tidecall shrine → it flips to Sunstead and
+   the loaded priest is re-consecrated (Order of the Dawn); the Tidecall NPCs
+   become unserved again and resume solo devotion.
+6. No NPC freeze (no new brain memory); rite officiation, fronting, R2b
+   attendance, and R3e-1 cross-faith reconciliation all unaffected. (Shrine-faith
+   holy-day festivals do NOT yet fire — that is R3e-2b.)

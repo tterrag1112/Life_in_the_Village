@@ -66,7 +66,7 @@ public final class ClergyOrders {
      */
     public static void assignClergyOrder(ServerLevel level, TownspersonMob npc) {
         if (npc == null || npc.getProfession() != Profession.PRIEST) return;
-        SpecializationDef order = ORDERS.get(villageReligionId(level, npc));
+        SpecializationDef order = ORDERS.get(clergyFaith(level, npc));
         if (order == null) {
             // Order-less religion → generalist fallback via the existing route.
             NpcSpecializationTypes.assignInitialSpawnSpec(npc, npc.getProfession());
@@ -113,10 +113,18 @@ public final class ClergyOrders {
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static String villageReligionId(ServerLevel level, TownspersonMob npc) {
+    /**
+     * R3e-2 — the faith whose order this priest takes: their assigned religious
+     * building's faith ({@code BuildingFaith.clergyFaith}) when they staff one
+     * (so a Tidecall shrine in a Sunstead village yields a Tidewarden), else the
+     * village dominant. Generalizes the prior dominant-only resolution; no forked
+     * path.
+     */
+    private static String clergyFaith(ServerLevel level, TownspersonMob npc) {
         if (level == null) return ReligionRegistry.SUNSTEAD;
         Village v = npc.getAssignedVillageName()
                 .flatMap(VillageSavedData.get(level)::getVillageByName).orElse(null);
-        return ReligionContent.villageReligionId(level, v);
+        if (v == null) return ReligionRegistry.SUNSTEAD;
+        return BuildingFaith.clergyFaith(level, v, npc);
     }
 }

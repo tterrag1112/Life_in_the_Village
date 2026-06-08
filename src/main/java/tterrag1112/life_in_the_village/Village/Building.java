@@ -62,6 +62,16 @@ public class Building {
     /** Doc 15 — roof tint colour. */
     @Nullable private DyeColor roofColor    = null;
 
+    /**
+     * Religion Rework R3e-2 — patron faith (religion id) for a religious
+     * building. A SHRINE carries its minority faith here; a TEMPLE/CHAPEL leaves
+     * it unset and the canonical resolver
+     * ({@code tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith}) derives
+     * the village dominant. {@code null} on every non-religious building and on
+     * pre-feature saves (the codec field is {@code optionalFieldOf}).
+     */
+    @Nullable private String patronFaith = null;
+
     // =========================================================================
     // UUID codec helper
     // =========================================================================
@@ -121,7 +131,12 @@ public class Building {
                     DYE_COLOR_CODEC.optionalFieldOf("accentColor")
                             .forGetter(b -> Optional.ofNullable(b.accentColor)),
                     DYE_COLOR_CODEC.optionalFieldOf("roofColor")
-                            .forGetter(b -> Optional.ofNullable(b.roofColor))
+                            .forGetter(b -> Optional.ofNullable(b.roofColor)),
+                    // R3e-2 — patron faith (optional; absent on pre-feature
+                    // saves and every non-religious building). 13th field — well
+                    // under the 16-field RecordCodecBuilder cap.
+                    Codec.STRING.optionalFieldOf("patronFaith")
+                            .forGetter(b -> Optional.ofNullable(b.patronFaith))
             ).apply(instance, Building::fromCodec)
     );
 
@@ -133,13 +148,15 @@ public class Building {
                                       Optional<String> variantId,
                                       Optional<DyeColor> primaryColor,
                                       Optional<DyeColor> accentColor,
-                                      Optional<DyeColor> roofColor) {
+                                      Optional<DyeColor> roofColor,
+                                      Optional<String> patronFaith) {
         Building b = new Building(id, name, type, shape, structureId, buildingLevel, rotation);
         b.condition = condition;
         b.variantId = variantId.orElse(BuildingVariant.defaultVariantId(type));
         b.primaryColor = primaryColor.orElse(null);
         b.accentColor  = accentColor.orElse(null);
         b.roofColor    = roofColor.orElse(null);
+        b.patronFaith  = patronFaith.orElse(null);
         return b;
     }
 
@@ -252,6 +269,12 @@ public class Building {
                 ? variantId
                 : BuildingVariant.defaultVariantId(buildingType);
     }
+
+    /** R3e-2 — raw patron-faith id, or {@code null} when unset. Prefer the
+     *  canonical resolver {@code BuildingFaith.resolveFaith} for effect logic
+     *  (it derives the village dominant for an unset temple/chapel). */
+    @Nullable public String getPatronFaith()      { return patronFaith; }
+    public void setPatronFaith(@Nullable String religionId) { this.patronFaith = religionId; }
 
     @Nullable public DyeColor getPrimaryColor() { return primaryColor; }
     @Nullable public DyeColor getAccentColor()  { return accentColor; }
