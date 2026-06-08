@@ -3467,3 +3467,65 @@ the away role, the decision, the boon. No parallel traveller/away framework.
 No code shipped — nothing to compile. (Sandbox blocks maven.neoforged.net
 regardless.) The next sub-phase will carry the standard build-verification-deferred
 note. This entry is the durable disposition the sub-split builds on.
+
+---
+
+## R3e-3b-1 — implementation paused: identity-preservation blocker discovered (2026-06-08)
+
+Began R3e-3b-1 (approved split + new `NpcRoleTypes.PILGRIM` + route-connected
+destinations). Built the foundational pieces (PILGRIM role, `TravellerType.PILGRIM`
++ map arms, the `Pilgrimage` TravellingGroup), then hit a correctness blocker at
+the realize/dehydrate layer and **reverted to a compiling state** (no partial code
+left on the branch) per "ask before restructuring."
+
+### The blocker
+
+The caravan realize↔simulate machinery **`discard()`s its principal entity** on
+despawn and **spawns a FRESH principal** on the next realization when the original
+isn't found (`CaravanSavedData.spawnCaravanEntities` fallback; the `Roster` doc
+states "only the principalId is currently a 'real' pooled villager… Phase 7d will
+make the pool more robust"). For a generic caravan merchant a fresh stand-in is
+fine. For a pilgrim — a **specific resident** — faithfully reusing that path means:
+
+- If the player follows the pilgrim the whole way (the common smoke-test path),
+  the same entity travels and reintegrates → identity preserved. ✓
+- If the pilgrim despawns mid-journey (player leaves) and later re-realizes, the
+  original entity was discarded → either a fresh villager is spawned (identity
+  reset) or, if not, the resident risks being lost/stranded — colliding with the
+  mandatory **"no NPCs lost as permanent travellers."**
+
+This is a genuine design fork (resident identity vs. the simulated-position model)
+that the caravan machinery does NOT solve, and it's **persistence-critical code I
+cannot compile-verify** in the sandbox. Forcing it risks shipping resident-losing
+or unverifiable entity-NBT-snapshot logic — exactly the kind of unaudited
+correctness gamble the project's discipline forbids.
+
+### Resolution options (need a decision before resuming)
+
+- **A — Faithful caravan reuse, identity limitation flagged (simplest, lowest
+  unverified risk):** mirror the caravan discard/re-find/fresh-fallback exactly;
+  the lifecycle always COMPLETES + reintegrates (no permanent traveller). Identity
+  is preserved when the player follows (the smoke test) and may reset on a
+  despawn-while-unobserved cycle — identical to caravans' current Phase-7c
+  behavior, documented as the same inherited limitation.
+- **B — Keep the resident loaded (most correct without NBT, diverges from the
+  simulated model):** never discard; drive the adherent as a long-range
+  walking entity via a `PilgrimTravelBehavior`; the journey pauses when their
+  chunk unloads and resumes on reload; the map icon derives from the tracked
+  position. No identity loss; lighter persistence (role + a small tracking
+  record); but doesn't use the TravellingGroup simulated-position path for the
+  entity and the map-while-unloaded is approximate.
+- **C — Full entity-NBT snapshot (most correct, highest unverified risk):** on
+  depart, snapshot the resident's entity NBT into the `Pilgrimage` and discard;
+  on return, recreate from the snapshot. Exact identity across reload, but
+  version-specific entity save/load API I can't verify here.
+
+Recommendation: **A** — it best honors the prompt's "reuse the caravan machinery,"
+is implementable by mirroring proven code (lowest risk under no-compile), and its
+only shortfall (strict identity across an unobserved despawn) is the SAME
+limitation caravans already carry and is invisible in the follow-the-pilgrim
+smoke test. B is a reasonable alternative if strict identity matters more than
+machinery reuse.
+
+No code shipped (reverted clean). Awaiting the identity-fork decision to resume
+R3e-3b-1.
