@@ -5193,3 +5193,144 @@ compileJava` 403s on `neoform-runtime` before javac). Static review done:
    per R5b), and their signature rites still fire at their own building.
 5. Confirm veneration is bounded (the FESTIVAL_ATTENDED daily cap + the hobby
    cadence — not a buff farm).
+
+---
+
+## R9a — NPC religion profile panel (2026-06-08)
+
+### Disposition
+
+The prompt asks for a **read-only Religion panel** in the existing
+`NpcProfileScreen`, so right-clicking any NPC surfaces their full religious state
+(R1–R5) at a glance for testing. Investigation confirmed the profile screen is a
+single sidebar-driven hub: `NpcProfileScreen.init()` builds its sidebar from
+`NpcProfilePanelRegistry.Section.values()` (so a new enum constant auto-appears as a
+tab, in declaration order) and its panel map from `NpcProfilePanelRegistry.build()`;
+both `OpenNpcProfilePacket` and `NpcProfileSyncPacket` ride a single
+`NpcProfileSnapshot.CODEC`, so religion fields added to that snapshot reach the
+client on open AND on every 5s refresh — no parallel screen or packet. The snapshot
+uses a hand-rolled append-friendly `StreamCodec.of(...)` (no 16-arg composite
+ceiling), so the religion block appends cleanly at the tail of encode/decode/ctor.
+
+All religious state already has server-side accessors (R1–R5): `PietyComponent`
+(primaryReligion/primaryStrength/primaryTier/beliefs/ritesAttendedThisMonth/
+meetsMonthlyAttendance), `ReligionRegistry.find`, `Religion.displayName/deity`,
+`ClergyOrders.assignedOrderName`, `BuildingFaith.resolveFaith`,
+`FaithReconciliation.isUnservedLocally`, `ApprenticeRank.fromSkillLevel`. The panel
+is pure read — no verbs, no brain memory, no new enum (the `Section.RELIGION`
+constant is the only new symbol, and it has a concrete consumer: the tab itself).
+
+### What shipped
+
+- **`Networking/NpcProfileSnapshot.java`** — appended a 12-field "Religion (R9a)"
+  block to the record (`religionName`, `deityName`, `pietyStrength`, `pietyTier`,
+  `beliefSummary`, `ritesThisMonth`, `meetsMonthlyAttendance`, `isClergy`,
+  `clergyOrder`, `clergyTitle`, `staffedFaith`, `isUnservedLocally`) plus matching
+  encode writes, decode reads, and constructor args — all at the tail, after the
+  R5a.5 nav block, preserving wire order.
+- **`Entities/NpcProfileSnapshotBuilder.java`** — a "Religion (R9a)" computation
+  block reading `npc.getPiety()`: resolves the primary religion's display name +
+  deity, piety strength + tier display, a syncretic `beliefSummary` (only when
+  `beliefs.size() > 1`, lines "Faith — NN%"), rite count + monthly-attendance flag,
+  clergy status (`prof == PRIEST`), order name, cosmetic title, staffed-building
+  faith (display name), and the served/unserved predicate (only when a village is
+  present). Added the private `clergyTitleFor(npc)` helper mirroring
+  `PriestBehavior.clergyTitle` (APPRENTICE→Initiate, JOURNEYMAN→Priest,
+  MASTER→Senior Priest).
+- **`Gui/NpcProfile/ReligionPanel.java`** (new) — `NpcProfilePanel` rendering, in
+  order: "Religion" header; an early "Unaffiliated" return for atheists (empty
+  `religionName`); the faith line (name + optional deity); a piety strength
+  `NeedMeter.bar` (clamped 0..1, BLUE_BG) with a right-aligned tier `Pill` and a
+  "Piety NN%" line; syncretic belief lines (when present); a served/unserved `Pill`
+  (GREEN_BG/RED_BG); an Observance `StatBox`; and, for clergy, a title/order
+  `StatBox` + a "Tends a <faith> building." line. Uses only `Gui.Framework`
+  primitives.
+- **`Gui/NpcProfile/NpcProfilePanelRegistry.java`** — added `RELIGION("Religion")`
+  to the `Section` enum (after REPUTATION) and `map.put(Section.RELIGION, new
+  ReligionPanel())` to `build()`. The screen's `Section.values()` iteration picks up
+  the tab with no screen edits.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The panel reads only the snapshot; the snapshot is fed by
+   `NpcProfileSnapshotBuilder.build`, which reads `PietyComponent` + the R1–R5
+   registries. All accessors confirmed present with the used signatures. No feeder
+   system is mutated (pure read).
+2. **Downstream callers.** `NpcProfileSnapshot`'s constructor is called in exactly
+   one place (`NpcProfileSnapshotBuilder.build`) — updated with the 12 new args.
+   Its `CODEC` is consumed by `OpenNpcProfilePacket` + `NpcProfileSyncPacket` (both
+   unchanged — they ride `CODEC` generically). No other caller constructs the
+   record. `NpcProfilePanelRegistry.build`'s map consumers (`NpcProfileScreen`)
+   iterate generically over the map / `Section.values()` — unaffected.
+3. **Sibling systems.** Other panels (Identity/Family/Work/Reputation/Dialogue/
+   Actions) read disjoint snapshot fields — appending fields can't disturb them.
+   The sidebar grows by one row (COMPACT chrome has vertical room for 7 rows).
+4. **Exhaustive switches.** The only switch added is `clergyTitleFor`'s over
+   `ApprenticeRank` (all three arms covered). No existing enum gained a constant
+   that an exhaustive switch must handle — `Section` is iterated via `values()`
+   (sidebar) and keyed via map lookup, never `switch`ed exhaustively (grep
+   confirmed no `switch` over `Section`).
+
+### Simplification Sweep
+
+- Classes in scope: `ReligionPanel` (new, one inbound caller — the registry),
+  `NpcProfilePanelRegistry` (+1 enum, +1 map entry), `NpcProfileSnapshot` (+12
+  tail fields), `NpcProfileSnapshotBuilder` (+1 block, +1 private helper). No
+  orphans created; `ReligionPanel` parallels the existing `ReputationPanel` shape
+  (same Framework primitives, same `PageArea` layout idiom) — no new framework, no
+  overlapping pair. `clergyTitleFor` duplicates `PriestBehavior.clergyTitle`'s 3-arm
+  mapping (flagged below) rather than exposing a new shared helper this phase.
+
+### Deviations from prompt
+
+- **`clergyTitleFor` duplicates `PriestBehavior.clergyTitle`** (the same
+  APPRENTICE/JOURNEYMAN/MASTER → Initiate/Priest/Senior-Priest mapping) rather than
+  promoting a shared helper. The original is `private` in `PriestBehavior`;
+  extracting a shared `ClergyTitles.of(rank)` is a clean follow-up but out of scope
+  for a read-only panel — flagged.
+- **`beliefSummary` is populated only when `beliefs.size() > 1`** (a genuinely
+  syncretic NPC); a single-faith NPC shows just the primary faith line, no
+  redundant "Faith — 100%" row. Matches the prompt's "syncretic belief map" intent
+  without noise.
+
+### Out-of-scope but flagged
+
+- A shared `ClergyTitles` helper to retire the `clergyTitleFor` /
+  `PriestBehavior.clergyTitle` duplication.
+- Religion **verbs** (e.g. "convert", "request blessing") — the prompt scoped this
+  phase read-only; the panel leaves room for an action row in a later R9 pass.
+- The panel surfaces the served/unserved predicate but no remediation affordance
+  (e.g. "no temple nearby" guidance) — deferred to the R6–R8 provision work.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: all R1–R5
+accessor signatures confirmed by grep (`primaryReligion`/`primaryStrength`/
+`primaryTier`/`beliefs`/`ritesAttendedThisMonth`/`meetsMonthlyAttendance`,
+`ReligionRegistry.find`, `Religion.displayName`/`deity`, `ClergyOrders.
+assignedOrderName`, `BuildingFaith.resolveFaith`, `FaithReconciliation.
+isUnservedLocally`, `ApprenticeRank.fromSkillLevel`, `PietyTier.displayName`,
+`TownspersonMob.getPiety`/`getSkills`, `Skill.SOCIAL`); the snapshot's
+encode/decode/constructor field order is consistent across all three (12 fields,
+same order, tail-appended); `ReligionPanel` uses only public `Gui.Framework`
+primitives (avoided `Pill.HEIGHT`, which is private — used a literal 17 = 12 height
++ 5 gap); `Section.RELIGION` is iterated via `values()` (sidebar) and keyed via map
+lookup, never exhaustively switched.
+
+### Smoke test (user-runnable)
+
+1. Right-click a **devout, single-faith** NPC → the **Religion** tab appears in the
+   sidebar; opening it shows the faith name (+ deity if any), a filled piety bar
+   with the tier pill (FAITHFUL/DEVOUT/PIOUS), "Piety NN%", a "Served"/"Unserved
+   locally" pill, and the Observance box ("N rite(s) this month — observant" once
+   the monthly threshold is met). No belief sub-list (single faith).
+2. Right-click an **atheist / unaffiliated** NPC → the Religion tab shows
+   "Unaffiliated" and nothing else (no bar, no crash).
+3. Right-click a **syncretic migrant** (carries home + local faith) → the Beliefs
+   sub-list shows both faiths with percentages summing to ~100%.
+4. Right-click a **PRIEST** → an extra clergy box shows the cosmetic title
+   (Initiate/Priest/Senior Priest by SOCIAL rank) + the order name (or
+   "(generalist)"), and "Tends a <faith> building." when they staff a temple.
+5. Open the profile and **wait ≥5s** → the 5s `NpcProfileSyncPacket` refresh keeps
+   the Religion panel populated (data rides the same snapshot, not a one-shot open).

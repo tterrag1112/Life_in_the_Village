@@ -110,7 +110,25 @@ public record NpcProfileSnapshot(
         // hasNavTarget && navTargetKind != NONE.
         // -------------------------------------------------------------
         boolean hasNavTarget,
-        NavTargetKind navTargetKind
+        NavTargetKind navTargetKind,
+
+        // -------------------------------------------------------------
+        // Religion (R9a) — read-only religious state for the Religion panel.
+        // Empty strings / false / 0 = the graceful unaffiliated/non-clergy
+        // state (an atheist NPC renders cleanly, no crash).
+        // -------------------------------------------------------------
+        String  religionName,           // "" = unaffiliated
+        String  deityName,              // "" = none
+        float   pietyStrength,
+        String  pietyTier,
+        List<String> beliefSummary,     // syncretic belief lines ("Faith — 30%"); empty for single-faith
+        int     ritesThisMonth,
+        boolean meetsMonthlyAttendance,
+        boolean isClergy,
+        String  clergyOrder,            // "" = generalist / not clergy
+        String  clergyTitle,            // "" = not clergy
+        String  staffedFaith,           // "" = not staffing a religious building
+        boolean isUnservedLocally
 ) {
 
     public enum NavTargetKind {
@@ -191,6 +209,21 @@ public record NpcProfileSnapshot(
 
                         buf.writeBoolean(s.hasNavTarget);
                         buf.writeUtf(s.navTargetKind.name());
+
+                        // Religion (R9a)
+                        buf.writeUtf(s.religionName);
+                        buf.writeUtf(s.deityName);
+                        buf.writeFloat(s.pietyStrength);
+                        buf.writeUtf(s.pietyTier);
+                        buf.writeVarInt(s.beliefSummary.size());
+                        s.beliefSummary.forEach(buf::writeUtf);
+                        buf.writeVarInt(s.ritesThisMonth);
+                        buf.writeBoolean(s.meetsMonthlyAttendance);
+                        buf.writeBoolean(s.isClergy);
+                        buf.writeUtf(s.clergyOrder);
+                        buf.writeUtf(s.clergyTitle);
+                        buf.writeUtf(s.staffedFaith);
+                        buf.writeBoolean(s.isUnservedLocally);
                     },
                     buf -> {
                         UUID   npcId          = buf.readUUID();
@@ -263,6 +296,22 @@ public record NpcProfileSnapshot(
                         try { navKind = NavTargetKind.valueOf(buf.readUtf()); }
                         catch (IllegalArgumentException e) { navKind = NavTargetKind.NONE; }
 
+                        // Religion (R9a)
+                        String  religionName = buf.readUtf();
+                        String  deityName    = buf.readUtf();
+                        float   pietyStrength = buf.readFloat();
+                        String  pietyTier    = buf.readUtf();
+                        int     beliefCount  = buf.readVarInt();
+                        List<String> beliefSummary = new ArrayList<>(beliefCount);
+                        for (int i = 0; i < beliefCount; i++) beliefSummary.add(buf.readUtf());
+                        int     ritesThisMonth = buf.readVarInt();
+                        boolean meetsMonthly = buf.readBoolean();
+                        boolean isClergy     = buf.readBoolean();
+                        String  clergyOrder  = buf.readUtf();
+                        String  clergyTitle  = buf.readUtf();
+                        String  staffedFaith = buf.readUtf();
+                        boolean isUnserved   = buf.readBoolean();
+
                         return new NpcProfileSnapshot(
                                 npcId, name, isMale, age, lifeStage, profession,
                                 combat, skinId, hairStyle, hairColor, traits,
@@ -279,6 +328,10 @@ public record NpcProfileSnapshot(
                                 goals,
                                 verbIds, verbLab,
                                 relIds, relScores, relModes,
-                                hasNav, navKind);
+                                hasNav, navKind,
+                                religionName, deityName, pietyStrength, pietyTier,
+                                beliefSummary, ritesThisMonth, meetsMonthly,
+                                isClergy, clergyOrder, clergyTitle, staffedFaith,
+                                isUnserved);
                     });
 }

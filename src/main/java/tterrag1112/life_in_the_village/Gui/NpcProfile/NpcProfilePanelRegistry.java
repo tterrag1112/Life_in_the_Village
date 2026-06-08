@@ -15,6 +15,7 @@ public final class NpcProfilePanelRegistry {
         FAMILY("Family"),
         WORK("Work"),
         REPUTATION("Reputation"),
+        RELIGION("Religion"),
         DIALOGUE("Dialogue"),
         ACTIONS("Actions");
 
@@ -34,6 +35,7 @@ public final class NpcProfilePanelRegistry {
         map.put(Section.FAMILY,     new FamilyPanel());
         map.put(Section.WORK,       new WorkPanel());
         map.put(Section.REPUTATION, new ReputationPanel());
+        map.put(Section.RELIGION,   new ReligionPanel());
         map.put(Section.DIALOGUE,   new DialoguePanel());
         map.put(Section.ACTIONS,    new SocialVerbsPanel(addWidget, removeWidget));
         return map;

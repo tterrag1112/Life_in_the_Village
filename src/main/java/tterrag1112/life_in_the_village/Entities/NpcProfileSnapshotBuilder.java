@@ -163,6 +163,47 @@ public final class NpcProfileSnapshotBuilder {
             relModes.add(rel.mode().name());
         }
 
+        // ── Religion (R9a) ───────────────────────────────────────────────────
+        var piety = npc.getPiety();
+        var religion = piety.primaryReligion()
+                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry::find);
+        String religionName = religion
+                .map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName).orElse("");
+        String deityName = religion
+                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.Religion::deity).orElse("");
+        float pietyStrength = piety.primaryStrength();
+        String pietyTier = piety.primaryTier().displayName();
+        java.util.List<String> beliefSummary = new java.util.ArrayList<>();
+        var beliefs = piety.beliefs();
+        if (beliefs.size() > 1) {
+            for (var e : beliefs.entrySet()) {
+                String fname = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
+                        .find(e.getKey())
+                        .map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName)
+                        .orElse(e.getKey());
+                beliefSummary.add(fname + " — " + Math.round(e.getValue() * 100) + "%");
+            }
+        }
+        int ritesThisMonth = piety.ritesAttendedThisMonth();
+        boolean meetsMonthly = piety.meetsMonthlyAttendance();
+        boolean isClergy = prof == Profession.PRIEST;
+        String clergyOrder = isClergy
+                ? tterrag1112.life_in_the_village.Npc.Religion.ClergyOrders
+                        .assignedOrderName(npc).orElse("")
+                : "";
+        String clergyTitle = isClergy ? clergyTitleFor(npc) : "";
+        String staffedFaith = "";
+        if (isClergy && buildingOpt.isPresent() && villageOpt.isPresent()) {
+            String f = tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
+                    .resolveFaith(level, villageOpt.get(), buildingOpt.get());
+            if (f != null) staffedFaith = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
+                    .find(f).map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName)
+                    .orElse(f);
+        }
+        boolean isUnserved = villageOpt.isPresent()
+                && tterrag1112.life_in_the_village.Npc.Religion.FaithReconciliation
+                        .isUnservedLocally(level, villageOpt.get(), npc);
+
         // ── Assemble ─────────────────────────────────────────────────────────
         return new NpcProfileSnapshot(
                 npc.getUUID(),
@@ -212,7 +253,11 @@ public final class NpcProfileSnapshotBuilder {
                 verbLabels,
                 relIds, relScores, relModes,
 
-                hasNav, navKind);
+                hasNav, navKind,
+                religionName, deityName, pietyStrength, pietyTier,
+                beliefSummary, ritesThisMonth, meetsMonthly,
+                isClergy, clergyOrder, clergyTitle, staffedFaith,
+                isUnserved);
     }
 
     /**
@@ -220,6 +265,19 @@ public final class NpcProfileSnapshotBuilder {
      * already serves" tightening). Order: office → business-worker →
      * adventurer-party → profession-default → NONE.
      */
+    /** R9a — the priest's cosmetic clergy rank (R1d), derived from SOCIAL via the
+     *  shared {@code ApprenticeRank} ladder (mirrors {@code PriestBehavior.clergyTitle}). */
+    private static String clergyTitleFor(TownspersonMob npc) {
+        int social = npc.getSkills().getLevel(
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.SOCIAL);
+        return switch (tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeRank
+                .fromSkillLevel(social)) {
+            case APPRENTICE -> "Initiate";
+            case JOURNEYMAN -> "Priest";
+            case MASTER     -> "Senior Priest";
+        };
+    }
+
     private static NpcProfileSnapshot.NavTargetKind resolveNavKind(
             tterrag1112.life_in_the_village.Entities.custom.TownspersonMob npc,
             net.minecraft.server.level.ServerPlayer player,
