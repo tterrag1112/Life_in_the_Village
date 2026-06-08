@@ -107,7 +107,17 @@ public enum Profession {
      * to the {@code kingdom_diplomat} office. D3 wires treaty
      * negotiation and embassy protocol.
      */
-    DIPLOMAT;
+    DIPLOMAT,
+
+    /**
+     * Religion Rework R6 — monastic. Assigned to a MONASTERY or ABBEY;
+     * takes the building's faith (like shrine clergy) but is NOT a
+     * rite-officiant (no ordination / rite-claim — those gate on PRIEST).
+     * A multi-skilled generalist whose varied monastic crafts come from
+     * developed skills via the M1/M2 skills-first primitive (wired in R6b).
+     * Appended at the enum tail so existing ordinals are unshifted.
+     */
+    MONK;
 
     public String getDisplayName() {
         return switch (this) {
@@ -144,6 +154,7 @@ public enum Profession {
             case SCRIBE_WORKSHOP -> Profession.SCRIBE;
             case SCHOLARS_RETREAT-> Profession.SCHOLAR;
             case TEMPLE, CHAPEL, SHRINE -> Profession.PRIEST;
+            case MONASTERY, ABBEY -> Profession.MONK;
             case HEALER_HUT      -> Profession.HEALER;
             case TREASURY        -> Profession.GUARD;   // guarded, not staffed
             case HOUSE           -> Profession.NONE;

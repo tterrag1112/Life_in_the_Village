@@ -6238,3 +6238,207 @@ the motive null-hobby arm reproduces milling.
 5. **Fall-through unchanged.** With no craft eligible, the NPC proceeds to its
    normal idle/hobby/stroll behaviors as before (the single behavior cedes the
    slot just like the four did).
+
+---
+
+## R6a — MONK profession + MONASTERY/ABBEY scaffolding (2026-06-08)
+
+### Disposition (findings)
+
+First phase of R6 (the monk). With the skills-first foundation (M1 `SkillRecipes`,
+M2 `HomeProductionBehavior` + table) in place, the monk is built as a **context**
+over that primitive, not a fixed supply chain. R6a is structural scaffolding: the
+MONASTERY/ABBEY building types + the MONK profession (full exhaustive-switch sweep
++ monastic schedule + spawn/faith/lock) + a placeholder work registration — a monk
+that spawns into a monastery and exists, ready for R6b's skill-driven work.
+
+**Exhaustive-switch sweep (the #1 regression risk).** Cross-checked the explorer's
+inventory with an independent repo-wide grep. Two compile-safety axes:
+- **Every `Profession` switch EXPRESSION has a `default`** (verified each site;
+  the one defaultless `switch(profession)` is over `PlayerProfession`, a different
+  enum — false positive). So `MONK` breaks no compilation and falls through to
+  defaults; explicit arms were added only where the default is wrong for a monk.
+- **Every `BuildingType` switch has a `default`** (the `BuildingType.java`
+  audit note + grep: all "defaultless `switch(type)`" sites are over other enums —
+  CharterType/QuestType/CrimeType/RouteType/EventType/road-node). So MONASTERY/ABBEY
+  break no compilation.
+
+Per-site disposition:
+
+| Site | kind | MONK / MONASTERY disposition |
+|---|---|---|
+| `Profession` enum | enum | **appended `MONK` at the tail** (ordinal-safe; saves are name-keyed) |
+| `Profession.professionFor` | switch (default) | **`case MONASTERY, ABBEY -> MONK`** |
+| `Profession.getDisplayName` | switch (default) | none — default yields "Monk" |
+| `BuildingType` enum | enum | **appended `MONASTERY, ABBEY`** |
+| `ProfessionSkills.buildTable` | EnumMap | **`MONK -> (CRAFTING, LITERACY)`** (justified below) |
+| `WeeklyScheduleLibrary.dailyFor` | switch (default) | **`case MONK -> MONASTIC_DAY`** (new template) |
+| `WeeklyScheduleLibrary.dayOffsFor` | switch (default) | **`case MONK -> SUNDAY_OFF`** |
+| `NpcDialogue.getProfessionLine` | switch (default null) | **`case MONK -> …contemplative lines`** |
+| `GreetPlayerBehavior.barkFor` | switch (default) | **`case MONK -> …cloister bark`** |
+| `ApprenticeshipManager.masterpieceTargetFor` | switch (default) | **`case MONK -> written_book`** (scriptorium) |
+| `BuildingFaith.isReligiousBuilding` | predicate | **+MONASTERY/ABBEY** (faith-bearing) |
+| `BuildingFaith.applyClergyFaith` | gate | **+MONK** (monk takes building faith) |
+| `BuildingInhabitantRegistry` | registry | **MONASTERY/ABBEY -> worker(MONK)** |
+| `NpcSpecializationTypes` | registry | **+`MONK_CONTEMPLATIVE` generalist; MONK ∈ LOCK_GENERALIST_AT_SPAWN** |
+| `VillageInhabitantPopulator` | spawn | **MONK-gated `assignInitialSpawnSpec`** (lock) |
+| `ProfessionBrainFactory` | registry | **MONK placeholder registrar** (empty WORK; R6b fills) |
+| `ProfessionRequirements.literacyRequired` | switch (default 0) | none — monk spawns ungated (R6c may add) |
+| `NpcProfileSnapshotBuilder` isProducer/canAssignWork | switch (default false) | none — a monk is neither |
+| `TreasuryTickHandler.wageForProfession` / `NpcStartingWealth` | switch (default) | none — monastery-supported; R6c economy |
+| `ProfessionSupplyChain` | EnumMap | none — empty (graceful); R6b defines crafts→routing |
+| `NpcProfileHub`, `GreetVerb.greetingTreeId`, `VillageEconomy` markup/seller, `BuyGoodsBehavior`, `TownspersonMob.getSellableItems`, `LifeGoal`, `LawPopularity`, `GreeterAssignment`, `FarmerPromotion`, `EventStallManager`, `ParkRenderer`, `ActivityFlavor.craft` | switch/map (default/fallback) | none — defaults correct for a monk (PRIEST also falls to default in the greeting-tree/profile-hub cases) |
+
+**Faith vs rite-venue split (key tie-in).** `isReligiousBuilding` feeds BOTH faith
+resolution (which the monk needs) AND the priest rite-venue map
+(`religiousBuildingsByFaith`) + the temple-prosperity economy. To get the monk's
+faith WITHOUT pulling a monastery into priest rite scheduling / temple decay, I
+split: `isReligiousBuilding` = faith-bearing (TEMPLE/CHAPEL/SHRINE **+
+MONASTERY/ABBEY**); a new `isRiteVenue` = TEMPLE/CHAPEL/SHRINE only. The three
+rite-venue loops in `BuildingFaith` + `TempleProsperity.tickVillage` now use
+`isRiteVenue` (identical to the old behavior for TEMPLE/CHAPEL/SHRINE — no
+regression), while `resolveFaith` keeps `isReligiousBuilding` so a monastery
+resolves its faith. `RiteScheduler`'s own private religious-building check is
+already TEMPLE/CHAPEL/SHRINE — untouched.
+
+**Monk ≠ rite officiant.** All rite-claim / ordination / blessing / confess gates
+use `== Profession.PRIEST` (exact match) — confirmed in `RiteScheduler`,
+`PriestBehavior`, `RiteExecutor`, `Confess/RequestBlessing/CommissionRiteVerb`. A
+MONK is excluded by design; no change needed. `assignClergyOrder` stays PRIEST-only
+(a monk takes no priest order).
+
+**Skill choice justification.** `MONK -> (CRAFTING, LITERACY)`: CRAFTING is the
+parent of the production sub-skills, so the monk's varied monastic crafts (R6b)
+cascade XP sensibly; LITERACY is the scriptorium/study secondary. Deliberately not
+PRIEST's `(SOCIAL, LITERACY)` — a monk is craft+study, not a congregation-facing
+officiant.
+
+**Placement.** `BuildingProfileRegistry` no longer exists (removed in the V1→V2
+placement migration) and worldgen/layout is deferred this phase, so there is NO
+slot-tier registration — MONASTERY/ABBEY are manual-spawnable and populate a MONK
+via `BuildingInhabitantRegistry`.
+
+### What shipped
+
+- **`Profession`**: appended `MONK`; `professionFor` MONASTERY/ABBEY → MONK.
+- **`BuildingType`**: appended `MONASTERY`, `ABBEY`.
+- **`BuildingFaith`**: `isReligiousBuilding` += MONASTERY/ABBEY; new public
+  `isRiteVenue` (TEMPLE/CHAPEL/SHRINE); the three rite-venue loops switched to
+  `isRiteVenue`; `applyClergyFaith` gate relaxed to PRIEST||MONK.
+- **`TempleProsperity`**: economy/decay tick now iterates `isRiteVenue` (monastery
+  excluded — its economy is R6c).
+- **`ProfessionSkills`**: `MONK -> (CRAFTING, LITERACY)`.
+- **`WeeklyScheduleLibrary`**: new `MONASTIC_DAY` (pre-dawn rise, early retire,
+  contemplative dusk); `dailyFor` MONK → MONASTIC_DAY; `dayOffsFor` MONK →
+  SUNDAY_OFF.
+- **`NpcDialogue`** / **`GreetPlayerBehavior`**: monastic profession lines + bark.
+- **`ApprenticeshipManager`**: MONK masterpiece → written_book.
+- **`BuildingInhabitantRegistry`**: MONASTERY/ABBEY → single worker(MONK).
+- **`NpcSpecializationTypes`**: new `MONK_CONTEMPLATIVE` generalist;
+  MONK ∈ `LOCK_GENERALIST_AT_SPAWN`.
+- **`VillageInhabitantPopulator`**: after the PRIEST-only `assignClergyOrder`, a
+  MONK-gated `assignInitialSpawnSpec` locks the monk's generalist spec.
+- **`ProfessionBrainFactory`**: MONK placeholder registrar (empty WORK; R6b fills).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `BuildingType`/`BuildingInhabitantRegistry` (spawn),
+   `BuildingFaith` (faith via the new split), the spec-lock path
+   (`NpcSpecializationTypes` + populator). All reused; no new framework.
+2. **Downstream callers.** Every exhaustive `Profession` switch dispositioned
+   (table above) — all compile (defaults) with explicit arms where semantics
+   matter. `ProfessionBrainFactory` gives MONK a valid (placeholder) brain.
+   `WeeklyScheduleLibrary` gives it a schedule. R9a's religion panel + the profile
+   builder read a monk's piety/faith generically (MONK is `isProducer=false`,
+   `canAssignWork=false` — correct). Office eligibility (`VILLAGE_PRIEST`,
+   `TEMPLE_HIGH_PRIEST`) gates on PRIEST only — a monk is ineligible (correct; an
+   Abbot office is the later offices pass).
+3. **Sibling systems.** Priest/clergy rite systems gate on `== PRIEST` — a monk is
+   NOT pulled into rite-claim/ordination (verified). The R9 panels show MONK +
+   faith generically. The apprenticeship system has a MONK masterpiece descriptor
+   (a monastic mentor is later). The M2 home-production primitive runs for a monk
+   too (it's profession-agnostic, IDLE) — a nice side-effect, not the monastery
+   WORK context (R6b).
+4. **Exhaustive switches.** `Profession` (the whole sweep — all defaulted/armed)
+   and `BuildingType` (all defaulted; professionFor + BuildingFaith handle
+   MONASTERY/ABBEY explicitly). Confirmed no defaultless switch over either enum.
+
+### Simplification Sweep
+
+The monk is a new `Profession` + two `BuildingType`s + a faith/rite-venue predicate
+split — no new frameworks. Reused: the building-inhabitant spec (worker(MONK) like
+TEMPLE), `BuildingFaith.applyClergyFaith` (relaxed), the `LOCK_GENERALIST_AT_SPAWN`
+spec-lock route (shepherd/priest pattern), `WeeklyScheduleLibrary` templates, the
+`ProfessionBrainFactory` registrar idiom. Classes in scope (13) + inbound callers
+listed in the table; no MONK arm missed (grep: MONK referenced in all 12 expected
+code files + TempleProsperity via isRiteVenue).
+
+### Deviations from prompt
+
+- **No `BuildingProfileRegistry` slot-tier entry** — that registry was removed in
+  the V1→V2 placement migration and worldgen is deferred; manual spawn populates
+  via `BuildingInhabitantRegistry`, which is sufficient. (The `litv-building-profile`
+  skill's Step 1 is obsolete here; Step 2 inhabitant spec was used.)
+- **Introduced `isRiteVenue` (a faith-bearing vs rite-venue split)** rather than
+  blindly widening `isReligiousBuilding` everywhere — required to give the monk a
+  faith without pulling monasteries into priest rite scheduling / temple economics
+  (the prompt's Tie-In Audit explicitly demanded this confirmation).
+- **MONK keeps the PRIEST-only `assignClergyOrder` as a no-op and locks via a
+  MONK-gated `assignInitialSpawnSpec`** instead of relaxing `assignClergyOrder`
+  (a monk takes no priest order; this keeps the priest path byte-unchanged).
+- **The WORK registrar is an explicit empty placeholder** (graceful idle, not an
+  error) — R6b replaces the body.
+
+### Out-of-scope but flagged
+
+- **R6b** — the monk's skill-driven monastery production context + the monastic
+  crafts (book-copying / beekeeping / brewing / herbalism), and `ProfessionSupplyChain`
+  / wage / starting-wealth entries that the crafts imply.
+- **R6c** — initiate→skill development + the monastery's economy/needs (the
+  monastery is intentionally OUT of `TempleProsperity` for now).
+- **Standalone-district worldgen + ABBEY expansion** — deferred to the layout
+  rework (no auto-placement this phase; MONASTERY/ABBEY are manual-spawn).
+- **The Abbot/Abbess office** (`List.of(Profession.MONK)` eligibility + POWERS) —
+  Garrett's later offices pass; no abbot behavior this phase.
+- **A true per-religion monastic horarium** (multiple prayer offices) — a later
+  depth pass; prayer/study ride SOCIAL/LEISURE for now.
+- **A MONASTERY/ABBEY structure NBT / variant manifest** for the actual block
+  placement on manual spawn is a content-asset concern outside this code phase.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: the
+exhaustive-switch sweep was independently re-grepped — every `Profession` and
+`BuildingType` switch expression has a `default` (the defaultless ones are over
+other enums), so `MONK`/`MONASTERY`/`ABBEY` break no compilation; explicit arms
+added where the default is wrong for a monk; `MONK` appended at the enum tail
+(name-keyed saves unaffected); `BuildingFaith` faith/rite-venue split verified
+consistent (resolveFaith = faith-bearing; the three venue loops + TempleProsperity
+= rite-venue); `MONK_CONTEMPLATIVE` generalist registered + MONK in the lock set so
+`assignInitialSpawnSpec(MONK)` finds & locks it; placeholder brain registrar valid;
+`SpecializationData.None.INSTANCE` reused (as PRIEST_CLERIC does).
+
+### Smoke test (user-runnable)
+
+1. **Monastery spawns a monk.** Manually spawn a MONASTERY in a village; confirm a
+   MONK populates it, takes the monastery's faith (the village dominant, or a
+   shrine-style minority if its patron faith is set), holds a LOCKED MONK spec
+   (Contemplative), and follows the MONASTIC_DAY schedule (pre-dawn rise, early
+   retire) without erroring or freezing. Confirm the same for an ABBEY.
+2. **Profile + R9a panel.** Right-click the monk: the profile shows profession
+   MONK; the R9a Religion panel shows the monastery's faith + the monk's piety.
+   The temple screen (`/religion temple` near the monastery) opens it as a
+   faith-bearing building (no priest clergy shown — correct).
+3. **Not a rite officiant.** Confirm the monk is NOT pulled into priest behavior:
+   it never claims/officiates rites, gets no ordination, and the priest-only verbs
+   (confess / request blessing / commission rite) are unavailable at the monk.
+   Confirm a village with ONLY a monastery (no temple/chapel/shrine of its faith)
+   does NOT schedule signature rites at the monastery (it's not a rite venue).
+4. **No temple-economy decay.** Confirm a freshly-spawned monastery does NOT start
+   decaying from insolvency (it's excluded from TempleProsperity; its economy is
+   R6c).
+5. **No regressions.** Confirm existing professions/NPCs (priests, bakers, etc.)
+   behave exactly as before — schedules, rites, production, greetings, profiles —
+   and that nothing crashes anywhere (the switch sweep is complete; MONK falls
+   through correctly where unarmed).

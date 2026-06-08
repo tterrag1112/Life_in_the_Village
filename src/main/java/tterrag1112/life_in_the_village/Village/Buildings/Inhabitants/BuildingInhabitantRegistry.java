@@ -132,6 +132,18 @@ public final class BuildingInhabitantRegistry {
                 .worker(Profession.PRIEST)
                 .build());
 
+        // Religion Rework R6a — monastic buildings take a single MONK worker
+        // (mirrors the TEMPLE single-worker shape; a true monastic household /
+        // multiple monks is an R6c / expansion concern). Manual-spawnable; no
+        // worldgen placement yet.
+        register(BuildingType.MONASTERY, BuildingInhabitantSpec.builder()
+                .worker(Profession.MONK)
+                .build());
+
+        register(BuildingType.ABBEY, BuildingInhabitantSpec.builder()
+                .worker(Profession.MONK)
+                .build());
+
         register(BuildingType.HEALER_HUT, BuildingInhabitantSpec.builder()
                 .worker(Profession.HEALER)
                 .build());

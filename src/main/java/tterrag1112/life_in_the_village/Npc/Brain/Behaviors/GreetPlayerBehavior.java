@@ -182,6 +182,7 @@ public class GreetPlayerBehavior extends Behavior<TownspersonMob> {
             case LIBRARIAN -> Component.literal("[" + name + "] Quietly, please. What are you looking for?");
             case SCHOLAR   -> Component.literal("[" + name + "] Hmm? Oh, do come in.");
             case PRIEST    -> Component.literal("[" + name + "] Peace be with you. How may I help?");
+            case MONK      -> Component.literal("[" + name + "] Peace, friend. You are welcome in the cloister.");
             default        -> Component.literal("[" + name + "] Welcome.");
         };
     }

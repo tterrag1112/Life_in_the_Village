@@ -95,6 +95,21 @@ public final class WeeklyScheduleLibrary {
             new TimeWindow(13000, 15000),
             new TimeWindow(15000, 1000));
 
+    /**
+     * R6a — monastic day (monk): a contemplative rhythm distinct from
+     * EARLY_RISER — rises pre-dawn (matins) and retires early, with a longer
+     * communal/contemplative dusk window. This phase, prayer/study/meditation
+     * ride the existing SOCIAL/LEISURE phases; a true per-religion horarium is
+     * a later depth pass.
+     */
+    private static final DailySchedule MONASTIC_DAY = DailySchedule.legacy(
+            new TimeWindow(23000, 0),       // pre-dawn rise
+            new TimeWindow(0, 5000),        // morning labour / prayer
+            new TimeWindow(5000, 6000),     // midday meal
+            new TimeWindow(6000, 11000),    // afternoon labour
+            new TimeWindow(11000, 13000),   // communal / contemplation (SOCIAL)
+            new TimeWindow(13000, 23000));  // early retirement, contemplative evening
+
     // ── Day-off patterns (sets of weekday indices) ─────────────────────────
 
     private static final Set<Integer> SUNDAY_OFF = Set.of(6);
@@ -137,6 +152,7 @@ public final class WeeklyScheduleLibrary {
             case INNKEEPER -> INNKEEPER_DAY;
             // Scribal trio: late-rising indoor day (Phase 2 task 17).
             case SCRIBE, LIBRARIAN, SCHOLAR -> SCHOLAR_DAY;
+            case MONK -> MONASTIC_DAY;
             default -> DEFAULT_DAY;
         };
     }
@@ -149,6 +165,7 @@ public final class WeeklyScheduleLibrary {
             case INNKEEPER -> TUESDAY_OFF;
             // Priest: monday off (spec line 124 — Sunday busy with services).
             case PRIEST -> MONDAY_OFF;
+            case MONK -> SUNDAY_OFF;   // R6a — a day of rest/reflection
             // Healer: Sunday off; plague response overrides this elsewhere.
             case HEALER -> SUNDAY_OFF;
             // Blacksmith: full weekend (spec line 123).

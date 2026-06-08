@@ -208,6 +208,12 @@ public final class NpcSpecializationTypes {
             Component.literal("Ancestor-Keepers"),
             List.of(), false, SpecializationData.None.INSTANCE));
 
+    // ── R6a — monastic generalist (the locked spawn spec; no priest order) ──
+    public static final SpecializationDef MONK_CONTEMPLATIVE = register(new SpecializationDef(
+            id("monk/contemplative"), Profession.MONK,
+            Component.literal("Contemplative"),
+            List.of(), true, SpecializationData.None.INSTANCE));
+
     // ── Lookup ───────────────────────────────────────────────────────────
 
     public static Optional<SpecializationDef> byId(Identifier id) {
@@ -237,7 +243,7 @@ public final class NpcSpecializationTypes {
      *  deliberately NOT here: they spawn spec-less and auto-promote via
      *  {@code trySetSpecialization}, which a lock would block. */
     private static final java.util.Set<Profession> LOCK_GENERALIST_AT_SPAWN =
-            java.util.EnumSet.of(Profession.PRIEST);
+            java.util.EnumSet.of(Profession.PRIEST, Profession.MONK);  // R6a — monk locks its generalist
 
     /**
      * Religion Rework R1b — the single inhabitant-spawn specialization

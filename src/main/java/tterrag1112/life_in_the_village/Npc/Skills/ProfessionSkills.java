@@ -69,6 +69,12 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         m.put(Profession.CHANCELLOR,       new ProfessionSkills(Skill.LITERACY, Skill.SOCIAL));
         m.put(Profession.HERALD,           new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
         m.put(Profession.PRIEST,           new ProfessionSkills(Skill.SOCIAL,   Skill.LITERACY));
+        // R6a — monk: a multi-craft contemplative. CRAFTING primary (the parent
+        // of the production sub-skills, so the monk's varied monastic crafts —
+        // R6b — all cascade XP sensibly), LITERACY secondary (scriptorium /
+        // study). Deliberately NOT (SOCIAL, LITERACY) like PRIEST: a monk is
+        // craft+study, not a congregation-facing officiant.
+        m.put(Profession.MONK,             new ProfessionSkills(Skill.CRAFTING, Skill.LITERACY));
         m.put(Profession.HEALER,           new ProfessionSkills(Skill.MEDICINE, Skill.SURVIVAL));
 
         // Scribal (Phase 2 task 17). LITERACY primary across the trio;

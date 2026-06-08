@@ -84,6 +84,19 @@ public enum BuildingType {
      * {@link BuildingType} has a {@code default} arm, so this addition
      * compiles cleanly (see {@code MERCHANT_PROGRESS.md} Phase 2b audit).
      */
-    MARKET_STALL
+    MARKET_STALL,
+
+    /**
+     * Religion Rework R6 — monastic buildings. Faith-bearing (a monk takes
+     * the building's faith, like shrine clergy) but NOT priest rite-venues:
+     * they are excluded from the rite-scheduling / temple-economy paths (see
+     * {@code BuildingFaith.isRiteVenue}). Manual-spawnable this phase; no
+     * worldgen/layout placement yet (the standalone-district spawn is deferred
+     * to the layout rework). MONASTERY and ABBEY differ in-game later (R6d /
+     * expansion); both are created here. Appended at the enum tail so existing
+     * ordinals are unshifted; every BuildingType switch has a default arm.
+     */
+    MONASTERY,
+    ABBEY
 
 }

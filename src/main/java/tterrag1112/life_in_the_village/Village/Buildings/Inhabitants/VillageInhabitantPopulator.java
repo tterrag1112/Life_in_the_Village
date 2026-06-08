@@ -262,6 +262,15 @@ public final class VillageInhabitantPopulator {
             tterrag1112.life_in_the_village.Npc.Religion.ClergyOrders
                     .assignClergyOrder(level, npc);
 
+            // R6a — a monk takes no priest clergy order (above is a PRIEST no-op
+            // for it), but its generalist spec is still locked at spawn via the
+            // same centralized route so it doesn't drift. Gated to MONK so the
+            // PRIEST path (already locked by assignClergyOrder) is untouched.
+            if (npc.getProfession() == tterrag1112.life_in_the_village.Profession.Profession.MONK) {
+                tterrag1112.life_in_the_village.Npc.Specialization.NpcSpecializationTypes
+                        .assignInitialSpawnSpec(npc, npc.getProfession());
+            }
+
             // Phase 6.3.3.q.2 / 6.3.4.1.4 — Business creation in the
             // spawn pipeline. The hook is now profession-agnostic
             // (FarmerPromotion.supportsBusiness allow-list): FARMER /

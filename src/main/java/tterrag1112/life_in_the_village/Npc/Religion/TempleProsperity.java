@@ -131,7 +131,10 @@ public final class TempleProsperity {
 
         for (UUID bid : village.getBuildingIds()) {
             Building b = data.getBuildingById(bid).orElse(null);
-            if (b == null || !BuildingFaith.isReligiousBuilding(b.getType())) continue;
+            // R6a — rite venues only (TEMPLE/CHAPEL/SHRINE). A monastery carries
+            // a faith but is not subject to priest-temple economy/decay here; the
+            // monastery economy is a later R6c concern.
+            if (b == null || !BuildingFaith.isRiteVenue(b.getType())) continue;
             BuildingEconomy econ = data.getOrCreateBuildingEconomy(bid);
 
             // R4c-2 — auto-rehire: a functional (repaired, not RUINED), vacant,

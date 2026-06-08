@@ -36,8 +36,27 @@ public final class BuildingFaith {
      *  tier) — set at spawn for a shrine's minority clergy. */
     public static final float CLERGY_STRENGTH = 0.6f;
 
-    /** True for the three faith-bearing building types. */
+    /**
+     * True for every faith-bearing building — the rite venues PLUS the R6
+     * monastic buildings (MONASTERY/ABBEY), which carry a patron faith so a
+     * monk takes it, but are NOT priest rite venues (see {@link #isRiteVenue}).
+     * Used wherever "does this building carry a faith" matters (faith
+     * resolution, the monk's spawn-time belief, the read-only temple viewer).
+     */
     public static boolean isReligiousBuilding(BuildingType type) {
+        return isRiteVenue(type)
+                || type == BuildingType.MONASTERY
+                || type == BuildingType.ABBEY;
+    }
+
+    /**
+     * R6a — the priest-staffed rite venues (TEMPLE/CHAPEL/SHRINE) only. The
+     * rite-scheduling venue map, the rite-location faith/economy lookups, and
+     * the temple-prosperity economy iterate THESE, not the broader
+     * {@link #isReligiousBuilding}, so a monastery (staffed by a non-officiant
+     * monk) is never pulled into priest rite scheduling or temple economics.
+     */
+    public static boolean isRiteVenue(BuildingType type) {
         return type == BuildingType.TEMPLE
                 || type == BuildingType.CHAPEL
                 || type == BuildingType.SHRINE;
@@ -81,7 +100,10 @@ public final class BuildingFaith {
      */
     public static void applyClergyFaith(ServerLevel level, Village village,
                                         TownspersonMob npc, Building building) {
-        if (npc.getProfession() != Profession.PRIEST) return;
+        // R6a — also the monk: a monastery's monk takes the building's faith
+        // exactly like a shrine's minority priest (belief only; no priest order).
+        if (npc.getProfession() != Profession.PRIEST
+                && npc.getProfession() != Profession.MONK) return;
         String faith = resolveFaith(level, village, building);
         if (faith == null) return;
         String current = npc.getPiety().primaryReligion().orElse(null);
@@ -135,7 +157,7 @@ public final class BuildingFaith {
         VillageSavedData data = VillageSavedData.get(level);
         for (UUID bid : village.getBuildingIds()) {
             Building b = data.getBuildingById(bid).orElse(null);
-            if (b == null || !isReligiousBuilding(b.getType())) continue;
+            if (b == null || !isRiteVenue(b.getType())) continue;
             String faith = resolveFaith(level, village, b);
             if (faith == null) continue;
             Building cur = out.get(faith);
@@ -168,7 +190,7 @@ public final class BuildingFaith {
         VillageSavedData data = VillageSavedData.get(level);
         for (UUID bid : village.getBuildingIds()) {
             Building b = data.getBuildingById(bid).orElse(null);
-            if (b == null || !isReligiousBuilding(b.getType())) continue;
+            if (b == null || !isRiteVenue(b.getType())) continue;
             BlockPos origin = b.getShape().getOrigin();
             if (origin != null && origin.equals(loc)) return resolveFaith(level, village, b);
         }
@@ -186,7 +208,7 @@ public final class BuildingFaith {
         VillageSavedData data = VillageSavedData.get(level);
         for (UUID bid : village.getBuildingIds()) {
             Building b = data.getBuildingById(bid).orElse(null);
-            if (b == null || !isReligiousBuilding(b.getType())) continue;
+            if (b == null || !isRiteVenue(b.getType())) continue;
             BlockPos origin = b.getShape().getOrigin();
             if (origin != null && origin.equals(loc)) return java.util.Optional.of(bid);
         }

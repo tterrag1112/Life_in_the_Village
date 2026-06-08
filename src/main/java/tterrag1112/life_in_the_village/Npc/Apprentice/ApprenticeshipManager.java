@@ -412,6 +412,9 @@ public final class ApprenticeshipManager {
             // golden apple (a priest supply-chain output) reads as a sacred
             // consecration piece, distinct from the scribes' written book.
             case PRIEST        -> "minecraft:golden_apple";
+            // R6a — a monk's masterpiece is a finely-copied manuscript (the
+            // scriptorium craft), like the scribes' book.
+            case MONK          -> "minecraft:written_book";
             // Phase 6.3.3.l.2 — FARMER masterpiece. Descriptor only;
             // the pass condition is skill-based (CROP_FARMING /
             // ANIMAL_HUSBANDRY at MASTERPIECE_PASS_SKILL), which the

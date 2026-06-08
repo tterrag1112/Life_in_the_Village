@@ -300,6 +300,10 @@ public final class NpcDialogue {
                     "May your journey be blessed.",
                     "The temple is always open to those who seek peace.",
                     "I tend to the spirit of this village.");
+            case MONK -> pick(rng,
+                    "We keep the hours of prayer here, and the work of our hands.",
+                    "Peace, traveller. The cloister is quiet, as it should be.",
+                    "There is devotion in labour as much as in prayer.");
             case GUILDWORKER -> pick(rng,
                     "The guild board has contracts, if you're interested.",
                     "Adventurers come and go. The guild endures.",
