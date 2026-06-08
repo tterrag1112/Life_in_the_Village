@@ -118,6 +118,11 @@ public final class NpcMemoryTypes {
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
             POSTAL_RUN_COOLDOWN = register("postal_run_cooldown", Codec.LONG);
 
+    /** Religion R3e-3b-2 — TTL cool-down between autonomous pilgrimages (a long
+     *  gap so a pilgrimage is a rare, significant act). */
+    public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<Long>>
+            PILGRIMAGE_COOLDOWN = register("pilgrimage_cooldown", Codec.LONG);
+
     /** Externally-seated greeter target (LivingEntity — typically a ServerPlayer).
      *  No codec — entity references aren't persisted (mirrors INTERACTION_TARGET). */
     public static final DeferredHolder<MemoryModuleType<?>, MemoryModuleType<LivingEntity>>

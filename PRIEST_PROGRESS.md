@@ -3647,3 +3647,165 @@ registered; no new brain memory; codec 8/16.
    (route-connected destinations only, R3e-3b-1); confirm a visitor UUID is
    rejected (residents only); confirm an ordinary villager (no pilgrimage) is
    unaffected — the PILGRIM behavior is inert without the role.
+
+---
+
+## R3e-3b-2 — Autonomous pilgrimage decision + destination attendance (2026-06-08)
+
+Completes resident pilgrimage, **R3e, and the R3 content arc.** Makes pilgrimage
+autonomous and purposeful on top of the R3e-3b-1 infra: a devout, locally-unserved
+adherent departs on their own for a reachable same-faith grand festival, **attends
+it** at the destination, and returns with a boon scaled by whether they actually
+worshipped.
+
+### Disposition (findings, verified on branch)
+
+- `Pilgrimage`/`PilgrimageSavedData` (R3e-3b-1) — confirmed: `onPathComplete`
+  (OUTBOUND) **immediately reversed to RETURNING** (no destination dwell). Added
+  an AT_DESTINATION dwell. `dispatchPilgrimage` is the single convert path.
+- `PilgrimTravelBehavior` — the realized driver; it sets RETURNING on OUTBOUND
+  arrival. Redirected to dwell-and-attend.
+- **`AttendGatheringBehavior` — MISMATCH flagged:** it is hard-scoped to the NPC's
+  **home** village (`entity.getAssignedVillageName()` → `getVillageByName`) and
+  gates on `isEventTime()` (an eventOverride). A resident pilgrim standing in a
+  **foreign** host village resolves to its HOME village, so it CANNOT attend the
+  host festival through R2b. → Destination attendance is done by walking the
+  pilgrim to the host's festival venue and lingering (the R3d-1 crowd-bless
+  reaches them by proximity) — the SAME mechanism R3e-3a's visitor pilgrims use.
+- R3d-2 grand festivals + `BuildingFaith` + `FaithReconciliation.isUnservedLocally`
+  — confirmed the inputs for picking a same-faith destination + an eligible
+  pilgrim. The grand festival ACTIVE event carries the R3e-2b `FAITH_KEY` stamp,
+  so the destination festival's faith is recoverable without the entity.
+- Route connectivity — `data.getRouteBetween(a,b)` (the debug producer's gate) is
+  reused so only reachable pilgrimages are dispatched.
+- Cadence — no daily-scan source fit cleanly; used the **festival-START hook**
+  (`EventEffects.onEventStart`, where R3e-3a already fires) as the event-driven
+  trigger, plus a new `PILGRIMAGE_COOLDOWN` brain memory (added to
+  `brainMemories()` — freeze trap handled) + a low per-adherent probability.
+
+### Design / decisions
+
+- **Trigger on the grand-festival START** (`PilgrimageDeparture.onGrandFestivalStart`,
+  called from `onEventStart` after `PilgrimConvergence`): for each village
+  route-connected to the host, loaded adherents of the host's faith who are devout
+  (`PietyTier.DEVOUT`/`PIOUS`), locally unserved, not already travelling, and
+  off-cooldown depart with `DEPART_CHANCE = 0.25`. Triggering on START guarantees
+  a live festival at the destination; far adherents who can't arrive in time still
+  return gracefully (missed boon). Bounded + rare: grand festivals are annual per
+  faith, cooldown ~1 week, realized-only (scans loaded NPCs).
+- **Dwell-and-attend** — new `AT_DESTINATION` state: OUTBOUND arrival →
+  `arriveAtDestination` (dwell `DWELL_TICKS = 4000`) → RETURNING. The dwell state
+  machine (`tickDwell`) runs in BOTH the engine's spawned + simulated ticks; it
+  marks `attended` when a grand festival of the pilgrim's `faith` is active at the
+  destination, and reverses when the dwell elapses. The realized behavior walks
+  the pilgrim to the host's faith building (proximity crowd-bless) during the
+  dwell. A new `faith` field on `Pilgrimage` lets the simulated path check the
+  festival without the entity.
+- **Boon tuning** — `reintegrate` scales by `attended`: piety +0.08 / mood +25 when
+  the festival was attended, +0.02 / +8 for a missed journey. Bounded; the rare
+  rate self-limits farming.
+- **Behavior gate fix** — `PilgrimTravelBehavior` now only drives walking/progress
+  while the group `isSpawned()` (realized); when simulated the engine owns
+  progress, preventing a loaded-but-simulated pilgrim from double-advancing.
+
+### What shipped
+
+- `Village/Travel/Pilgrimage.java` — AT_DESTINATION + `faith`/`dwellUntilTick`/
+  `attended` (codec 11 fields, the 3 new ones `optionalFieldOf` so R3e-3b-1-era
+  saves load); `arriveAtDestination`, `tickDwell`, `festivalActiveAtDestination`,
+  `isGrandFestival`.
+- `Village/Travel/PilgrimageSavedData.java` — dispatch derives the pilgrim's faith;
+  attendance-scaled boon.
+- `Npc/Brain/Behaviors/Trade/PilgrimTravelBehavior.java` — `isSpawned` gate +
+  AT_DESTINATION venue dwell-walk.
+- `Npc/Religion/PilgrimageDeparture.java` (new) — the festival-start decision.
+- `Village/Event/EventEffects.java` — wires the departure into `onEventStart`.
+- `Npc/Brain/Memories/NpcMemoryTypes.java` + `Entities/custom/TownspersonMob.java`
+  — `PILGRIMAGE_COOLDOWN` memory (registered + in `brainMemories()`).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `onEventStart` grand-festival start; the festival faith
+   (`FAITH_KEY`); `BuildingFaith` (the destination has the faith), `isUnservedLocally`
+   (eligible pilgrim), `getRouteBetween` (reachable), `PietyTier` (devout).
+2. **Downstream callers** — `dispatchPilgrimage`/`Pilgrimage` (the dwell change),
+   `reintegrate` (boon), `FaithReconciliation` (full co-religion benefit via the
+   R3d-1 crowd-bless at the venue), the cooldown memory.
+3. **Sibling systems** — R3e-3a VISITOR pilgrims: both now fire from the same
+   festival-start hook and coexist — visitors are spawned AT the host (transient,
+   PRIEST-profession), residents TRAVEL in from route-connected villages (keep
+   identity); they're distinct entities, no double-count. R2b attendance unchanged
+   (the foreign pilgrim attends by proximity, not the home-scoped override). The
+   home village headcount: the departing adherent is discarded while away (like
+   R3e-3b-1), so it isn't double-counted.
+4. **Exhaustive switches** — `Pilgrimage.PilgrimState` gained `AT_DESTINATION`;
+   grep-confirmed there is NO `switch` over it (only if-checks here + the codec's
+   STRING xmap), and the Adventurer `switch (group.getState())` sites are a
+   different enum. No new EventType/Rite.
+
+### Simplification Sweep
+
+- Classes in scope: `PilgrimageDeparture` (new, 1 inbound from EventEffects),
+  `Pilgrimage`/`PilgrimageSavedData`/`PilgrimTravelBehavior` (edited), `EventEffects`
+  /`NpcMemoryTypes`/`TownspersonMob` (wiring). The decision reuses the debug
+  producer's `dispatchPilgrimage` + `getRouteBetween` validation (one dispatch
+  path, not a parallel one). Destination attendance reuses the venue + R3d-1
+  crowd-bless (no pilgrim-specific attend rite). One new brain memory (cooldown),
+  in `brainMemories()`. Codec 11/16 (3 optional additions).
+
+### Deviations from prompt
+
+- **Attendance is NOT via `AttendGatheringBehavior`** — it is home-village-scoped
+  (+ needs an eventOverride a resident pilgrim doesn't have), so a foreign pilgrim
+  cannot use it. The pilgrim instead dwells at the host's faith venue and is
+  benefited by the R3d-1 crowd-bless by proximity — the same approach as R3e-3a's
+  visitor pilgrims, and the equivalent outcome (present at the venue, full
+  co-religion benefit).
+- **Trigger is the festival START** (event-driven), not a daily decision scan —
+  the prompt offered "e.g. a daily per-village/per-NPC decision"; the start hook is
+  more purposeful (guarantees a live festival) and equally bounded (grand festivals
+  are annual). Still realized-only, cooldowned, low-probability.
+- **Timing is tight for distant villages:** simulated OUTBOUND ≈ 10000t vs a
+  12000t festival, so adjacent same-faith villages attend reliably while far ones
+  may arrive after the festival and take the reduced boon (the graceful-miss path).
+
+### Out-of-scope but flagged
+
+- The shared caravan/pilgrim principal-identity hardening — **Garrett's separate
+  task** (R3e-3b-1 + R3e-3b-2 copy the caravan machinery as-is).
+- Wider/earlier departure timing (lead-time before the festival, faster pilgrims)
+  if distant attendance should be more reliable.
+- R4 economy interactions for pilgrim spending.
+
+**This completes R3e (multi-faith) and the R3 content arc** of the Religion Rework.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: codec
+11/16 with optional R3e-3b-2 fields; no `switch` over the new `AT_DESTINATION`;
+`dispatchPilgrimage` callers (decision + debug) both 5-arg; the new brain memory is
+in `brainMemories()`; the `isSpawned` gate prevents double-progress; festival-faith
+recovered via the R3e-2b `FAITH_KEY` stamp; `PilgrimageDeparture` wired once.
+
+### Smoke test (user-runnable)
+
+1. Two route-connected villages of the SAME faith — village H (host) has a religious
+   building of that faith and a grand festival due; village A has a devout
+   (DEVOUT/PIOUS piety) adherent of that faith who is locally unserved (A has no
+   same-faith building/priest). Stand near A so its NPCs are loaded.
+2. Let H's grand festival start (advance to its calendar day, or it fires on
+   schedule). Confirm the A adherent occasionally (≈25%, cooldowned) departs as a
+   violet PILGRIM on the map toward H.
+3. Follow them: confirm they travel to H, walk to H's festival venue, and linger
+   during the festival (activity "Attending the festival..."), getting the R3d-1
+   crowd-bless as a full co-religionist (alongside any R3e-3a visitor pilgrims).
+4. Confirm they then return to A and reintegrate with the **attended** boon (piety
+   +0.08, mood +25). Trigger a journey that misses the festival (far village / late)
+   and confirm the reduced boon (+0.02 / +8) and a graceful return.
+5. Confirm a SERVED adherent (their faith has a local building+priest) does NOT
+   depart; confirm departures are RARE (the per-NPC week cooldown blocks immediate
+   re-departure); confirm only realized (loaded) adherents depart.
+6. Confirm this is distinct from R3e-3a visitor pilgrims (residents keep their
+   name/identity and travel in; visitors spawn at the host and are transient) and
+   that a save/reload mid-journey resumes + completes (R3e-3b-1 persistence).

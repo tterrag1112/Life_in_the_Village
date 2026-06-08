@@ -73,6 +73,12 @@ public class EventEffects {
         tterrag1112.life_in_the_village.Npc.Visitor.PilgrimConvergence
                 .onFestivalStart(level, event, village, data);
 
+        // R3e-3b-2 — a grand festival also draws RESIDENT pilgrims: devout,
+        // locally-unserved adherents in route-connected villages occasionally
+        // depart to attend (and return with a boon). No-op for non-grand events.
+        tterrag1112.life_in_the_village.Npc.Religion.PilgrimageDeparture
+                .onGrandFestivalStart(level, village, event, data, level.getGameTime());
+
         // Announce to nearby players
         announceEvent(level, event, village, data, true);
     }

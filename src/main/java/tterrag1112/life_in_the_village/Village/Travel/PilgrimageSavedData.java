@@ -43,9 +43,13 @@ public class PilgrimageSavedData extends SavedData {
 
     private static final int TICK_INTERVAL = 20;
 
-    /** Modest completion boon (anti-farm): a piety deepening + a mood lift. */
-    private static final float BOON_PIETY = 0.05f;
-    private static final int   BOON_MOOD  = 15;
+    /** Completion boon (anti-farm; a pilgrimage is rare so the per-event reward
+     *  can be meaningful). Larger when the pilgrim actually attended the host
+     *  grand festival, smaller for a journey that missed it. */
+    private static final float BOON_PIETY_ATTENDED = 0.08f;
+    private static final int   BOON_MOOD_ATTENDED  = 25;
+    private static final float BOON_PIETY_MISSED   = 0.02f;
+    private static final int   BOON_MOOD_MISSED    = 8;
 
     public static final SavedDataType<PilgrimageSavedData> TYPE = new SavedDataType<>(
             "pilgrimages",
@@ -105,8 +109,9 @@ public class PilgrimageSavedData extends SavedData {
     public Pilgrimage dispatchPilgrimage(TownspersonMob adherent, UUID routeId,
                                          UUID homeVillageId, UUID destVillageId,
                                          long currentTick) {
+        String faith = adherent.getPiety().primaryReligion().orElse("");
         Pilgrimage p = Pilgrimage.create(routeId, homeVillageId, destVillageId,
-                adherent.getUUID(), currentTick);
+                adherent.getUUID(), faith, currentTick);
         assignPilgrimRole(adherent);
         pilgrimages.put(p.getPilgrimageId(), p);
         setDirty();
@@ -182,11 +187,16 @@ public class PilgrimageSavedData extends SavedData {
         }
         if (mob == null) return;
         clearPilgrimRole(mob);
-        // Completion boon — deepen the adherent's own faith + a mood lift.
+        // Completion boon — deepen the adherent's own faith + a mood lift, larger
+        // when the host grand festival was actually attended (R3e-3b-2).
+        boolean attended = p.hasAttended();
+        float pietyBoon = attended ? BOON_PIETY_ATTENDED : BOON_PIETY_MISSED;
+        int   moodBoon  = attended ? BOON_MOOD_ATTENDED  : BOON_MOOD_MISSED;
         mob.getPiety().primaryReligion().ifPresent(faith ->
-                mob.getPiety().adjustBelief(faith, BOON_PIETY));
-        mob.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, BOON_MOOD, currentTick);
-        LOGGER.info("[Pilgrimage] {} returned home and reintegrated", mob.getNpcName());
+                mob.getPiety().adjustBelief(faith, pietyBoon));
+        mob.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, moodBoon, currentTick);
+        LOGGER.info("[Pilgrimage] {} returned home and reintegrated ({}festival)",
+                mob.getNpcName(), attended ? "attended " : "missed ");
     }
 
     // ── Role projection ───────────────────────────────────────────────────────
