@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Health.HealthCondition;
+import tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith;
 import tterrag1112.life_in_the_village.Npc.Religion.Religion;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
@@ -179,8 +180,20 @@ public class VillageEventScheduler {
     private static void checkCalendarVigil(ServerLevel level, Village village,
                                            VillageSavedData data, long currentTick) {
         if ((currentTick % 24000L) != 0L) return;   // once per day
-        Religion religion = ReligionRegistry.get(
-                ReligionContent.villageReligionId(level, village));
+        // R3e-2b — each present faith's vigil days at its own building. VIGIL is
+        // a shared EventType, so the per-day dedup keys on faith (see
+        // alreadyScheduledToday) — two faiths' vigils on the same day both fire.
+        for (Map.Entry<String, tterrag1112.life_in_the_village.Village.Building> e
+                : BuildingFaith.religiousBuildingsByFaith(level, village).entrySet()) {
+            scheduleVigilForFaith(level, village, data, currentTick, e.getKey(), e.getValue());
+        }
+    }
+
+    private static void scheduleVigilForFaith(ServerLevel level, Village village,
+                                              VillageSavedData data, long currentTick,
+                                              String religionId,
+                                              tterrag1112.life_in_the_village.Village.Building venue) {
+        Religion religion = ReligionRegistry.get(religionId);
         if (religion == null) return;
 
         int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
@@ -192,14 +205,8 @@ public class VillageEventScheduler {
         }
         if (!vigilToday) return;
 
-        // De-dupe: one VIGIL per village per day.
-        boolean already = data.getAllEvents().stream()
-                .filter(ev -> ev.getVillageId().equals(village.getId()))
-                .anyMatch(ev -> ev.getType() == VillageEvent.EventType.VIGIL
-                        && currentTick - ev.getStartTick() < 24000L);
-        if (already) return;
-
-        scheduleEvent(level, village, data, VillageEvent.EventType.VIGIL, currentTick);
+        if (alreadyScheduledToday(data, village, VillageEvent.EventType.VIGIL, religionId, currentTick)) return;
+        scheduleEvent(level, village, data, VillageEvent.EventType.VIGIL, currentTick, religionId, venue);
     }
 
     /**
@@ -244,10 +251,21 @@ public class VillageEventScheduler {
     private static void checkSignatureRite(ServerLevel level, Village village,
                                            VillageSavedData data, long currentTick) {
         if ((currentTick % 24000L) != 0L) return;   // once per day
-        Religion religion = ReligionRegistry.get(
-                ReligionContent.villageReligionId(level, village));
+        // R3e-2b — fire EACH present faith's signature on its own calendar day,
+        // at its own building (the dominant at its temple/chapel, a minority at
+        // its shrine). Single-faith villages iterate one faith → unchanged.
+        for (Map.Entry<String, tterrag1112.life_in_the_village.Village.Building> e
+                : BuildingFaith.religiousBuildingsByFaith(level, village).entrySet()) {
+            scheduleSignatureForFaith(level, village, data, currentTick, e.getKey(), e.getValue());
+        }
+    }
+
+    private static void scheduleSignatureForFaith(ServerLevel level, Village village,
+                                                  VillageSavedData data, long currentTick,
+                                                  String religionId,
+                                                  tterrag1112.life_in_the_village.Village.Building venue) {
+        Religion religion = ReligionRegistry.get(religionId);
         if (religion == null) return;
-        String religionId = religion.id();
 
         VillageEvent.EventType type;
         String dayName;
@@ -268,14 +286,8 @@ public class VillageEventScheduler {
         int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
         if (eff != litDay) return;
 
-        // De-dupe: one of this signature per village per day.
-        final VillageEvent.EventType t = type;
-        boolean already = data.getAllEvents().stream()
-                .filter(ev -> ev.getVillageId().equals(village.getId()))
-                .anyMatch(ev -> ev.getType() == t && currentTick - ev.getStartTick() < 24000L);
-        if (already) return;
-
-        scheduleEvent(level, village, data, type, currentTick);
+        if (alreadyScheduledToday(data, village, type, religionId, currentTick)) return;
+        scheduleEvent(level, village, data, type, currentTick, religionId, venue);
     }
 
     /** Loaded village NPCs currently carrying MELANCHOLY. */
@@ -308,12 +320,22 @@ public class VillageEventScheduler {
     private static void checkGrandFestival(ServerLevel level, Village village,
                                            VillageSavedData data, long currentTick) {
         if ((currentTick % 24000L) != 0L) return;   // once per day
-        Religion religion = ReligionRegistry.get(
-                ReligionContent.villageReligionId(level, village));
+        // R3e-2b — each present faith's grand festival at its own building.
+        for (Map.Entry<String, tterrag1112.life_in_the_village.Village.Building> e
+                : BuildingFaith.religiousBuildingsByFaith(level, village).entrySet()) {
+            scheduleGrandForFaith(level, village, data, currentTick, e.getKey(), e.getValue());
+        }
+    }
+
+    private static void scheduleGrandForFaith(ServerLevel level, Village village,
+                                              VillageSavedData data, long currentTick,
+                                              String religionId,
+                                              tterrag1112.life_in_the_village.Village.Building venue) {
+        Religion religion = ReligionRegistry.get(religionId);
         if (religion == null) return;
 
-        VillageEvent.EventType type = grandFestivalType(religion.id());
-        String dayName = grandFestivalDayName(religion.id());
+        VillageEvent.EventType type = grandFestivalType(religionId);
+        String dayName = grandFestivalDayName(religionId);
         if (type == null || dayName == null) return;
 
         Integer eff = religion.calendar().effectiveDayOfYear(dayName);
@@ -321,14 +343,8 @@ public class VillageEventScheduler {
         int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
         if (eff != litDay) return;
 
-        // De-dupe: one grand festival per village per day.
-        boolean already = data.getAllEvents().stream()
-                .filter(ev -> ev.getVillageId().equals(village.getId()))
-                .anyMatch(ev -> ev.getType() == type
-                        && currentTick - ev.getStartTick() < 24000L);
-        if (already) return;
-
-        scheduleEvent(level, village, data, type, currentTick);
+        if (alreadyScheduledToday(data, village, type, religionId, currentTick)) return;
+        scheduleEvent(level, village, data, type, currentTick, religionId, venue);
     }
 
     /** True when today (liturgical day) is the village religion's grand-festival
@@ -353,6 +369,23 @@ public class VillageEventScheduler {
         if (ReligionRegistry.TIDECALL.equals(religionId))    return VillageEvent.EventType.TIDES_RETURN;
         if (ReligionRegistry.FORGE_CREED.equals(religionId)) return VillageEvent.EventType.FOUNDING_DAY;
         return null;
+    }
+
+    /**
+     * R3e-2b — shared per-faith daily dedup: has a gathering of {@code type}
+     * stamped with {@code faithId} already fired in this village today? For a
+     * faith-unique EventType (signature/grand) the faith filter is a harmless
+     * no-op; for a shared type (VIGIL) it separates faiths so each fires once.
+     */
+    private static boolean alreadyScheduledToday(VillageSavedData data, Village village,
+                                                 VillageEvent.EventType type,
+                                                 String faithId, long currentTick) {
+        return data.getAllEvents().stream()
+                .filter(ev -> ev.getVillageId().equals(village.getId()))
+                .filter(ev -> ev.getType() == type)
+                .filter(ev -> currentTick - ev.getStartTick() < 24000L)
+                .anyMatch(ev -> faithId == null
+                        || faithId.equals(ev.getEventData().get(CeremonyBlessings.FAITH_KEY)));
     }
 
     /** religionId → the calendar-day name of its principal high holy day. */
@@ -504,7 +537,29 @@ public class VillageEventScheduler {
                                       VillageSavedData data,
                                       VillageEvent.EventType type,
                                       long currentTick) {
+        scheduleEvent(level, village, data, type, currentTick, null, null);
+    }
+
+    /**
+     * R3e-2b — faith-aware scheduling. A per-faith calendar gathering stamps its
+     * faith ({@link CeremonyBlessings#FAITH_KEY}) and pins its location to the
+     * faith's {@code venue} building (a shrine for a minority faith), so the
+     * blessing rite ({@link CeremonyBlessings#attach}) is gated/tuned to that
+     * faith and the officiant + congregation converge there. Both null → the
+     * legacy dominant-at-temple path (identical to before).
+     */
+    private static void scheduleEvent(ServerLevel level,
+                                      Village village,
+                                      VillageSavedData data,
+                                      VillageEvent.EventType type,
+                                      long currentTick,
+                                      String faithId,
+                                      tterrag1112.life_in_the_village.Village.Building venue) {
         VillageEvent event = VillageEvent.create(village.getId(), type, currentTick);
+        if (faithId != null) event.putEventData(CeremonyBlessings.FAITH_KEY, faithId);
+        if (venue != null && venue.getShape().getOrigin() != null) {
+            event.setLocation(venue.getShape().getOrigin());
+        }
         data.addEvent(event);
         // R2a — attach the coordinated blessing rite (seasonal harvest +
         // per-culture holy days map to a rite; festivals/markets/crises don't).

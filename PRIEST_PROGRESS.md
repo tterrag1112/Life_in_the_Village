@@ -2964,3 +2964,187 @@ import dropped.
 6. No NPC freeze (no new brain memory); rite officiation, fronting, R2b
    attendance, and R3e-1 cross-faith reconciliation all unaffected. (Shrine-faith
    holy-day festivals do NOT yet fire — that is R3e-2b.)
+
+---
+
+## R3e-2b — Shrine-faith calendar scheduling (2026-06-08)
+
+The deferred piece of R3e-2. Generalizes the 365-axis religion-calendar
+schedulers from "the village's dominant faith" to "every faith with a religious
+building present," each ceremony at that faith's building, fronted by that
+faith's priest, tuned to that faith — so a multi-faith village observes multiple
+liturgical calendars in parallel. Completes the secondary-shrine story
+(R3e-2 + R3e-2b).
+
+### Disposition (findings, verified on branch)
+
+- **`checkSignatureRite` / `checkGrandFestival` / `checkCalendarVigil`** — all
+  three resolve `ReligionContent.villageReligionId` (dominant), check the faith's
+  `calendar().effectiveDayOfYear(dayName)` on the **365-day liturgical axis**,
+  dedup per day by EventType, and `scheduleEvent` (no explicit location — the
+  blessing rite later pins it via `templeLocation`). These cleanly generalize
+  per-faith. Signature/grand EventTypes are **faith-unique** (FIRST_FURROW =
+  Sunstead, VOYAGE_BLESSING = Tidecall…) so type-dedup already separates faiths;
+  **VIGIL is a shared EventType**, so its dedup must additionally key on faith.
+- **`checkCulturalHolyDay` — MISMATCH flagged.** This one is NOT a 365-axis
+  religion-calendar check: it is keyed on the village **culture**
+  (`CultureResolver.of`), fires on the **96-day seasonal axis** via
+  `culture.schedule().holyDayInterval()`, and there is exactly one culture per
+  village. Generalizing it per-faith would either change the dominant's timing
+  (forbidden — "single-faith EXACTLY as before") or graft a second timing model
+  onto minorities. **Left dominant-only**; a minority faith's headline
+  observances are its signature/grand/vigil days (now per-faith). The minority's
+  generic culture-interval feast is the one piece not generalized (flagged).
+- **`RiteScheduler.scheduleBlessingRite`** — gated on `villageRitualises`
+  (dominant) and located via `templeLocation` (the TEMPLE). Both are
+  dominant/temple-bound and must become faith/venue-aware for a shrine gathering.
+- **`BuildingFaith` (R3e-2)** — has `resolveFaith`, `isReligiousBuilding`,
+  `clergyFaith`; needed (a) faiths-present→venue enumeration and (b)
+  faith-at-a-location (to recover a blessing rite's faith from its venue without
+  a new rite field). Both added.
+- **`EventAttendance`** — `EventEffects.onEventStart` calls
+  `applyVillageWideOverride` for any RELIGIOUS_RITE gathering: attendance is
+  **village-wide (coarse)**, not faith-scoped. Per the prompt, kept coarse and
+  rely on `FaithReconciliation` (R3e-1) to reduce non-adherents' benefit;
+  attendees still converge on the linked rite's location (the shrine) via R2b.
+- **`PriestBehavior` fronting (R3d-1)** — `tryStartFronting` claims ANY village
+  RELIGIOUS_RITE gathering subject only to the R1a tier gate — **NOT faith-gated**.
+  In a multi-faith village the temple priest could front a shrine festival.
+  Added a same-faith gate (mismatch with the disposition's "naturally satisfied"
+  — reported).
+
+### Design
+
+- **`BuildingFaith.religiousBuildingsByFaith(level, village)`** → `Map<faith,
+  venue Building>`, TEMPLE-preferred within a faith (so the dominant's venue ==
+  the legacy `templeLocation` when a temple exists). **One faith-stamp +
+  venue threaded through scheduling:**
+  - `VillageEventScheduler.scheduleEvent(…, faithId, venue)` overload stamps
+    `CeremonyBlessings.FAITH_KEY` and pins the gathering location to the venue
+    origin; the old 4-arg signature delegates with `(null, null)` →
+    byte-identical legacy path.
+  - `CeremonyBlessings.attach` reads the faith stamp + pinned location and passes
+    them to a faith-aware `RiteScheduler.scheduleBlessingRite(…, faithId,
+    location)` (gate = `religionRitualises(faithId)`, location = the venue).
+  - `RiteExecutor.runOne` recovers the rite's faith via
+    `BuildingFaith.faithAtLocation(rite.location())` (the venue building),
+    falling back to the dominant — so the one-shot blessing's effect tuning AND
+    its `FaithReconciliation` rite-faith are the shrine faith, not the dominant.
+  - `PriestBehavior.tryStartFronting` fronts only when the gathering's faith ==
+    the priest's `clergyFaith`, and sets `frontReligionId` to the gathering's
+    faith (so the crowd-bless profile + reconciliation are faith-correct).
+- **Per-faith dedup** — one shared `alreadyScheduledToday(data, village, type,
+  faithId, tick)`: filters by faith stamp, so two faiths' same-day ceremonies
+  (esp. shared-type VIGIL) both fire. Faith-unique types are unaffected.
+- **The three checks become a 1-line per-faith loop** over
+  `religiousBuildingsByFaith` + a `…ForFaith` body (the former single-faith body,
+  parameterized by `(religionId, venue)`). The dominant-only path is the
+  1-faith case.
+
+### What shipped
+
+- `Npc/Religion/BuildingFaith.java` — `religiousBuildingsByFaith` (TEMPLE-pref
+  venue) + `faithAtLocation`.
+- `Npc/Religion/RiteScheduler.java` — faith+location `scheduleBlessingRite`
+  overload + `religionRitualises` (faith-aware gate); `villageRitualises`
+  delegates.
+- `Npc/Religion/RiteExecutor.java` — `runOne` tunes effects to the rite's venue
+  faith (`faithAtLocation`), dominant fallback.
+- `Village/Event/CeremonyBlessings.java` — `FAITH_KEY`; `attach` threads faith +
+  venue into the blessing rite.
+- `Village/Event/VillageEventScheduler.java` — `checkSignatureRite` /
+  `checkGrandFestival` / `checkCalendarVigil` generalized per-faith; faith+venue
+  `scheduleEvent` overload; shared `alreadyScheduledToday`. `checkCulturalHolyDay`
+  untouched.
+- `Npc/Brain/Behaviors/Production/PriestBehavior.java` — fronting same-faith gate
+  + `frontReligionId` from the gathering faith.
+
+### Tie-In Audit
+
+1. **Upstream feeders** — `BuildingFaith.religiousBuildingsByFaith` (faiths +
+   venues), the `% 365` liturgical axis, per-faith `ReligionContent` calendars.
+2. **Downstream callers** — the three scheduler checks (per-faith) →
+   `scheduleEvent`/`CeremonyBlessings.attach`/`scheduleBlessingRite` (faith + venue)
+   → `RiteExecutor.runOne` (venue-faith effects). R3d-1 fronting (same-faith
+   gate) + R2b attendance (coarse village-wide, converges on the shrine via the
+   linked rite location). `FaithReconciliation` (R3e-1) reduces non-adherents'
+   benefit at a shrine festival — over-inclusion self-corrects.
+3. **Sibling systems** — R3e-2 building-faith/clergy (the shrine priest fronts +
+   officiates its faith's gathering), R3b/R3d effects (faith-keyed via
+   ReligionContent), the grand-festival supersede (dominant-only via
+   `checkCulturalHolyDay`, unchanged).
+4. **Exhaustive switches** — no `EventType`/`Rite` additions. `venueRank` is a
+   3-arm `BuildingType` switch with a `default` (safe for the full enum).
+   Confirmed dedup/supersede arms hold per-faith (faith-keyed dedup; supersede is
+   the dominant's own concern, untouched).
+
+### Simplification Sweep
+
+- Classes in scope: `VillageEventScheduler` (3 checks generalized + 1
+  scheduleEvent overload + 1 shared dedup), `BuildingFaith` (+2 methods, 3 new
+  inbound sites), `RiteScheduler` (+1 overload +1 gate), `CeremonyBlessings`
+  (faith-threading), `RiteExecutor` (venue-faith), `PriestBehavior` (faith gate).
+- The dominant-only path is the 1-faith special case of one per-faith loop — not
+  a second code path. The per-faith dedup is ONE shared helper. No parallel
+  minority scheduler. No new enum/Rite/EventType/brain memory.
+
+### Deviations from prompt
+
+- **`checkCulturalHolyDay` left dominant-only** (disposition mismatch above): it
+  is a culture-interval / 96-axis mechanism, not a per-faith religion-calendar
+  check, so generalizing it cleanly is impossible without changing the dominant's
+  timing. Minorities get their signature/grand/vigil days instead.
+- **Fronting required an explicit same-faith gate** — the prompt expected this
+  "naturally satisfied" by the presider + R1a gate, but R3d-1 fronting was NOT
+  faith-gated (any capable village priest could claim any RELIGIOUS_RITE
+  gathering). Added a `gatheringFaith == clergyFaith` gate; single-faith villages
+  are unaffected (both resolve to the one faith).
+- **Attendance kept coarse (village-wide)** per the prompt's allowance —
+  `FaithReconciliation` reduces non-adherents' benefit. With two festivals active
+  the same day, an NPC's single `eventOverride` slot resolves to whichever
+  started last; both festivals still fire + are fronted. Faith-scoped attendance
+  (adherents-only) is flagged below.
+- **No-temple dominant edge:** a dominant faith with only a chapel now schedules
+  at the chapel (its actual building) rather than the `villageCentre` fallback —
+  a minor improvement; the common temple case is byte-identical.
+
+### Out-of-scope but flagged
+
+- **Faith-scoped attendance** — scope a shrine festival's congregation to its
+  adherents (not village-wide), so two same-day festivals draw distinct crowds.
+  Needs an attendee-model change (per-faith override resolution).
+- **Minority generic holy-day feast** — the per-faith equivalent of
+  `checkCulturalHolyDay` (a feast on a faith's non-signature/grand/vigil calendar
+  days). Needs a faith→culture-schedule inverse that doesn't exist cleanly today.
+- **Pilgrimage → R3e-3.** Shrine placement/NBT remains manual.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: all
+three checks route through the per-faith loop + shared faith-keyed dedup; the
+5-arg `scheduleBlessingRite` + 4-arg `scheduleEvent` delegate to the new
+overloads with nulls (legacy path identical); `faithAtLocation`/venue resolution
+grep-verified; `checkCulturalHolyDay`/`isGrandFestivalDay`/supersede untouched;
+no new enum/EventType/Rite/brain memory; fronting faith gate added; imports
+reconciled (BuildingFaith into scheduler + PriestBehavior).
+
+### Smoke test (user-runnable)
+
+1. Sunstead village with a Tidecall shrine (R3e-2). `/religion calendar <village>`
+   to read both faiths' day-of-year. Advance to Tidecall's **Voyage Blessing**
+   (First Catch) / **Tides' Return** (Last Catch) / **Storm's Vigil** day and
+   confirm a Tidecall gathering fires **at the shrine**, fronted by the Tidewarden
+   shrine priest (not the temple priest), Tidecall NPCs converging there.
+2. Confirm Tidecall adherents get FULL (own-faith) benefit at the shrine festival
+   while any Sunstead NPCs present get REDUCED (FaithReconciliation) — check
+   piety/mood before/after.
+3. Advance to a Sunstead signature/grand day → its festival still fires at the
+   TEMPLE, fronted by the Sunstead priest, exactly as before.
+4. Arrange both faiths' ceremonies on the same liturgical day (via the calendars)
+   → BOTH fire, each at its own building, no collision/supersede cross-talk
+   (faith-keyed dedup).
+5. Single-faith Sunstead village (no shrine): scheduling is unchanged — signature
+   /grand/vigil at the temple, generic holy day via `checkCulturalHolyDay`.
+6. No NPC freeze (no new brain memory); rite officiation, R3e-2 clergy, R3e-1
+   reconciliation, and the grand-festival supersede all intact.

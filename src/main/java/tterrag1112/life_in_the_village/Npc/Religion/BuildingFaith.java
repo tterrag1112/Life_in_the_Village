@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -10,7 +11,9 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Religion Rework R3e-2 — the single building-faith resolver. The locked design:
@@ -117,6 +120,59 @@ public final class BuildingFaith {
             if (!r.id().equals(dominant)) return r.id();
         }
         return dominant; // single registered religion — degenerate, but safe
+    }
+
+    /**
+     * R3e-2b — every faith with a religious building in the village, mapped to
+     * one representative building (its <em>venue</em>): the dominant faith to its
+     * temple/chapel, each shrine faith to its shrine. TEMPLE is preferred over
+     * CHAPEL over SHRINE within a faith, so the dominant's venue matches the
+     * legacy {@code templeLocation} when a temple exists (single-faith villages
+     * are undisturbed). Insertion-ordered for stable iteration.
+     */
+    public static Map<String, Building> religiousBuildingsByFaith(ServerLevel level, Village village) {
+        Map<String, Building> out = new LinkedHashMap<>();
+        VillageSavedData data = VillageSavedData.get(level);
+        for (UUID bid : village.getBuildingIds()) {
+            Building b = data.getBuildingById(bid).orElse(null);
+            if (b == null || !isReligiousBuilding(b.getType())) continue;
+            String faith = resolveFaith(level, village, b);
+            if (faith == null) continue;
+            Building cur = out.get(faith);
+            if (cur == null || venueRank(b.getType()) < venueRank(cur.getType())) {
+                out.put(faith, b);
+            }
+        }
+        return out;
+    }
+
+    /** Venue preference within a faith: TEMPLE &lt; CHAPEL &lt; SHRINE. */
+    private static int venueRank(BuildingType type) {
+        return switch (type) {
+            case TEMPLE -> 0;
+            case CHAPEL -> 1;
+            case SHRINE -> 2;
+            default     -> 3;
+        };
+    }
+
+    /**
+     * The faith of the religious building standing at {@code loc} (its origin),
+     * or {@code null} when no religious building sits there. Lets a blessing
+     * rite recover its faith from its location (the venue building) without a
+     * new rite field — used by {@code RiteExecutor} to tune effects to the
+     * faith whose building hosts the rite.
+     */
+    public static String faithAtLocation(ServerLevel level, Village village, BlockPos loc) {
+        if (loc == null) return null;
+        VillageSavedData data = VillageSavedData.get(level);
+        for (UUID bid : village.getBuildingIds()) {
+            Building b = data.getBuildingById(bid).orElse(null);
+            if (b == null || !isReligiousBuilding(b.getType())) continue;
+            BlockPos origin = b.getShape().getOrigin();
+            if (origin != null && origin.equals(loc)) return resolveFaith(level, village, b);
+        }
+        return null;
     }
 
     /**

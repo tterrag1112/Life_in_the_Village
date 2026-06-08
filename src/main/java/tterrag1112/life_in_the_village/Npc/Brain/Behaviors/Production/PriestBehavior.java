@@ -18,6 +18,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith;
 import tterrag1112.life_in_the_village.Npc.Religion.FaithReconciliation;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
@@ -442,6 +443,14 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         for (CommunityGathering g : CommunityGatherings.activeInVillage(level, v.getId(), now)) {
             if (!(g instanceof VillageEvent ve)) continue;          // festivals are events
             if (ve.getType().category() != EventCategory.RELIGIOUS_RITE) continue; // predicate
+            // R3e-2b — front only MY faith's gathering: in a multi-faith village
+            // the temple (dominant) priest must not front a shrine faith's
+            // festival, and vice-versa. The gathering's faith stamp (absent →
+            // village dominant) vs this priest's building faith. Single-faith →
+            // both resolve to the one faith, so unchanged.
+            String gatheringFaith = ve.getEventData().getOrDefault(
+                    CeremonyBlessings.FAITH_KEY, ReligionContent.villageReligionId(level, v));
+            if (!gatheringFaith.equals(BuildingFaith.clergyFaith(level, v, entity))) continue;
             RiteExecution linked = linkedRite(level, ve);
             if (linked == null) continue;                           // no blessing to lead
             UUID presider = linked.presidingPriestId().orElse(null);
@@ -453,7 +462,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
             RiteSavedData.get(level).putRite(claimedRite);
             frontedGatheringId = ve.getId();
             frontEndTick = ve.endTick();
-            frontReligionId = ReligionContent.villageReligionId(level, v);
+            frontReligionId = gatheringFaith;
             frontRiteType = linked.type();
             frontPulseCount = 0;
             lastFrontPulseTick = Long.MIN_VALUE;

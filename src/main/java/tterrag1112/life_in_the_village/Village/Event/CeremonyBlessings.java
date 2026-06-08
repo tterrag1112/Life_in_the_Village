@@ -38,6 +38,12 @@ public final class CeremonyBlessings {
     /** {@code eventData} key linking a gathering to its blessing rite id. */
     public static final String RITE_ID_KEY = "riteId";
 
+    /** R3e-2b — {@code eventData} key stamping a gathering with its faith (a
+     *  religion id). Absent → the village dominant (the legacy behavior). Set by
+     *  the per-faith calendar scheduler so a shrine faith's gathering is blessed,
+     *  fronted, and tuned to its own faith. */
+    public static final String FAITH_KEY = "faith";
+
     private CeremonyBlessings() {}
 
     /**
@@ -89,8 +95,16 @@ public final class CeremonyBlessings {
         Optional<Rite> rite = blessingRiteFor(event.getType());
         if (rite.isEmpty()) return;
 
+        // R3e-2b — a per-faith calendar gathering carries its faith + venue; the
+        // blessing rite is then gated/tuned to that faith and pinned at its
+        // building (a shrine for a minority). Absent stamp / location → the
+        // legacy dominant-at-temple path (nulls).
+        String faithId = event.getEventData().get(FAITH_KEY);
+        net.minecraft.core.BlockPos venue = event.getLocation().orElse(null);
+
         Optional<UUID> riteId = RiteScheduler.scheduleBlessingRite(
-                level, village, rite.get(), participantsFor(event), event.getStartTick());
+                level, village, rite.get(), participantsFor(event), event.getStartTick(),
+                faithId, venue);
         riteId.ifPresent(id -> event.putEventData(RITE_ID_KEY, id.toString()));
     }
 

@@ -119,12 +119,15 @@ public final class RiteExecutor {
             return RiteOutcome.SKIPPED;
         }
 
-        // R3a — the village's dominant (officiating) religion is the canonical
-        // authority for per-rite effect tuning + flavor. Resolved once and
-        // threaded into the handlers; each consults ReligionContent and falls
-        // back to today's constants when the religion doesn't distinguish the
-        // rite. ORDINATION (R1c) is left untouched per the phase constraint.
-        String religionId = ReligionContent.villageReligionId(level, village);
+        // R3a — the officiating religion is the canonical authority for per-rite
+        // effect tuning + flavor. R3e-2b: a rite hosted at a faith's building
+        // (its location is that building's origin) is tuned to THAT faith — so a
+        // shrine festival's blessing uses the shrine faith, not the village
+        // dominant. Falls back to the village dominant for rites not located at a
+        // religious building (life events at the temple, BlockPos.ZERO, …).
+        // ORDINATION (R1c) is left untouched per the phase constraint.
+        String religionId = BuildingFaith.faithAtLocation(level, village, rite.location());
+        if (religionId == null) religionId = ReligionContent.villageReligionId(level, village);
 
         // Run the per-rite handler.
         RiteOutcome outcome = switch (rite.type()) {

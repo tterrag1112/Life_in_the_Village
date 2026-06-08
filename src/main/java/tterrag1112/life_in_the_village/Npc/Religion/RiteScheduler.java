@@ -103,16 +103,32 @@ public final class RiteScheduler {
     public static java.util.Optional<UUID> scheduleBlessingRite(
             ServerLevel level, Village village, Rite rite,
             List<UUID> participants, long scheduledTick) {
+        return scheduleBlessingRite(level, village, rite, participants, scheduledTick, null, null);
+    }
+
+    /**
+     * R3e-2b — faith-aware blessing rite. {@code faithId} (null → village
+     * dominant) gates ritualisation against THAT faith and is the authority for
+     * effect tuning; {@code location} (null → temple/village-centre) pins the
+     * rite at the faith's venue (a shrine for a minority faith) so the officiant
+     * and congregation converge there. The 5-arg overload preserves the
+     * dominant-at-temple behavior exactly (both args null).
+     */
+    public static java.util.Optional<UUID> scheduleBlessingRite(
+            ServerLevel level, Village village, Rite rite,
+            List<UUID> participants, long scheduledTick,
+            String faithId, BlockPos location) {
         if (level == null || village == null || rite == null) return java.util.Optional.empty();
-        if (!villageRitualises(level, village, rite)) return java.util.Optional.empty();
-        BlockPos location = templeLocation(village, VillageSavedData.get(level))
-                .orElseGet(() -> village.getVillageCentre() != null
-                        ? village.getVillageCentre()
-                        : BlockPos.ZERO);
+        if (!religionRitualises(level, village, faithId, rite)) return java.util.Optional.empty();
+        BlockPos loc = location != null ? location
+                : templeLocation(village, VillageSavedData.get(level))
+                        .orElseGet(() -> village.getVillageCentre() != null
+                                ? village.getVillageCentre()
+                                : BlockPos.ZERO);
         RiteExecution exec = new RiteExecution(UUID.randomUUID(), rite,
                 java.util.Optional.empty(),
                 participants == null ? List.of() : participants,
-                location, scheduledTick, 0L,
+                loc, scheduledTick, 0L,
                 RiteOutcome.PENDING, village.getId());
         RiteSavedData.get(level).putRite(exec);
         return java.util.Optional.of(exec.riteId());
@@ -122,8 +138,15 @@ public final class RiteScheduler {
      *  the culture→religion resolution is centralized in
      *  {@link ReligionContent#villageReligionId} (single source of truth). */
     public static boolean villageRitualises(ServerLevel level, Village village, Rite rite) {
-        Religion religion = ReligionRegistry.get(
-                ReligionContent.villageReligionId(level, village));
+        return religionRitualises(level, village, null, rite);
+    }
+
+    /** R3e-2b — whether {@code faithId} (null → village dominant) ritualises
+     *  {@code rite}. One gate for both the dominant and shrine-faith paths. */
+    public static boolean religionRitualises(ServerLevel level, Village village,
+                                             String faithId, Rite rite) {
+        String id = faithId != null ? faithId : ReligionContent.villageReligionId(level, village);
+        Religion religion = ReligionRegistry.get(id);
         return religion != null && religion.ritualises(rite);
     }
 
