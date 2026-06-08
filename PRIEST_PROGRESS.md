@@ -5892,3 +5892,182 @@ exhaustive-switch arm.
 5. **UI consistency.** Confirm Attend/Commission sit alongside the shipped
    make-offering/confess/request-blessing/tithe verbs in the priest grid and
    respect cooldowns like the others.
+---
+
+## M1 — skill-keyed recipe registry (2026-06-08)
+
+(Production Architecture, not Religion — logged here as the active branch's
+running ledger.)
+
+### Disposition (findings)
+
+Foundation for the skills-first production model. Today production is
+**profession-owned**: recipes are static constants/built-lists ON the seven
+profession behavior classes, with no skill-keyed registry; the 4 homestead
+behaviors borrow the profession constants. M1 performs the first half of the
+inversion — **move recipe definitions into a skill-keyed registry and source
+every existing producer from it, with ZERO behavioral change.**
+
+**Full recipe → owning-skill inventory** (verbatim values preserved):
+- **BAKING / PASTRY** (`BakerProductionBehavior`, `RECIPE_PRIORITY` = cake, pie,
+  cookie, flour→bread, wheat→bread): `MAKE_CAKE` (PASTRY 40), `MAKE_PUMPKIN_PIE`
+  (PASTRY 15) → PASTRY; `MAKE_COOKIE` (BAKING 30), `FLOUR_TO_BREAD`,
+  `WHEAT_TO_BREAD` (no gate) → BAKING.
+- **MILLING** (`MillerProductionBehavior`, 3 named constants checked directly in
+  `chooseRecipe`): `GRIND_WHEAT`, `GRIND_BONES`, `PROCESS_SUGAR_CANE`.
+- **CANDLEMAKING** (`CandlemakerProductionBehavior`, 3 named constants):
+  `MAKE_CANDLE`, `MAKE_TORCH`, `MAKE_LANTERN` (CANDLEMAKING 50).
+- **WEAVING** (`WeaverProductionBehavior`, `buildRecipes()` list): `SPIN_STRING` +
+  16 carpets (tiered 0/15/30/40) + `WHITE_BANNER` (WEAVING 50).
+- **CARPENTRY** (`CarpenterProductionBehavior`, `buildLogRecipes()` ++
+  `buildPlankRecipes()`): 8 log→plank + slabs/stairs/doors/fences/gates/
+  chest/barrel/table/bookshelf + `CHISELED_BOOKSHELF` (CARPENTRY 50).
+- **MASONRY** (`StonemasonProductionBehavior`, `buildRecipes()` ordered list): 12
+  stone/cobble/polished recipes.
+- **BLACKSMITHING + children** (`BlacksmithProductionBehavior`): JSON-loaded
+  smelting/crafting via `BlacksmithRecipeRegistry` (runtime data feeder) +
+  3 inline masterpieces `MAKE_DIAMOND_PICKAXE` (TOOLSMITHING 50),
+  `MAKE_DIAMOND_SWORD` (WEAPONSMITHING 50), `MAKE_NETHERITE_INGOT`
+  (BLACKSMITHING 65).
+
+**Cross-class references** (must stay compiling): exactly 5 `public static`
+constants — `BakerProductionBehavior.{FLOUR_TO_BREAD,WHEAT_TO_BREAD}`,
+`MillerProductionBehavior.GRIND_WHEAT`, `WeaverProductionBehavior.SPIN_STRING`,
+`CandlemakerProductionBehavior.MAKE_TORCH` — used by the 4 homestead behaviors.
+`AbstractProductionBehavior.chooseRecipe` is abstract; each subclass's selection
+logic (`RECIPE_PRIORITY` walk / `productionTarget` + `findRecipeForOutput` +
+`findBestAvailable` / blacksmith smelt-vs-craft) and `meetsSkillRequirements`
+stay untouched — only the recipe SOURCE moves. `ProfessionSupplyChain` is item
+buy/sell lists (a separate trade concern), left untouched.
+
+**How behavior is proven unchanged:**
+1. Every recipe object's defining expression (`ProductionRecipe.of(...)` +
+   `.withSkillRequirement(...)`) was **copied verbatim** into `SkillRecipes` —
+   identical inputs/output/count/ticks/byproducts/gates (diff-checkable).
+2. The four **named-constant** professions (Baker/Miller/Candlemaker/Blacksmith)
+   keep their constants as thin aliases (`= SkillRecipes.X`) → identical object
+   references; their `chooseRecipe` / `RECIPE_PRIORITY` / `INLINE_*` lists are
+   byte-unchanged.
+3. The three **built-list** professions (Weaver/Carpenter/Stonemason) source
+   `RECIPES = SkillRecipes.forSkill(SKILL)`, where the registry's per-skill
+   bucket is the **verbatim-moved** `buildRecipes()` output — crucially keeping
+   the original `Map.of(...).forEach(...)` constructions so the
+   implementation-defined iteration order (which `findBestAvailable` tie-breaks
+   on, first-encountered-wins) is identical. Carpentry's bucket is
+   `buildLogRecipes()` ++ `buildPlankRecipes()`, matching the former
+   `allRecipes()` order.
+4. `meetsSkillRequirements`, the whole production phase machine, output routing,
+   `ProfessionSupplyChain`, and the blacksmith JSON feeder are untouched.
+
+### What shipped
+
+- **`Village/Economy/Resources/SkillRecipes.java`** (new) — the skill-keyed
+  registry: named `public static final ProductionRecipe` constants for every
+  individually-referenced recipe + verbatim-moved `weave/craft/mason` helpers and
+  `buildWeaving/Carpentry/Masonry` builders, all registered into an
+  `EnumMap<Skill, List<ProductionRecipe>>` exposed via `forSkill(Skill)` (in
+  profession-iteration order). Named constants are declared before the registry
+  field so static-init order is safe.
+- **7 profession behaviors** re-sourced: Baker/Miller/Candlemaker/Blacksmith keep
+  their constants as `= SkillRecipes.X` aliases (selection logic untouched);
+  Weaver/Carpenter/Stonemason replace their `buildRecipes()`/`craft`/`mason`/
+  `weave` helpers with `SkillRecipes.forSkill(SKILL)` (Carpenter's `allRecipes()`
+  now returns the single `RECIPES` bucket; `ALL_OUTPUTS` derived from it; unused
+  `CRAFT_TICKS` removed).
+- **4 homestead behaviors** now read `SkillRecipes.{WHEAT_TO_BREAD,GRIND_WHEAT,
+  MAKE_TORCH,SPIN_STRING}` directly (javadoc `{@link Xxx#CONST}` links retained —
+  the public aliases still exist).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** All static recipe definitions now originate in
+   `SkillRecipes`. `BlacksmithRecipeRegistry` (JSON smelting/crafting) **feeds**
+   the blacksmith directly as before — it does NOT fold into `SkillRecipes` this
+   phase (data-driven runtime load; only the inline masterpieces migrated).
+   Flagged as a future fold.
+2. **Downstream callers.** Every `*ProductionBehavior.chooseRecipe` now reads its
+   candidates from the aliases / `forSkill` (same objects, same order). The 4
+   homestead behaviors read `SkillRecipes` directly. The 5 public alias constants
+   still exist, so any external referencer keeps compiling.
+   `AbstractProductionBehavior.meetsSkillRequirements` is unchanged.
+3. **Sibling systems.** `ProfessionSupplyChain` untouched (separate buy/sell
+   concern — confirmed no recipe coupling). Market/sell routing
+   (`executeSellForWorkshop`, `computeSurplusToSell`) and skill-XP routing
+   (`awardProductionXp`) untouched.
+4. **Exhaustive switches.** No `Skill` enum value added; no exhaustive switch over
+   `Skill` touched. Confirmed.
+
+### Simplification Sweep
+
+Recipe definitions now live in ONE place (`SkillRecipes`); the 7 profession + 4
+homestead behaviors share them; the per-class duplicate copies are retired
+(replaced by aliases / `forSkill`). No divergent recipe copy remains (grep
+confirms zero remaining `ProductionRecipe.of(` / `.withSkillRequirement(` in code
+across the production behaviors — only comments). Classes in scope + inbound
+callers: `SkillRecipes` (new, 11 inbound: 7 production + 4 homestead);
+`Baker/Miller/Candlemaker/Weaver/Carpenter/Stonemason/Blacksmith
+ProductionBehavior` (each its own brain-registered behavior, unchanged callers);
+`Home{Baking,Milling,Candlemaking,Weaving}Behavior` (each homestead-registered).
+Removed dead helpers: Weaver `weave`/`buildRecipes`, Carpenter `craft`×2/
+`buildLogRecipes`/`buildPlankRecipes`/`LOG_RECIPES`/`PLANK_RECIPES`/`CRAFT_TICKS`,
+Stonemason `mason`/`buildRecipes`.
+
+### Deviations from prompt
+
+- **`BlacksmithRecipeRegistry` JSON recipes stay a separate runtime feeder**, not
+  folded into `SkillRecipes` — they are data-driven (loaded from JSON at
+  runtime), and folding them in would change the blacksmith's sourcing/ordering
+  and risk behavior drift. Only the 3 inline masterpieces migrated. The fold is
+  flagged for a future data-load-time registration into `SkillRecipes`.
+- **The named-constant professions keep `chooseRecipe` byte-identical** (their
+  constants became aliases) rather than rewriting them to iterate
+  `forSkill(skill)`. This is the strictly behavior-preserving form (the prompt's
+  hard constraint); the registry IS the source (the aliases resolve to it), and
+  `forSkill` is exercised by the three built-list professions + is ready for M2 /
+  the monk. Rewriting the named-constant selectors to `forSkill` is a no-op
+  refactor deferrable to M2 if desired.
+
+### Out-of-scope but flagged
+
+- **M2** — the generalized `HomeProductionBehavior` primitive on top of
+  `SkillRecipes` (the 4 hand-written homestead behaviors collapse into it).
+- **R6** — the monk rides `SkillRecipes` once M2 lands.
+- **`ProfessionSupplyChain` derive-from-skills** — deriving the profession→item
+  buy/sell lists from the skill buckets (left as-is this phase).
+- **Folding the blacksmith JSON registry into `SkillRecipes`** at load time.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: brace balance verified on the three large-deletion files;
+grep confirms no leftover `buildRecipes`/`weave`/`craft`/`mason`/`LOG_RECIPES`/
+`PLANK_RECIPES`/`CRAFT_TICKS` code refs and zero remaining inline
+`ProductionRecipe.of(`/`.withSkillRequirement(` in the production behaviors;
+`SkillRecipes` is referenced by all 7 production + 4 homestead classes; the 5
+public alias constants are retained; recipe expressions copied verbatim;
+`Map.of(...).forEach` constructions moved verbatim to preserve iteration order;
+named-constant `chooseRecipe` bodies + `RECIPE_PRIORITY` + blacksmith `INLINE_*`
+lists unchanged; static-init order safe (constants before the `BY_SKILL` field).
+
+### Smoke test (user-runnable)
+
+1. **Staples unchanged.** Run a village with a baker, miller, candlemaker,
+   weaver, blacksmith, carpenter, stonemason. Confirm each still produces the
+   SAME goods at the SAME cadence as before: bread (and flour→bread vs
+   wheat→bread fallback), flour/bone_meal/sugar, candle/torch, carpets/spun wool,
+   ingots/tools, planks/slabs/stairs/etc., bricks/slabs/walls.
+2. **Skill gates unchanged.** Confirm gated recipes still gate identically: a
+   low-BAKING baker makes bread but not cookie (BAKING 30) / pie (PASTRY 15) /
+   cake (PASTRY 40); a low-skill blacksmith can't make diamond tools
+   (TOOLSMITHING/WEAPONSMITHING 50) or netherite (BLACKSMITHING 65); carpenter
+   doors/fences gate at CARPENTRY 15, masterpieces at 50; mason chiseled bricks at
+   MASONRY 50; weaver carpet tiers at 15/30/40, banner at 50.
+3. **Selection order unchanged.** Confirm the baker still prefers cake→pie→cookie→
+   bread when skilled+stocked, and that weaver/carpenter/stonemason still pick the
+   same below-quota item under the same stock (the tie-break order is preserved).
+4. **Homesteads unchanged.** Confirm homestead bakers/millers/weavers/chandlers
+   still produce bread/flour/spun-wool/torches for the family at the same rate.
+5. **Destinations unchanged.** Profession output still routes to building/market
+   (miller→stockpile), homestead output still to the household. Nothing observable
+   changed — only the code is reorganized.

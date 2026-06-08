@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
 
@@ -26,9 +27,10 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
-    // Phase 6.6.5 — recipes migrated from inline MasonRecipe records to
-    // ProductionRecipe (6.4.10.1 multi-input + skill-gate type).
-    private static final List<ProductionRecipe> RECIPES = buildRecipes();
+    // M1 — definitions live in SkillRecipes (owning skill MASONRY); RECIPES is
+    // the MASONRY bucket in the same order buildRecipes() produced.
+    private static final List<ProductionRecipe> RECIPES =
+            SkillRecipes.forSkill(tterrag1112.life_in_the_village.Npc.Skills.Skill.MASONRY);
 
     
 
@@ -198,41 +200,4 @@ public class StonemasonProductionBehavior extends AbstractProductionBehavior {
         return true;
     }
 
-    // ── Recipe definitions ────────────────────────────────────────────────────
-
-    // Phase 6.6.5 — recipes defined directly as ProductionRecipe.of(...)
-    // with .withSkillRequirement(MASONRY, N) for tier gates. The
-    // MasonRecipe inline record was removed.
-
-    private static ProductionRecipe mason(Item input, int inputCount,
-                                          Item output, int outputCount,
-                                          int ticks, int minSkill) {
-        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
-        return minSkill > 0
-                ? r.withSkillRequirement(
-                        tterrag1112.life_in_the_village.Npc.Skills.Skill.MASONRY, minSkill)
-                : r;
-    }
-
-    private static List<ProductionRecipe> buildRecipes() {
-        // Phase 6.6.3.4 tier ladder (unchanged by 6.6.5 migration):
-        //   bricks / slabs / stairs / walls (basic stone/cobble) → MASONRY 0
-        //   polished variants                                    → MASONRY 15
-        //   smooth-stone slab                                    → MASONRY 15
-        //   chiseled_stone_bricks                                → MASONRY 50 (masterpiece)
-        List<ProductionRecipe> r = new ArrayList<>();
-        r.add(mason(Items.STONE, 1,  Items.STONE_BRICKS,          1, 40, 0));
-        r.add(mason(Items.STONE, 1,  Items.STONE_BRICK_SLAB,      2, 40, 0));
-        r.add(mason(Items.STONE, 1,  Items.STONE_BRICK_STAIRS,    1, 40, 0));
-        r.add(mason(Items.STONE, 1,  Items.STONE_BRICK_WALL,      1, 40, 0));
-        r.add(mason(Items.STONE, 1,  Items.CHISELED_STONE_BRICKS, 1, 80, 50));
-        r.add(mason(Items.COBBLESTONE, 1, Items.COBBLESTONE_SLAB,   2, 40, 0));
-        r.add(mason(Items.COBBLESTONE, 1, Items.COBBLESTONE_STAIRS, 1, 40, 0));
-        r.add(mason(Items.COBBLESTONE, 1, Items.COBBLESTONE_WALL,   1, 40, 0));
-        r.add(mason(Items.SMOOTH_STONE, 1, Items.SMOOTH_STONE_SLAB, 2, 40, 15));
-        r.add(mason(Items.ANDESITE, 2, Items.POLISHED_ANDESITE, 2, 40, 15));
-        r.add(mason(Items.GRANITE,  2, Items.POLISHED_GRANITE,  2, 40, 15));
-        r.add(mason(Items.DIORITE,  2, Items.POLISHED_DIORITE,  2, 40, 15));
-        return Collections.unmodifiableList(r);
-    }
 }

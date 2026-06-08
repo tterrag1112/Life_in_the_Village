@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
 
@@ -25,7 +26,6 @@ import java.util.*;
  */
 public class CarpenterProductionBehavior extends AbstractProductionBehavior {
 
-    private static final int CRAFT_TICKS = 60;
     private static final int MAX_BATCH   = 8;
     private static final int MIN_LOGS    = 4;
 
@@ -34,27 +34,21 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
             Items.JUNGLE_LOG, Items.ACACIA_LOG, Items.DARK_OAK_LOG,
             Items.MANGROVE_LOG, Items.CHERRY_LOG);
 
-    // Phase 6.6.5 — recipes migrated from inline CarpenterRecipe records
-    // to ProductionRecipe (the unified 6.4.10.1 multi-input + skill-gate
-    // type). Single-input recipes stay structurally identical; the
-    // skill-gate moves from a per-profession field to the canonical
-    // ProductionRecipe.skillRequirements map via .withSkillRequirement.
-    private static final List<ProductionRecipe> LOG_RECIPES   = buildLogRecipes();
-    private static final List<ProductionRecipe> PLANK_RECIPES = buildPlankRecipes();
+    // M1 — definitions live in SkillRecipes (owning skill CARPENTRY); RECIPES
+    // is the CARPENTRY bucket = log recipes ++ plank recipes, the same order
+    // the former allRecipes() iterated.
+    private static final List<ProductionRecipe> RECIPES =
+            SkillRecipes.forSkill(tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY);
     private static final Set<Item>              ALL_OUTPUTS;
 
     static {
         Set<Item> out = new LinkedHashSet<>();
-        LOG_RECIPES  .forEach(r -> out.add(r.output()));
-        PLANK_RECIPES.forEach(r -> out.add(r.output()));
+        RECIPES.forEach(r -> out.add(r.output()));
         ALL_OUTPUTS = Collections.unmodifiableSet(out);
     }
 
     private static List<ProductionRecipe> allRecipes() {
-        List<ProductionRecipe> all = new ArrayList<>(LOG_RECIPES.size() + PLANK_RECIPES.size());
-        all.addAll(LOG_RECIPES);
-        all.addAll(PLANK_RECIPES);
-        return all;
+        return RECIPES;
     }
 
     
@@ -232,99 +226,6 @@ public class CarpenterProductionBehavior extends AbstractProductionBehavior {
         int quota = quotas.getOrDefault(item, 0);
         if (quota == 0) return Double.MAX_VALUE;
         return (double) BuildingStorageAccess.countItem(level, building, item) / quota;
-    }
-
-    // =========================================================================
-    // Recipe list
-    // =========================================================================
-
-    // Phase 6.6.5 — recipes defined directly as ProductionRecipe.of(...)
-    // with .withSkillRequirement(Skill.CARPENTRY, N) for tier gates.
-    // The CarpenterRecipe inline record was removed; ProductionRecipe is
-    // the canonical multi-input + skill-gate type (6.4.10.1).
-    //
-    // Masterpiece (CHISELED_BOOKSHELF) is promoted to true vanilla
-    // multi-input in 6.6.5.3; this list still defines it single-input
-    // as a placeholder and is updated by the masterpiece commit.
-
-    private static ProductionRecipe craft(Item input, int inputCount,
-                                          Item output, int outputCount,
-                                          int minSkill) {
-        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, CRAFT_TICKS);
-        return minSkill > 0
-                ? r.withSkillRequirement(
-                        tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY, minSkill)
-                : r;
-    }
-
-    private static ProductionRecipe craft(Item input, int inputCount,
-                                          Item output, int outputCount,
-                                          int ticks, int minSkill) {
-        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
-        return minSkill > 0
-                ? r.withSkillRequirement(
-                        tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY, minSkill)
-                : r;
-    }
-
-    private static List<ProductionRecipe> buildLogRecipes() {
-        // Log → planks is entry-level; CARPENTRY 0.
-        List<ProductionRecipe> r = new ArrayList<>();
-        Map.of(Items.OAK_LOG,      Items.OAK_PLANKS,
-                        Items.SPRUCE_LOG,   Items.SPRUCE_PLANKS,
-                        Items.BIRCH_LOG,    Items.BIRCH_PLANKS,
-                        Items.JUNGLE_LOG,   Items.JUNGLE_PLANKS,
-                        Items.ACACIA_LOG,   Items.ACACIA_PLANKS,
-                        Items.DARK_OAK_LOG, Items.DARK_OAK_PLANKS,
-                        Items.MANGROVE_LOG, Items.MANGROVE_PLANKS,
-                        Items.CHERRY_LOG,   Items.CHERRY_PLANKS)
-                .forEach((log, planks) -> r.add(craft(log, 1, planks, 4, 0)));
-        return r;
-    }
-
-    private static List<ProductionRecipe> buildPlankRecipes() {
-        // Phase 6.6.3.3 tier ladder (unchanged by 6.6.5 migration):
-        //   slabs / stairs     → CARPENTRY 0
-        //   doors / fences     → CARPENTRY 15
-        //   chest / barrel /
-        //     bookshelf /
-        //     crafting_table   → CARPENTRY 30
-        //   chiseled_bookshelf → CARPENTRY 50 (masterpiece)
-        List<ProductionRecipe> r = new ArrayList<>();
-        Map.of(Items.OAK_PLANKS, Items.OAK_SLAB, Items.SPRUCE_PLANKS, Items.SPRUCE_SLAB,
-                        Items.BIRCH_PLANKS, Items.BIRCH_SLAB, Items.JUNGLE_PLANKS, Items.JUNGLE_SLAB,
-                        Items.ACACIA_PLANKS, Items.ACACIA_SLAB, Items.DARK_OAK_PLANKS, Items.DARK_OAK_SLAB)
-                .forEach((p, s) -> r.add(craft(p, 3, s, 6, 0)));
-        Map.of(Items.OAK_PLANKS, Items.OAK_STAIRS, Items.SPRUCE_PLANKS, Items.SPRUCE_STAIRS,
-                        Items.BIRCH_PLANKS, Items.BIRCH_STAIRS)
-                .forEach((p, s) -> r.add(craft(p, 6, s, 4, 0)));
-        Map.of(Items.OAK_PLANKS, Items.OAK_DOOR, Items.SPRUCE_PLANKS, Items.SPRUCE_DOOR,
-                        Items.BIRCH_PLANKS, Items.BIRCH_DOOR)
-                .forEach((p, d) -> r.add(craft(p, 6, d, 3, 15)));
-        Map.of(Items.OAK_PLANKS, Items.OAK_FENCE, Items.SPRUCE_PLANKS, Items.SPRUCE_FENCE,
-                        Items.BIRCH_PLANKS, Items.BIRCH_FENCE)
-                .forEach((p, f) -> r.add(craft(p, 6, f, 3, 15)));
-        r.add(craft(Items.OAK_PLANKS,    6, Items.OAK_FENCE_GATE,    1, 15));
-        r.add(craft(Items.SPRUCE_PLANKS, 6, Items.SPRUCE_FENCE_GATE, 1, 15));
-        r.add(craft(Items.OAK_PLANKS, 8, Items.CHEST,          1, 30));
-        r.add(craft(Items.OAK_PLANKS, 6, Items.BARREL,         1, 30));
-        r.add(craft(Items.OAK_PLANKS, 4, Items.CRAFTING_TABLE, 1, 30));
-        r.add(craft(Items.OAK_PLANKS, 6, Items.BOOKSHELF,      1, 30));
-        // Phase 6.6.5.3 — CHISELED_BOOKSHELF promoted to true vanilla
-        // multi-input (6 wood_slabs + 3 books → 1). OAK_SLAB stands
-        // in for "wood_slabs"; books come from a future LIBRARIAN
-        // profession or merchant import — same dormancy pattern as
-        // CANDLEMAKER LANTERN (waits on cross-profession supply),
-        // BAKER CAKE (waits on milk_bucket from animal husbandry),
-        // BLACKSMITH NETHERITE_INGOT (waits on netherite_scrap).
-        // Self-activating: when BOOK becomes channel-queryable, the
-        // recipe fires automatically.
-        r.add(ProductionRecipe.of(
-                Map.of(Items.OAK_SLAB, 6, Items.BOOK, 3),
-                Items.CHISELED_BOOKSHELF, 1, 80)
-                .withSkillRequirement(
-                        tterrag1112.life_in_the_village.Npc.Skills.Skill.CARPENTRY, 50));
-        return r;
     }
 
     private Building findStockpile(ServerLevel level) {

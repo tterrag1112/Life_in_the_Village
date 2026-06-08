@@ -26,6 +26,7 @@ import tterrag1112.life_in_the_village.Village.AmenityType;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 /**
  * Phase 6.6.6 — opportunistic homestead-skill behavior, sibling to
@@ -93,7 +94,7 @@ public class HomeWeavingBehavior extends Behavior<TownspersonMob> {
         BlockPos pos = findFirstAmenityPos(level, h, AmenityType.LOOM);
         if (pos == null) return false;
 
-        ProductionRecipe recipe = WeaverProductionBehavior.SPIN_STRING;
+        ProductionRecipe recipe = SkillRecipes.SPIN_STRING;
         int stringNeeded = recipe.inputs().values().iterator().next();
         int stringStock = BuildingStorageAccess.countItem(level, h, Items.STRING);
         if (stringStock < stringNeeded) return false;
@@ -168,14 +169,14 @@ public class HomeWeavingBehavior extends Behavior<TownspersonMob> {
         entity.getLookControl().setLookAt(
                 workstationPos.getX() + 0.5, workstationPos.getY() + 1.0,
                 workstationPos.getZ() + 0.5);
-        if (subTimer >= WeaverProductionBehavior.SPIN_STRING.ticks()) {
+        if (subTimer >= SkillRecipes.SPIN_STRING.ticks()) {
             phase = Phase.DEPOSITING;
             subTimer = 0;
         }
     }
 
     private void tickDepositing(ServerLevel level, TownspersonMob entity, long gameTime) {
-        ProductionRecipe recipe = WeaverProductionBehavior.SPIN_STRING;
+        ProductionRecipe recipe = SkillRecipes.SPIN_STRING;
         int stringNeeded = recipe.inputs().values().iterator().next();
         if (!BuildingStorageAccess.takeItem(level, house, Items.STRING, stringNeeded)) {
             phase = Phase.DONE;

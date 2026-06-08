@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
 
@@ -23,37 +24,11 @@ import java.util.*;
  */
 public class CandlemakerProductionBehavior extends AbstractProductionBehavior {
 
-    // 1 honeycomb + 1 string → 1 candle (vanilla recipe, 60 ticks).
-    // Entry-tier — no skill gate. Honeycomb is the rate-limiter
-    // (no producer today; awaiting BEEKEEPER per 6.6.0.4).
-    private static final ProductionRecipe MAKE_CANDLE = ProductionRecipe.of(
-            Map.of(Items.HONEYCOMB, 1, Items.STRING, 1),
-            Items.CANDLE, 1, 60);
-
-    // 1 stick + 1 coal → 4 torches (vanilla 1 stick + 1 coal = 4 torches, 40 ticks).
-    // Entry-tier — no skill gate. Both inputs sourceable today
-    // (sticks via CARPENTER, coal via MINER fallback / merchant).
-    // Phase 6.6.6 — public so HomeCandlemakingBehavior can reuse the
-    // same recipe. MAKE_CANDLE stays private (honeycomb is rate-limited
-    // by future BEEKEEPER content; homestead-tier doesn't need it).
-    public static final ProductionRecipe MAKE_TORCH = ProductionRecipe.of(
-            Map.of(Items.STICK, 1, Items.COAL, 1),
-            Items.TORCH, 4, 40);
-
-    // Phase 6.6.4.3 masterpiece — LANTERN. 8 iron_nugget + 1 torch → 1
-    // lantern (vanilla recipe, 100 ticks). Multi-input via the
-    // 6.4.10.1 .withSkillRequirement infrastructure — no schema work
-    // needed since ProductionRecipe natively supports both the
-    // multi-input Map shape and skill gates.
-    // Iron nugget sourcing flows from BLACKSMITH via DirectBusinessChannel;
-    // torch is self-produced by this behavior. Cross-profession dependency
-    // is intentional — masterpiece work requires the village to have a
-    // functioning blacksmith too.
-    private static final ProductionRecipe MAKE_LANTERN = ProductionRecipe.of(
-            Map.of(Items.IRON_NUGGET, 8, Items.TORCH, 1),
-            Items.LANTERN, 1, 100)
-            .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.CANDLEMAKING, 50);
+    // M1 — definitions live in SkillRecipes (owning skill CANDLEMAKING);
+    // aliased here. MAKE_TORCH stays public for HomeCandlemakingBehavior.
+    private static final ProductionRecipe MAKE_CANDLE = SkillRecipes.MAKE_CANDLE;
+    public static final ProductionRecipe MAKE_TORCH = SkillRecipes.MAKE_TORCH;
+    private static final ProductionRecipe MAKE_LANTERN = SkillRecipes.MAKE_LANTERN;
 
     private static final int MAX_BATCH = 8;
 

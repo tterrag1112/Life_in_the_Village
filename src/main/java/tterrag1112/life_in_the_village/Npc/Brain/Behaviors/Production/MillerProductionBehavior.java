@@ -14,6 +14,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
 
@@ -40,12 +41,11 @@ public class MillerProductionBehavior extends AbstractProductionBehavior {
     // (HomeMillingBehavior) can reuse it without redefining. The other
     // miller recipes stay private — bones / sugar_cane processing
     // are profession-tier, not homestead-tier.
-    public static final ProductionRecipe GRIND_WHEAT =
-            ProductionRecipe.of(Items.WHEAT, 2, ModItems.WHEAT_FLOUR.get(), 3, 80);
-    private static final ProductionRecipe GRIND_BONES =
-            ProductionRecipe.of(Items.BONE, 1, Items.BONE_MEAL, 3, 60);
-    private static final ProductionRecipe PROCESS_SUGAR_CANE =
-            ProductionRecipe.of(Items.SUGAR_CANE, 1, Items.SUGAR, 1, 100);
+    // M1 — definitions live in SkillRecipes (owning skill MILLING); aliased
+    // here. GRIND_WHEAT stays public for HomeMillingBehavior.
+    public static final ProductionRecipe GRIND_WHEAT = SkillRecipes.GRIND_WHEAT;
+    private static final ProductionRecipe GRIND_BONES = SkillRecipes.GRIND_BONES;
+    private static final ProductionRecipe PROCESS_SUGAR_CANE = SkillRecipes.PROCESS_SUGAR_CANE;
 
     private static final int MAX_BATCH = 8;
 

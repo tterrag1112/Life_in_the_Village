@@ -17,6 +17,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.BlacksmithRecip
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
 
@@ -54,21 +55,13 @@ public class BlacksmithProductionBehavior extends AbstractProductionBehavior {
     //   NETHERITE_INGOT → netherite_scrap from Nether mining / merchant
     //                     (deferred); gold_ingot from this profession's
     //                     own smelting chain (works today).
-    private static final ProductionRecipe MAKE_DIAMOND_PICKAXE = ProductionRecipe.of(
-            Map.of(Items.DIAMOND, 3, Items.STICK, 2),
-            Items.DIAMOND_PICKAXE, 1, 600)
-            .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.TOOLSMITHING, 50);
-    private static final ProductionRecipe MAKE_DIAMOND_SWORD = ProductionRecipe.of(
-            Map.of(Items.DIAMOND, 2, Items.STICK, 1),
-            Items.DIAMOND_SWORD, 1, 500)
-            .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAPONSMITHING, 50);
-    private static final ProductionRecipe MAKE_NETHERITE_INGOT = ProductionRecipe.of(
-            Map.of(Items.NETHERITE_SCRAP, 4, Items.GOLD_INGOT, 4),
-            Items.NETHERITE_INGOT, 1, 1200)
-            .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.BLACKSMITHING, 65);
+    // M1 — definitions live in SkillRecipes (owning skills TOOLSMITHING /
+    // WEAPONSMITHING / BLACKSMITHING); aliased here. The JSON-loaded
+    // single-input recipes remain a separate runtime feeder
+    // (BlacksmithRecipeRegistry), concatenated below as before.
+    private static final ProductionRecipe MAKE_DIAMOND_PICKAXE = SkillRecipes.MAKE_DIAMOND_PICKAXE;
+    private static final ProductionRecipe MAKE_DIAMOND_SWORD = SkillRecipes.MAKE_DIAMOND_SWORD;
+    private static final ProductionRecipe MAKE_NETHERITE_INGOT = SkillRecipes.MAKE_NETHERITE_INGOT;
 
     /** Inline crafting masterpieces appended to the JSON-loaded list. */
     private static final List<ProductionRecipe> INLINE_CRAFTING_RECIPES = List.of(

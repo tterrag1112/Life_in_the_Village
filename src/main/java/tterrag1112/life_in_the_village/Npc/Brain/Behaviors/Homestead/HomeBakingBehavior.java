@@ -26,6 +26,7 @@ import tterrag1112.life_in_the_village.Village.AmenityType;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 /**
  * Phase 6.4.5 — opportunistic homestead-skill behavior. Any NPC (not
@@ -100,7 +101,7 @@ public class HomeBakingBehavior extends Behavior<TownspersonMob> {
         if (pos == null) pos = findFirstAmenityPos(level, h, AmenityType.FURNACE);
         if (pos == null) return false;
 
-        ProductionRecipe recipe = BakerProductionBehavior.WHEAT_TO_BREAD;
+        ProductionRecipe recipe = SkillRecipes.WHEAT_TO_BREAD;
         int wheatNeeded = recipe.inputs().values().iterator().next();
         int wheatStock = BuildingStorageAccess.countItem(level, h, Items.WHEAT);
         if (wheatStock < wheatNeeded) return false;
@@ -176,14 +177,14 @@ public class HomeBakingBehavior extends Behavior<TownspersonMob> {
         entity.getLookControl().setLookAt(
                 workstationPos.getX() + 0.5, workstationPos.getY() + 1.0,
                 workstationPos.getZ() + 0.5);
-        if (subTimer >= BakerProductionBehavior.WHEAT_TO_BREAD.ticks()) {
+        if (subTimer >= SkillRecipes.WHEAT_TO_BREAD.ticks()) {
             phase = Phase.DEPOSITING;
             subTimer = 0;
         }
     }
 
     private void tickDepositing(ServerLevel level, TownspersonMob entity, long gameTime) {
-        ProductionRecipe recipe = BakerProductionBehavior.WHEAT_TO_BREAD;
+        ProductionRecipe recipe = SkillRecipes.WHEAT_TO_BREAD;
         int wheatNeeded = recipe.inputs().values().iterator().next();
         if (!BuildingStorageAccess.takeItem(level, house, Items.WHEAT, wheatNeeded)) {
             // Wheat vanished mid-bake (consumed elsewhere). Abort cleanly.

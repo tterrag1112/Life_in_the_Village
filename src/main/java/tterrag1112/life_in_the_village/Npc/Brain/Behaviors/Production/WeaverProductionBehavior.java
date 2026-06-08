@@ -13,6 +13,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
 
@@ -30,16 +31,13 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
-    // String spinning: 4 string → 1 white wool (useful when sheep are scarce).
-    // Phase 6.6.5 — migrated to ProductionRecipe; kept as named static for
-    // readability (referenced by name in buildRecipes below).
-    // Phase 6.6.6 — public so HomeWeavingBehavior can reuse the same recipe
-    // (single source of truth; same precedent as 6.4.5.1 widening of
-    // WHEAT_TO_BREAD for HomeBakingBehavior).
-    public static final ProductionRecipe SPIN_STRING =
-            ProductionRecipe.of(Items.STRING, 4, Items.WHITE_WOOL, 1, 60);
+    // M1 — definitions live in SkillRecipes (owning skill WEAVING). SPIN_STRING
+    // stays public for HomeWeavingBehavior; RECIPES is the WEAVING bucket in
+    // the same order buildRecipes() produced.
+    public static final ProductionRecipe SPIN_STRING = SkillRecipes.SPIN_STRING;
 
-    private static final List<ProductionRecipe> RECIPES = buildRecipes();
+    private static final List<ProductionRecipe> RECIPES =
+            SkillRecipes.forSkill(tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAVING);
 
     // All wool items the weaver accepts as inputs
     private static final List<Item> WOOL_TYPES = List.of(
@@ -207,83 +205,4 @@ public class WeaverProductionBehavior extends AbstractProductionBehavior {
         return true;
     }
 
-    // ── Recipe list ───────────────────────────────────────────────────────────
-
-    // Phase 6.6.5 — recipes defined directly as ProductionRecipe.of(...)
-    // with .withSkillRequirement(WEAVING, N) for tier gates. WeaverRecipe
-    // inline record removed.
-
-    private static ProductionRecipe weave(Item input, int inputCount,
-                                          Item output, int outputCount,
-                                          int ticks, int minSkill) {
-        ProductionRecipe r = ProductionRecipe.of(input, inputCount, output, outputCount, ticks);
-        return minSkill > 0
-                ? r.withSkillRequirement(
-                        tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAVING, minSkill)
-                : r;
-    }
-
-    private static List<ProductionRecipe> buildRecipes() {
-        // Phase 6.6.4.2 tier ladder. Wool→carpet recipes split by color
-        // accessibility: pre-fix all 16 colors were equally available;
-        // post-fix the rarer dye combinations (cyan, magenta, etc.)
-        // require WEAVING practice. Vanilla colour-mixing logic informs
-        // the tiers — primary colours are entry-level, secondary need
-        // some craft, tertiary need real skill.
-        List<ProductionRecipe> r = new ArrayList<>();
-
-        // String → white wool (spinning). Entry-level fiber work.
-        r.add(SPIN_STRING);
-
-        // Tier 1: basic colors — primary palette + black/white.
-        Map.of(Items.WHITE_WOOL,  Items.WHITE_CARPET,
-                Items.RED_WOOL,    Items.RED_CARPET,
-                Items.YELLOW_WOOL, Items.YELLOW_CARPET,
-                Items.BLUE_WOOL,   Items.BLUE_CARPET)
-                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 0)));
-
-        // Tier 2: common — secondary colors.
-        Map.of(Items.ORANGE_WOOL,     Items.ORANGE_CARPET,
-                Items.GREEN_WOOL,      Items.GREEN_CARPET,
-                Items.PINK_WOOL,       Items.PINK_CARPET,
-                Items.LIGHT_BLUE_WOOL, Items.LIGHT_BLUE_CARPET)
-                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 15)));
-
-        // Tier 3: skilled — tertiary colors.
-        Map.of(Items.CYAN_WOOL,    Items.CYAN_CARPET,
-                Items.MAGENTA_WOOL, Items.MAGENTA_CARPET,
-                Items.PURPLE_WOOL,  Items.PURPLE_CARPET,
-                Items.LIME_WOOL,    Items.LIME_CARPET,
-                Items.BROWN_WOOL,   Items.BROWN_CARPET)
-                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 30)));
-
-        // Tier 4: master — grayscale + black.
-        Map.of(Items.LIGHT_GRAY_WOOL, Items.LIGHT_GRAY_CARPET,
-                Items.GRAY_WOOL,       Items.GRAY_CARPET,
-                Items.BLACK_WOOL,      Items.BLACK_CARPET)
-                .forEach((w, c) -> r.add(weave(w, 2, c, 3, 50, 40)));
-
-        // Phase 6.6.5.3 — WHITE_BANNER promoted to true vanilla
-        // multi-input (6 white_wool + 1 stick → 1 banner). Sticks
-        // come from CARPENTER via DirectBusinessChannel — cross-
-        // profession dependency intentional, mirrors LANTERN's
-        // iron_nugget requirement.
-        r.add(ProductionRecipe.of(
-                Map.of(Items.WHITE_WOOL, 6, Items.STICK, 1),
-                Items.WHITE_BANNER, 1, 80)
-                .withSkillRequirement(
-                        tterrag1112.life_in_the_village.Npc.Skills.Skill.WEAVING, 50));
-
-        // Phase 6.6.1.5 — removed lead-recipe stub comment. The previous
-        // note pointed at a multi-input lead recipe that was never wired:
-        // chooseRecipe only iterates WeaverRecipe (single-input) and never
-        // referenced a ProductionRecipe.of(Map.of(...)) path. The
-        // CandlemakerProductionBehavior is the codebase's actual first
-        // multi-input consumer. If a leads recipe lands later, the
-        // implementation path is to either generalise WeaverRecipe to
-        // multi-input or add a parallel chooseRecipe branch for the
-        // multi-input variant — clean call when needed, no stub today.
-
-        return Collections.unmodifiableList(r);
-    }
 }

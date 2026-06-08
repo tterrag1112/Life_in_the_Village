@@ -22,6 +22,7 @@ import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 /**
  * Phase 6.6.6 — opportunistic homestead-skill behavior, sibling to
@@ -88,7 +89,7 @@ public class HomeCandlemakingBehavior extends Behavior<TownspersonMob> {
         Building h = entity.getHouseId().flatMap(data::getBuildingById).orElse(null);
         if (h == null) return false;
 
-        ProductionRecipe recipe = CandlemakerProductionBehavior.MAKE_TORCH;
+        ProductionRecipe recipe = SkillRecipes.MAKE_TORCH;
         // Multi-input check — stick + coal both required (1 each).
         for (var e : recipe.inputs().entrySet()) {
             if (BuildingStorageAccess.countItem(level, h, e.getKey()) < e.getValue()) {
@@ -145,14 +146,14 @@ public class HomeCandlemakingBehavior extends Behavior<TownspersonMob> {
     }
 
     private void tickProducing() {
-        if (subTimer >= CandlemakerProductionBehavior.MAKE_TORCH.ticks()) {
+        if (subTimer >= SkillRecipes.MAKE_TORCH.ticks()) {
             phase = Phase.DEPOSITING;
             subTimer = 0;
         }
     }
 
     private void tickDepositing(ServerLevel level, TownspersonMob entity, long gameTime) {
-        ProductionRecipe recipe = CandlemakerProductionBehavior.MAKE_TORCH;
+        ProductionRecipe recipe = SkillRecipes.MAKE_TORCH;
         // Consume all inputs — multi-input via takeItem per entry.
         for (var e : recipe.inputs().entrySet()) {
             if (!BuildingStorageAccess.takeItem(level, house, e.getKey(), e.getValue())) {

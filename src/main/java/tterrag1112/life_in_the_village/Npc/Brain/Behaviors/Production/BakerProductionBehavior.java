@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -24,33 +25,16 @@ import java.util.Optional;
 /** Phase 6.2.d.1 — migrated from {@code BakerGoal}. */
 public class BakerProductionBehavior extends AbstractProductionBehavior {
 
-    // Phase 6.3.4.10 — recipe ladder spans staple → specialty.
-    // Skill gates distinguish BAKING (homestead-level) from PASTRY
-    // (BAKER's rarer specialty for sweet/decorative goods).
-    //
-    // Phase 6.4.5 — FLOUR_TO_BREAD and WHEAT_TO_BREAD are public so
-    // homestead-skill behaviors (HomeBakingBehavior) can reuse them
-    // without redefining. Single source of truth for the recipe shape.
-    public static final ProductionRecipe FLOUR_TO_BREAD =
-            ProductionRecipe.of(ModItems.WHEAT_FLOUR.get(), 1, Items.BREAD, 1, 60);
-    public static final ProductionRecipe WHEAT_TO_BREAD =
-            ProductionRecipe.of(Items.WHEAT, 3, Items.BREAD, 1, 200);
-    private static final ProductionRecipe MAKE_COOKIE =
-            ProductionRecipe.of(Map.of(Items.WHEAT, 2, Items.COCOA_BEANS, 1),
-                    Items.COOKIE, 8, 400)
-                .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.BAKING, 30);
-    private static final ProductionRecipe MAKE_PUMPKIN_PIE =
-            ProductionRecipe.of(Map.of(Items.PUMPKIN, 1, Items.SUGAR, 1, Items.EGG, 1),
-                    Items.PUMPKIN_PIE, 1, 600)
-                .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.PASTRY, 15);
-    private static final ProductionRecipe MAKE_CAKE =
-            ProductionRecipe.of(Map.of(Items.WHEAT, 3, Items.SUGAR, 2,
-                            Items.EGG, 1, Items.MILK_BUCKET, 3),
-                    Items.CAKE, 1, 900)
-                .withSkillRequirement(
-                    tterrag1112.life_in_the_village.Npc.Skills.Skill.PASTRY, 40);
+    // M1 — recipe definitions live in the skill-keyed SkillRecipes registry
+    // (owning skills: bread/cookie → BAKING, pie/cake → PASTRY). These remain
+    // here as thin aliases so RECIPE_PRIORITY and homestead behaviors resolve
+    // to the same objects. FLOUR_TO_BREAD / WHEAT_TO_BREAD stay public for
+    // HomeBakingBehavior.
+    public static final ProductionRecipe FLOUR_TO_BREAD = SkillRecipes.FLOUR_TO_BREAD;
+    public static final ProductionRecipe WHEAT_TO_BREAD = SkillRecipes.WHEAT_TO_BREAD;
+    private static final ProductionRecipe MAKE_COOKIE = SkillRecipes.MAKE_COOKIE;
+    private static final ProductionRecipe MAKE_PUMPKIN_PIE = SkillRecipes.MAKE_PUMPKIN_PIE;
+    private static final ProductionRecipe MAKE_CAKE = SkillRecipes.MAKE_CAKE;
 
     private static final int MAX_BATCH = 8;
 
