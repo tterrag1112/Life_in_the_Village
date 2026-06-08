@@ -328,6 +328,12 @@ public class ModModEvents {
                 OpenBusinessFrontPacket.CODEC,
                 OpenBusinessFrontPacket::handle);
 
+        // Religion R9b: read-only temple screen open packet.
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenTempleScreenPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenTempleScreenPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenTempleScreenPacket::handle);
+
     }
 
     @SubscribeEvent

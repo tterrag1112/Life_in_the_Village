@@ -77,6 +77,48 @@ public final class TempleProsperity {
     /** Topic prefix tagging a temple-stocked religious book (for the cap count). */
     private static final String RELIGION_TOPIC = "religion.";
 
+    // ── R9b — read-only views for the temple screen ──────────────────────────
+    // The thresholds above are the single source of truth for R4c decay; the
+    // temple screen derives its health label through these helpers rather than
+    // duplicating the magic numbers client-side.
+
+    /** One day's wage + upkeep — the solvency unit. */
+    public static long dailyCost() { return DAILY_COST; }
+
+    /** The runway (a week's costs) kept untouched; surplus is treasury above this. */
+    public static long solvencyBuffer() { return SOLVENCY_BUFFER; }
+
+    /**
+     * R9b — a player-facing health label for a religious building, derived from
+     * the SAME solvency + {@link BuildingCondition} state R4c decays on (so the
+     * screen never drifts from the simulation). Read-only; no new enum — the
+     * screen renders the returned string.
+     *
+     * <ul>
+     *   <li>{@code Abandoned} — RUINED, or insolvent past the abandon window.</li>
+     *   <li>{@code Decaying}  — needs repair, or insolvent past the decay window.</li>
+     *   <li>{@code At-risk}   — insolvent today but not yet decaying.</li>
+     *   <li>{@code Flourishing} — surplus above the buffer and in good repair.</li>
+     *   <li>{@code Solvent}   — covering costs, neither failing nor flush.</li>
+     * </ul>
+     */
+    public static String healthLabel(BuildingCondition condition, long treasury,
+                                     int daysInsolvent, boolean staffed) {
+        if (condition == BuildingCondition.RUINED || daysInsolvent >= ABANDON_DAYS) {
+            return "Abandoned";
+        }
+        if (condition.needsRepair() || daysInsolvent >= DECAY_DAYS) {
+            return "Decaying";
+        }
+        if (daysInsolvent > 0) {
+            return "At-risk";
+        }
+        if (treasury >= SOLVENCY_BUFFER) {
+            return "Flourishing";
+        }
+        return "Solvent";
+    }
+
     /**
      * Daily per-village pass (called from {@link RiteScheduler#dailyTick}). Updates
      * each religious building's insolvency counter and nudges its condition.

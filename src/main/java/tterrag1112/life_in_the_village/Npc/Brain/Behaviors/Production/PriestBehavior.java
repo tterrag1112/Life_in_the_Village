@@ -323,12 +323,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
      *  {@link ApprenticeRank} ladder (no persistent rank field). Surfaced in
      *  the priest's activity text so progression is player-visible. */
     private String clergyTitle() {
-        int social = entity.getSkills().getLevel(Skill.SOCIAL);
-        return switch (ApprenticeRank.fromSkillLevel(social)) {
-            case APPRENTICE -> "Initiate";
-            case JOURNEYMAN -> "Priest";
-            case MASTER     -> "Senior Priest";
-        };
+        return tterrag1112.life_in_the_village.Npc.Religion.ClergyTitles.of(entity);
     }
 
     private void tickWalkToRite(ServerLevel level) {

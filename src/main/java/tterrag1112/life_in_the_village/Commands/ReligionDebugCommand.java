@@ -84,7 +84,47 @@ public final class ReligionDebugCommand {
                                         .executes(ctx -> handleGraveyard(ctx,
                                                 com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "rows"),
                                                 com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(ctx, "cols"))))))
+                // R9b — open the read-only temple screen for the nearest
+                // religious building in the village at the executor's position.
+                .then(Commands.literal("temple")
+                        .executes(ReligionDebugCommand::handleTemple))
         );
+    }
+
+    // ── /religion temple ──────────────────────────────────────────────────
+
+    private static int handleTemple(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) {
+            src.sendFailure(Component.literal("Run as a player (nearest-temple lookup)."));
+            return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageAt(player.blockPosition()).orElse(null);
+        if (village == null) {
+            src.sendFailure(Component.literal("No village at your position"));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Village.Building best = null;
+        double bestDist = Double.MAX_VALUE;
+        for (java.util.UUID bid : village.getBuildingIds()) {
+            var b = data.getBuildingById(bid).orElse(null);
+            if (b == null || !tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
+                    .isReligiousBuilding(b.getType())) continue;
+            double d = b.getShape().getOrigin().distSqr(player.blockPosition());
+            if (d < bestDist) { bestDist = d; best = b; }
+        }
+        if (best == null) {
+            src.sendFailure(Component.literal(
+                    "No temple/chapel/shrine in " + village.getName()));
+            return 0;
+        }
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                tterrag1112.life_in_the_village.Npc.Religion.TempleSnapshotBuilder
+                        .build(level, village, best));
+        return 1;
     }
 
     // ── /religion graveyard ──────────────────────────────────────────────

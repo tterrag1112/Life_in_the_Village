@@ -191,7 +191,9 @@ public final class NpcProfileSnapshotBuilder {
                 ? tterrag1112.life_in_the_village.Npc.Religion.ClergyOrders
                         .assignedOrderName(npc).orElse("")
                 : "";
-        String clergyTitle = isClergy ? clergyTitleFor(npc) : "";
+        String clergyTitle = isClergy
+                ? tterrag1112.life_in_the_village.Npc.Religion.ClergyTitles.of(npc)
+                : "";
         String staffedFaith = "";
         if (isClergy && buildingOpt.isPresent() && villageOpt.isPresent()) {
             String f = tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
@@ -265,19 +267,6 @@ public final class NpcProfileSnapshotBuilder {
      * already serves" tightening). Order: office → business-worker →
      * adventurer-party → profession-default → NONE.
      */
-    /** R9a — the priest's cosmetic clergy rank (R1d), derived from SOCIAL via the
-     *  shared {@code ApprenticeRank} ladder (mirrors {@code PriestBehavior.clergyTitle}). */
-    private static String clergyTitleFor(TownspersonMob npc) {
-        int social = npc.getSkills().getLevel(
-                tterrag1112.life_in_the_village.Npc.Skills.Skill.SOCIAL);
-        return switch (tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeRank
-                .fromSkillLevel(social)) {
-            case APPRENTICE -> "Initiate";
-            case JOURNEYMAN -> "Priest";
-            case MASTER     -> "Senior Priest";
-        };
-    }
-
     private static NpcProfileSnapshot.NavTargetKind resolveNavKind(
             tterrag1112.life_in_the_village.Entities.custom.TownspersonMob npc,
             net.minecraft.server.level.ServerPlayer player,

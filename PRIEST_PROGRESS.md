@@ -5334,3 +5334,202 @@ lookup, never exhaustively switched.
    "(generalist)"), and "Tends a <faith> building." when they staff a temple.
 5. Open the profile and **wait ≥5s** → the 5s `NpcProfileSyncPacket` refresh keeps
    the Religion panel populated (data rides the same snapshot, not a one-shot open).
+
+---
+
+## R9b — religious-building (temple) screen (2026-06-08)
+
+### Disposition (findings)
+
+The prompt asks for a **read-only religious-building screen** mirroring the
+`OpenBusinessFrontPacket → BusinessFrontScreen(data)` pattern: an Open packet
+that CARRIES a server-computed snapshot, and a `Screen` that only renders it
+(no separate sync, no actions). Investigation confirmed:
+
+- **Screen pattern.** `BusinessFrontScreen` is a single-page `Chrome.COMPACT`
+  (320×240) `Screen`; `OpenBusinessFrontPacket` is the data record + a manual
+  `StreamCodec.of(...)` + a `handle` that does `mc.setScreen(new …Screen(pkt))`.
+  Render order is dim → `Chrome.draw` → content → `super.render` so widgets
+  paint on top. Packets register in `ModModEvents.registerPayloads` via
+  `registrar.playToClient(TYPE, CODEC, ::handle)`.
+- **Open trigger.** No clean block/NPC interaction is religious-building-aware,
+  so (per the prompt's "debug command is fine — testability is the goal") I
+  reused the existing `/religion` command (`ReligionDebugCommand`) and added a
+  `temple` subcommand that finds the nearest religious building in the village
+  at the executor's position (mirrors the existing `shrine` subcommand's
+  nearest-building scan) and `PacketDistributor.sendToPlayer`s the snapshot.
+- **Data accessors (all server-side reads, confirmed by grep):**
+  `BuildingFaith.resolveFaith` / `isReligiousBuilding`; `ReligionRegistry.get`
+  → `Religion.displayName()`/`deity()`; `VillageSavedData.getOrCreateBuildingEconomy`
+  → `BuildingEconomy.getTreasury()`/`getDaysInsolvent()`; `TempleProsperity`'s
+  private `DAILY_COST`/`SOLVENCY_BUFFER`/`DECAY_DAYS`/`ABANDON_DAYS` (the R4c
+  single source of truth); `Building.getCondition()` (`BuildingCondition`
+  enum, `needsRepair()`); the consecration marker = a SUCCESSFUL
+  `Rite.CONSECRATION` in `RiteSavedData.ritesForVillage` near the building
+  origin (R4e: the one rite pruning never removes); candle stock via
+  `BuildingStorageAccess.countItem(level, building, Items.WHITE_CANDLE)`;
+  clergy via the village-bounds AABB scan for the seated `PRIEST`
+  (`ClergyOrders.assignedOrderName` + the shared title helper); congregation =
+  resident NPCs whose `PietyComponent.primaryReligion()` matches the faith
+  (+ average `primaryStrength`); upcoming holy days via
+  `Religion.calendar().holyDaysByName()` + `effectiveDayOfYear` vs the current
+  day-of-year `(gameTime/24000) % DAYS_PER_YEAR` (the same formula
+  `VillageEventScheduler` uses).
+
+**Health-state derivation.** Rather than a new enum or duplicating R4c's magic
+numbers client-side, I added a read-only `TempleProsperity.healthLabel(condition,
+treasury, daysInsolvent, staffed)` (plus `dailyCost()` / `solvencyBuffer()`
+accessors) that returns Flourishing / Solvent / At-risk / Decaying / Abandoned
+from the SAME solvency + `BuildingCondition` state the R4c tick decays on, so
+the screen can never drift from the simulation. The builder calls it; the
+screen renders the returned string.
+
+### What shipped
+
+- **`Networking/OpenTempleScreenPacket.java`** (new) — the data-carrying Open
+  packet: building identity + faith/deity, economy (treasury, daily cost,
+  surplus, days-insolvent, health state), condition + decaying flag,
+  consecration, candle count, clergy (staffed/name/order/title), congregation
+  (count + aggregate piety), and an upcoming-holy-days list. Manual
+  `StreamCodec.of`; `handle` opens `TempleScreen`.
+- **`Npc/Religion/TempleSnapshotBuilder.java`** (new) — pure-read server
+  gatherer (mirrors `NpcProfileSnapshotBuilder`). Resolves all of the above;
+  graceful when faith/clergy/economy are absent (empty strings / 0 / false).
+- **`Gui/TempleScreen.java`** (new) — read-only `Chrome.COMPACT` screen.
+  Title + faith subtitle; a health pill (green/amber/red) + consecration pill;
+  StatBoxes for Treasury / Daily cost / Surplus(or days-insolvent) / Condition
+  / Candles / Congregation; a full-width Clergy box ("Vacant" when unstaffed);
+  an aggregate-piety `NeedMeter.bar`; and the upcoming-holy-days list ("(none
+  scheduled)" when empty). Only `Gui.Framework` primitives; a single Close
+  button. No actions.
+- **`Npc/Religion/TempleProsperity.java`** — added `dailyCost()`,
+  `solvencyBuffer()`, and `healthLabel(...)` read-only views (the R4c
+  thresholds stay private and single-sourced).
+- **`Npc/Religion/ClergyTitles.java`** (new) — the shared Initiate/Priest/
+  Senior-Priest helper the R9a sweep flagged. `of(npc)` / `forSocialLevel(int)`.
+- **Refactors retiring the duplication:** `PriestBehavior.clergyTitle()` now
+  delegates to `ClergyTitles.of(entity)`; `NpcProfileSnapshotBuilder` drops its
+  private `clergyTitleFor` and calls `ClergyTitles.of` (this also re-seated the
+  orphaned Step-5 javadoc back onto `resolveNavKind`).
+- **`Events/ModModEvents.java`** — registered `OpenTempleScreenPacket`
+  (`playToClient`).
+- **`Commands/ReligionDebugCommand.java`** — added the `/religion temple`
+  subcommand (nearest religious building → send the snapshot).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `BuildingFaith` (faith), `BuildingEconomy` via
+   `VillageSavedData` (treasury/insolvency), `TempleProsperity` (cost/buffer/
+   health label — the new read-only views I added), `Building.getCondition`
+   (R4c), `RiteSavedData` (consecration marker), `BuildingStorageAccess`
+   (candles), the village-bounds AABB scan (clergy + congregation),
+   `Religion.calendar()` (festivals), the `/religion temple` trigger. All are
+   read-only; the builder mutates nothing.
+2. **Downstream callers.** New: `OpenTempleScreenPacket.handle` (client
+   setScreen), `TempleScreen` (renderer), `/religion temple` (server send),
+   the `ModModEvents` registration. The shared `ClergyTitles` has three
+   inbound callers (`PriestBehavior`, `NpcProfileSnapshotBuilder`,
+   `TempleSnapshotBuilder`) — all verified to pass a `TownspersonMob` and use
+   the identical mapping the originals had (behavior preserved).
+3. **Sibling systems.** The screen reuses the BusinessFront screen pattern +
+   `Gui.Framework` + `Chrome.COMPACT`/`PARCHMENT` verbatim — no new screen
+   framework, no change to existing screens or the shared packet-registration
+   shape. `TempleProsperity.tickVillage` (R4c) is untouched; the new helpers
+   only READ its constants, so the decay simulation and the screen agree by
+   construction.
+4. **Exhaustive switches.** No new enum. The only `switch`es added are over the
+   existing `ApprenticeRank` (in `ClergyTitles`, all three arms) and a `String`
+   health label (in `TempleScreen.healthBg`, with a `default` arm). No existing
+   exhaustive switch gained an arm. Confirmed.
+
+### Simplification Sweep
+
+- **GUI/religion classes in scope + inbound callers:** `OpenTempleScreenPacket`
+  (1 — `ModModEvents` register + `/religion temple`), `TempleSnapshotBuilder`
+  (1 — the command), `TempleScreen` (1 — the packet handler), `ClergyTitles`
+  (3 — see audit), `TempleProsperity` (+3 read views, used by the builder).
+  No orphans created. The screen parallels `BusinessFrontScreen`'s shape
+  (same Chrome, same render order, same Close-button idiom) — no overlapping
+  pair, no new framework.
+- **Duplication retired:** the R9a-flagged `clergyTitle` triplication
+  (`PriestBehavior` + `NpcProfileSnapshotBuilder` + would-be temple builder)
+  is now a single `ClergyTitles` helper — exactly the consolidation the R9a
+  sweep deferred.
+
+### Deviations from prompt
+
+- **Open trigger is the `/religion temple` debug command**, not a block/NPC
+  interaction — the prompt explicitly allowed this ("reuse an existing
+  interaction or a debug command — testability is the goal"); no clean
+  religious-building-aware interaction exists, and the BusinessFront "Request
+  Blessing" route opens the priest's business-front, not a building view.
+- **Added three read-only methods to `TempleProsperity`** (`dailyCost`,
+  `solvencyBuffer`, `healthLabel`) instead of a screen-only health-state enum.
+  This keeps the R4c thresholds single-sourced (the prompt preferred deriving
+  over a new enum); the label is a `String` on the wire.
+- **Consecration is matched by rite-location proximity** (≤12 blocks of the
+  building origin) since `RiteExecution` carries a `BlockPos location` but no
+  building id; robust for the common one-temple village, with a small
+  ambiguity risk only when two religious buildings sit within 12 blocks
+  (flagged).
+- **Refactored `PriestBehavior.clergyTitle` + `NpcProfileSnapshotBuilder`** to
+  the shared helper — slightly beyond "just the screen", but it's the sweep
+  action the prompt called for ("a good moment to factor the shared
+  `ClergyTitles` helper").
+
+### Out-of-scope but flagged
+
+- **Actions** (consecrate / seed treasury / assign priest / order candles) —
+  the prompt scoped this read-only; the layout leaves a bottom row free for a
+  later action pass.
+- **A live sync** (the BusinessFront pattern is one-shot; the numbers are a
+  snapshot at open — re-run `/religion temple` to refresh). A 5s
+  `TempleSyncPacket` (like the NPC profile) is a clean follow-up if live
+  tracking is wanted.
+- **A real interaction trigger** (right-click the temple block / its priest to
+  open) once a religious-building interaction hook exists.
+- **Consecration building-id precision** — if `RiteExecution` ever gains a
+  building-id field, swap the proximity match for an exact one.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac). Static review done: all
+accessor signatures confirmed by grep (`countItem(ServerLevel,Building,Item)`,
+`Items.WHITE_CANDLE`, `RiteSavedData.get`/`ritesForVillage`,
+`RiteOutcome.SUCCESSFUL`, `Rite.CONSECRATION`, `Religion.calendar()`/`deity()`,
+`ReligiousCalendar.DAYS_PER_YEAR`/`effectiveDayOfYear`/`holyDaysByName`,
+`getOrCreateBuildingEconomy`, `BuildingCondition.needsRepair`,
+`getBounds(VillageSavedData)`, `PacketDistributor.sendToPlayer`); packet
+encode/decode field order is consistent (21 fields + list, same order);
+`TempleScreen` uses only public `Gui.Framework` primitives; `ClergyTitles`
+preserves the original three-arm mapping; the new `TempleProsperity` views read
+(never mutate) its private R4c thresholds; the packet is registered and the
+command is wired into `/religion`.
+
+### Smoke test (user-runnable)
+
+1. **Flourishing temple.** Stand in a well-funded village's temple and run
+   `/religion temple`. Confirm the screen shows the patron faith (+ deity), a
+   green **Flourishing** (or **Solvent**) pill, a **Consecrated** pill,
+   Treasury well above 0, Daily cost (14b/day), a positive "+Nb above buffer"
+   surplus, Condition Maintained/Weathered (no "decaying"), a non-zero candle
+   count, the seated priest's name + order + rank title, a congregation count >
+   0 with an aggregate-piety bar, and the next holy day(s).
+2. **Starved temple.** Drain it (let R4a/R4c run insolvent, or remove its
+   income) and re-run `/religion temple`. Confirm the pill turns amber
+   **At-risk** then red **Decaying**, "Surplus" becomes "N days insolvent",
+   Condition shows Dilapidated "(decaying)", and candles read "0 — unlit
+   rites". After the abandon window, confirm **Abandoned** + Clergy "Vacant".
+3. **Minority shrine (R3e-2).** Stand by a shrine of a non-dominant faith and
+   run the command. Confirm its faith / deity / clergy / economy are its OWN
+   (not the village-dominant temple's) — the nearest-building scan picks the
+   shrine you're next to.
+4. **Vacant / RUINED / non-religious.** Run `/religion temple` near a
+   vacant-but-standing religious building (Clergy "Vacant", congregation may be
+   0, no crash); near a RUINED one (Abandoned, graceful); and in a village with
+   NO religious building (a clean "No temple/chapel/shrine in <village>"
+   failure, no screen).
+5. **Numbers track R4.** Seed the temple treasury (or attend rites to raise
+   piety), wait a day, re-run the command, and confirm Treasury / surplus /
+   health / congregation move with the underlying R4/R4c systems.
