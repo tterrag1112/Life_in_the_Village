@@ -68,6 +68,10 @@ public final class CeremonyBlessings {
             // rite, differentiated by ReligionContent (per the village's faith).
             case FIRST_FURROW, THREAD_BINDING, VOYAGE_BLESSING, ANCESTOR_OATH
                                   -> Optional.of(Rite.SIGNATURE_RITE);
+            // R3d-2 — the four grand annual festivals share one (richer)
+            // blessing rite, likewise differentiated by ReligionContent.
+            case HARVEST_HOME, GREAT_WEAVING, TIDES_RETURN, FOUNDING_DAY
+                                  -> Optional.of(Rite.GRAND_FESTIVAL);
             default               -> Optional.empty();
         };
     }

@@ -142,7 +142,11 @@ public final class RiteExecutor {
             case CONSECRATION         -> handleConsecration(rite, priest, level, now, village, religionId);
             case VIGIL                -> handleVigil(rite, priest, level, now, village, religionId);
             case PURIFICATION         -> handlePurification(rite, priest, level, now, religionId);
-            case SIGNATURE_RITE       -> handleSignatureRite(rite, priest, level, now, village, religionId);
+            // R3d-2 — the grand festival shares the signature handler; its own
+            // (richer) per-faith effect comes from its ReligionContent profile,
+            // read via rite.type() inside the handler.
+            case SIGNATURE_RITE, GRAND_FESTIVAL
+                                      -> handleSignatureRite(rite, priest, level, now, village, religionId);
         };
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
@@ -515,14 +519,15 @@ public final class RiteExecutor {
     private static RiteOutcome handleSignatureRite(RiteExecution rite, TownspersonMob priest,
                                                    ServerLevel level, long now,
                                                    Village village, String religionId) {
-        // R3b-3 — the ONE shared handler for every faith's signature ceremony.
-        // It applies a village-wide mood + piety always, and (when the faith's
-        // SIGNATURE_RITE profile grants them) a community relationship boost
-        // among attendees and a treasury boon. The four faiths differ ENTIRELY
-        // through ReligionContent + their distinct named gathering + calendar
-        // day — no per-faith handler.
+        // R3b-3 / R3d-2 — the ONE shared handler for every faith's village-wide
+        // festival blessing (SIGNATURE_RITE + the richer GRAND_FESTIVAL). It
+        // applies a village-wide mood + piety always, and (when the faith's
+        // profile for THIS rite grants them) a community relationship boost
+        // among attendees and a treasury boon. The faiths differ ENTIRELY
+        // through ReligionContent (keyed by rite.type()) + their distinct named
+        // gatherings + calendar days — no per-faith handler.
         if (village == null) return RiteOutcome.DISRUPTED;
-        RiteProfile profile = ReligionContent.profileFor(religionId, Rite.SIGNATURE_RITE);
+        RiteProfile profile = ReligionContent.profileFor(religionId, rite.type());
         String name = village.getName();
         List<TownspersonMob> attendees = new ArrayList<>();
         for (var entity : level.getEntities().getAll()) {

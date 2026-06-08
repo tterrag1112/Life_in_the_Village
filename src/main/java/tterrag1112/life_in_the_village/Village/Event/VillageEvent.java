@@ -62,6 +62,20 @@ public class VillageEvent implements CommunityGathering {
         VOYAGE_BLESSING,
         /** The Forge Creed — oath before the ancestors. */
         ANCESTOR_OATH,
+        // ── Grand annual faith festivals (Religion Rework R3d-2) ──────
+        // Each faith's single biggest celebration, on its principal high holy
+        // day. Named for headline identity (display name free via
+        // defaultDisplayName); all four share Rite.GRAND_FESTIVAL, the longer/
+        // richer counterpart to a routine holy-day blessing. RELIGIOUS_RITE →
+        // fronted (R3d-1) + congregation (R2b) automatically.
+        /** Sunstead — the great harvest festival (Harvest Equinox). */
+        HARVEST_HOME,
+        /** The Loom — the culminating weaving (Fourth Threading). */
+        GREAT_WEAVING,
+        /** Tidecall — the great return of the tides (Last Catch). */
+        TIDES_RETURN,
+        /** The Forge Creed — the founding festival (Founding Day). */
+        FOUNDING_DAY,
 
         // ── Life-stage ────────────────────────────────────────────────
         COMING_OF_AGE,
@@ -107,7 +121,8 @@ public class VillageEvent implements CommunityGathering {
                         -> EventCategory.SEASONAL_FESTIVAL;
                 case SUNSTEAD_EQUINOX, LOOM_THREADING, TIDECALL_FULL_MOON,
                      FORGE_CREED_KINGDOM_DAY, VIGIL, PURIFICATION,
-                     FIRST_FURROW, THREAD_BINDING, VOYAGE_BLESSING, ANCESTOR_OATH
+                     FIRST_FURROW, THREAD_BINDING, VOYAGE_BLESSING, ANCESTOR_OATH,
+                     HARVEST_HOME, GREAT_WEAVING, TIDES_RETURN, FOUNDING_DAY
                         -> EventCategory.RELIGIOUS_RITE;
                 case COMING_OF_AGE, WEDDING, FUNERAL, NAMING_CEREMONY
                         -> EventCategory.LIFE_STAGE_RITE;
@@ -139,6 +154,10 @@ public class VillageEvent implements CommunityGathering {
                      VIGIL, PURIFICATION,
                      FIRST_FURROW, THREAD_BINDING,
                      VOYAGE_BLESSING, ANCESTOR_OATH  -> 6000L;
+                // R3d-2 — grand annual festivals run longer (the high
+                // celebration), under the priest's 24000t fronting cap.
+                case HARVEST_HOME, GREAT_WEAVING,
+                     TIDES_RETURN, FOUNDING_DAY      -> 12000L;
                 case WEDDING                        -> 1200L;
                 case FUNERAL                        -> 800L;
                 case NAMING_CEREMONY                -> 600L;

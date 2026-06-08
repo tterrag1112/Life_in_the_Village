@@ -2425,3 +2425,175 @@ fronting; field-held (no new brain memory); `endTick`/`isActiveAt`/`getEventById
    holy-day blessing).
 6. Confirm the priest leaves the venue and resumes produce/idle when the
    gathering ends; no NPC freeze (no new brain memory).
+
+---
+
+## Religion Rework — Phase R3d-2: Grand annual faith festivals (completes the R3d festival arc)
+
+R3's festival phase, part 2 — the close of the festival arc. R3d-1 made any
+RELIGIOUS_RITE gathering auto-fronted by the priest + auto-attended (R2b) +
+crowd-blessed. So this phase just adds the festivals; fronting/attendance/
+crowd-blessing come for free.
+
+### Disposition (verified; findings)
+
+- **`handleSignatureRite` hardcoded `profileFor(religionId, Rite.SIGNATURE_RITE)`**
+  — generalized to `rite.type()`, so ONE handler now serves both SIGNATURE_RITE
+  and the new GRAND_FESTIVAL, each reading its own per-faith profile.
+- **The frontable/attended predicate is `category() == RELIGIOUS_RITE`** (R3d-1
+  / R2b). Confirmed the new festivals must be categorized RELIGIOUS_RITE — then
+  fronting + congregation + crowd-blessing apply automatically (NOT
+  reimplemented).
+- **EventType exhaustive switches needing arms** (no default): `category()`,
+  `getDurationTicks()`, `EventAttendance.baseline()` — all take the four grand
+  types grouped. The rest (`isAnnual`/`annualDay`/`minProsperity`/
+  `randomChance`, `EventEffects.onEventStart`/`applyPlayerBuff`/
+  `formatEventName`, `histType`, `CeremonyBlessings.blessingRiteFor`) have
+  defaults. `defaultDisplayName` title-cases the enum name → free display names
+  ("Harvest Home" / "Great Weaving" / "Tides Return" / "Founding Day").
+- **Calendar (`% 365`) principal days** chosen from `ReligionRegistry`, each
+  distinct from the faith's signature/vigil days: Sunstead **Harvest Equinox**
+  (264) [signature First Furrow @ Spring Equinox 80], Loom **Fourth Threading**
+  (270) [signature @ First Threading 30], Tidecall **Last Catch** (300)
+  [signature @ First Catch 105, vigil @ Storm's Vigil 200], Forge **Founding
+  Day** (12) [signature @ Ancestor Day 330, vigil @ Anvil Vigil 150].
+- **`checkCulturalHolyDay`** has a per-day dedup; it runs the generic holy-day
+  blessing on the *culture interval* (`% 96` via `SeasonTracker`). The grand
+  festival runs on the `% 365` liturgical day (revived-calendar path, R3b-2/3).
+
+### Design
+
+- **Enum-minimization (R3b-3 pattern): 1 new `Rite.GRAND_FESTIVAL` (shared
+  handler) + 4 named `EventType`s.** The grand festival reuses
+  `handleSignatureRite` (now `rite.type()`-keyed) — its richer effect comes
+  entirely from its own `ReligionContent.GRAND_FESTIVAL` profile, NOT a new
+  handler. A new `Rite` (rather than reusing SIGNATURE_RITE) is needed only so
+  the grand festival can carry a DISTINCT, richer profile than the signature
+  rite. New-enum count: **5** (1 Rite + 4 EventType), churny handler layer = 0
+  new (shared).
+- **Trigger**: `VillageEventScheduler.checkGrandFestival` — faith-gated
+  (religionId → grand EventType + principal day name), `% 365`, per-day dedup;
+  runs BEFORE `checkCulturalHolyDay`.
+- **Supersede**: `checkCulturalHolyDay` now skips when `isGrandFestivalDay`
+  (today is the village religion's grand-festival principal day) — so on that
+  day the grand festival owns it, not a duplicate generic holy-day blessing.
+  Both use the shared `grandFestivalDayName` mapping.
+- **Effect** (the GRAND_FESTIVAL profile via the shared handler): a richer
+  village-wide mood (×1.4–1.6) + piety + a treasury boon (40–80) + (Loom/Forge)
+  a relationship ring — per faith. **Bounded**: the one-shot fires once; the
+  R3d-1 fronting crowd-pulses (capped at `FESTIVAL_MAX_PULSES`=6) add on top, so
+  the combined payoff stays anti-farm — the longer 12000t duration does NOT
+  increase the pulse count (cap is on count, not time).
+- **Duration** 12000t (2× routine 6000t — the high celebration), kept under the
+  priest's 24000t fronting-behavior cap.
+- **Per-faith identity**: named EventTypes (display free) + GRAND_FESTIVAL
+  flavor lines.
+
+### What shipped
+
+- `Rite` +GRAND_FESTIVAL; swept all 3 `Rite` switches (`RiteExecutor` shares the
+  signature handler, `RiteTier`→GRAND, `PriestBehavior.riteLabel`).
+- `handleSignatureRite` generalized to `profileFor(religionId, rite.type())`
+  (serves SIGNATURE_RITE + GRAND_FESTIVAL).
+- `VillageEvent.EventType` +HARVEST_HOME +GREAT_WEAVING +TIDES_RETURN
+  +FOUNDING_DAY; grouped arms in `category`→RELIGIOUS_RITE,
+  `getDurationTicks`→12000, `EventAttendance.baseline`→0.55;
+  `CeremonyBlessings.blessingRiteFor`→`Rite.GRAND_FESTIVAL`.
+- `VillageEventScheduler`: `checkGrandFestival` (calendar trigger, deduped) +
+  `isGrandFestivalDay` supersede guard in `checkCulturalHolyDay` +
+  `grandFestivalType`/`grandFestivalDayName` mappings; wired into `tick` first.
+- `ReligionRegistry`: GRAND_FESTIVAL → Loom + Tidecall + Forge (Sunstead auto).
+- `ReligionContent`: the four richer GRAND_FESTIVAL profiles + flavor.
+
+### Tie-In Audit
+
+- **Upstream feeders** — `checkGrandFestival` reads each faith's principal
+  calendar day (revived calendar) + `ritualises(GRAND_FESTIVAL)` gate (via
+  `CeremonyBlessings.attach` → `scheduleBlessingRite`); faith-gated.
+- **Downstream callers** — the 3 `Rite` switches + the 3 mandatory `EventType`
+  switches updated; `CeremonyBlessings` maps the grand types → GRAND_FESTIVAL;
+  `RiteExecutor.handleSignatureRite` (shared) applies the effect;
+  `EventEffects.onEventStart` routes the new RELIGIOUS_RITE types to the R2b
+  village-wide override + a no-op `dispatchStart` (effect = the blessing rite).
+- **Sibling systems** — **R3d-1 fronting: applies automatically** (RELIGIOUS_RITE
+  category) — NOT duplicated; **R2b attendance**: the congregation is pulled
+  automatically; **R3b-1 holy-day blessing**: superseded on the principal day
+  (one gathering); **R3b-3 signature / R3b-2 vigil**: on DISTINCT calendar days,
+  no collision; treasury/mood/piety channels reused.
+- **Exhaustive switches** — `Rite` (3, all swept) + `EventType` (3 mandatory,
+  all swept). No other enum.
+
+### Simplification Sweep
+
+The four grand festivals are structurally identical → driven from
+`ReligionContent` (the GRAND_FESTIVAL profiles) + the SHARED `handleSignatureRite`
++ the existing revived-calendar trigger + per-day dedup — no new mechanism,
+no per-faith handler, no new effect channel (mood/piety/treasury reused). Fronting/
+attendance/crowd-blessing are inherited from R3d-1/R2b via the RELIGIOUS_RITE
+category — explicitly NOT reimplemented. Classes in scope: `Rite`/`RiteTier`/
+`PriestBehavior` (+arm), `RiteExecutor` (1-line generalization), `VillageEvent`/
+`EventAttendance`/`CeremonyBlessings` (+grouped arms), `VillageEventScheduler`
+(+trigger/supersede/mappings), `ReligionRegistry`/`ReligionContent` (+content).
+New-enum count: **5** (1 Rite + 4 EventType); shared handler.
+
+### Memory safety
+
+No new brain `MemoryModuleType`. Triggers write the event store + rite ledger;
+the handler touches mood/piety/relationship/treasury. No `brainMemories()`
+change.
+
+### Deviations from prompt
+
+- **Added one new `Rite.GRAND_FESTIVAL`** (not zero). Reusing SIGNATURE_RITE
+  would force the grand festival to share the signature rite's profile (same
+  `(religionId, rite)` key) — but the grand festival must be RICHER, so it needs
+  its own profile, hence its own Rite key. The HANDLER is still shared
+  (`handleSignatureRite`), so the churny layer added nothing; this is the
+  minimal way to carry a distinct effect. The four EventTypes provide headline
+  identity (display names free), as in R3b-3.
+- **Supersede via a day-equality guard** in `checkCulturalHolyDay` (skip the
+  generic holy day on the grand-festival principal day) rather than a
+  post-hoc de-dup of two scheduled events — simpler and guarantees one
+  gathering. The grand trigger runs first for clarity.
+
+### Out-of-scope but flagged — R3d festival arc CLOSED
+
+This completes **R3d** (R3d-1 fronting + crowd-blessing payoff; R3d-2 the grand
+annual festivals). Remaining R3: **multi-faith** villages (R3e). Out of the
+religion rework's festival scope: secular festivals (untouched — SEASONAL_FESTIVAL,
+not fronted), festival economy/commerce (→ R4). Still flagged from earlier: the
+365-day liturgical vs 96-day seasonal calendars (the grand festival, like the
+signature/vigil, fires on the liturgical day — testable via `/time`); rite-ledger
+pruning.
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: all 3 `Rite` switches + the 3 mandatory `EventType` switches
+carry the new values; `handleSignatureRite` keyed by `rite.type()` (8 profiles:
+4 signature + 4 grand); `checkGrandFestival` is faith-gated + deduped + `% 365`;
+the supersede guard shares the day mapping; all faiths `ritualise`
+GRAND_FESTIVAL; the combined effect stays bounded (one-shot + capped pulses);
+`Religion.id()` / `effectiveDayOfYear` / `defaultDisplayName` confirmed.
+Runtime-sensitive (calendar-day match, supersede, fronting handoff) — wants an
+in-game check.
+
+### Smoke test
+
+1. In a village of each faith, `/time` to that faith's principal high holy day
+   (Sunstead Harvest Equinox = liturgical day 264 → tick 264×24000; Loom Fourth
+   Threading 270; Tidecall Last Catch 300; Forge Founding Day 12). Confirm its
+   grand festival fires as ONE gathering (named "Harvest Home" / "Great Weaving"
+   / "Tides Return" / "Founding Day" in `/event`), NOT a duplicate alongside a
+   generic holy-day blessing.
+2. Confirm the priest FRONTS it (R3d-1) for the longer 12000t window and the
+   congregation gathers (R2b), receiving the crowd-blessing pulses on top of the
+   one-shot grand effect (richer mood + piety + treasury boon with per-faith
+   flavor).
+3. Confirm the combined payoff stays within the anti-farm cap (the fronting
+   pulse count is capped regardless of the longer duration).
+4. Confirm a NON-principal holy day still fires the routine generic blessing
+   (the supersede only applies on the principal day).
+5. Confirm a faith does NOT fire another faith's grand festival; confirm secular
+   festivals (HARVEST_FESTIVAL / VILLAGE_FAIR) are unaffected (not fronted).
+6. No NPC freeze (no new brain memory); rite officiation + fronting unaffected.

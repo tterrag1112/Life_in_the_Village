@@ -56,6 +56,7 @@ public class VillageEventScheduler {
         // single-active-event guard; they're triggered (not rolled) and
         // the scheduler tolerates concurrent events of different
         // categories from Phase 5 onward.
+        checkGrandFestival(level, village, data, currentTick);   // R3d-2 (before holy-day → supersede)
         checkCulturalHolyDay(level, village, data, currentTick);
         checkCalendarVigil(level, village, data, currentTick);   // R3b-2
         checkPurification(level, village, data, currentTick);    // R3b-2
@@ -137,6 +138,11 @@ public class VillageEventScheduler {
 
         int day = SeasonTracker.dayOfYear(currentTick);
         if (day % interval != 0) return;
+
+        // R3d-2 supersede: if today is this village religion's grand-festival
+        // principal day, the grand festival (checkGrandFestival, run first)
+        // owns the day — don't also fire the generic holy-day blessing.
+        if (isGrandFestivalDay(level, village, currentTick)) return;
 
         VillageEvent.EventType type = holyDayTypeFor(culture.id());
         if (type == null) return;
@@ -283,6 +289,79 @@ public class VillageEventScheduler {
                                         && m.getHealthComponent().hasCondition(HealthCondition.MELANCHOLY))
                         .forEach(m -> out.add(m.getUUID())));
         return out;
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Religion Rework R3d-2: grand annual faith festivals
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * R3d-2 — schedules a faith's grand annual festival on its principal high
+     * holy day (365-day liturgical axis): Sunstead Harvest Home @ Harvest
+     * Equinox, Loom Great Weaving @ Fourth Threading, Tidecall Tides' Return @
+     * Last Catch, Forge Founding Day @ Founding Day. Faith-gated; the shared
+     * {@code Rite.GRAND_FESTIVAL} blessing (ritualises-gated) differentiates the
+     * (richer) effect via ReligionContent. RELIGIOUS_RITE → fronted (R3d-1) +
+     * congregation (R2b) automatically. On its day it SUPERSEDES the generic
+     * holy-day blessing (see {@code checkCulturalHolyDay}).
+     */
+    private static void checkGrandFestival(ServerLevel level, Village village,
+                                           VillageSavedData data, long currentTick) {
+        if ((currentTick % 24000L) != 0L) return;   // once per day
+        Religion religion = ReligionRegistry.get(
+                ReligionContent.villageReligionId(level, village));
+        if (religion == null) return;
+
+        VillageEvent.EventType type = grandFestivalType(religion.id());
+        String dayName = grandFestivalDayName(religion.id());
+        if (type == null || dayName == null) return;
+
+        Integer eff = religion.calendar().effectiveDayOfYear(dayName);
+        if (eff == null) return;
+        int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
+        if (eff != litDay) return;
+
+        // De-dupe: one grand festival per village per day.
+        boolean already = data.getAllEvents().stream()
+                .filter(ev -> ev.getVillageId().equals(village.getId()))
+                .anyMatch(ev -> ev.getType() == type
+                        && currentTick - ev.getStartTick() < 24000L);
+        if (already) return;
+
+        scheduleEvent(level, village, data, type, currentTick);
+    }
+
+    /** True when today (liturgical day) is the village religion's grand-festival
+     *  principal day — used to suppress the generic holy-day blessing. */
+    private static boolean isGrandFestivalDay(ServerLevel level, Village village,
+                                              long currentTick) {
+        Religion religion = ReligionRegistry.get(
+                ReligionContent.villageReligionId(level, village));
+        if (religion == null) return false;
+        String dayName = grandFestivalDayName(religion.id());
+        if (dayName == null) return false;
+        Integer eff = religion.calendar().effectiveDayOfYear(dayName);
+        if (eff == null) return false;
+        int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
+        return eff == litDay;
+    }
+
+    /** religionId → its grand-festival EventType (the headline named gathering). */
+    private static VillageEvent.EventType grandFestivalType(String religionId) {
+        if (ReligionRegistry.SUNSTEAD.equals(religionId))    return VillageEvent.EventType.HARVEST_HOME;
+        if (ReligionRegistry.THE_LOOM.equals(religionId))    return VillageEvent.EventType.GREAT_WEAVING;
+        if (ReligionRegistry.TIDECALL.equals(religionId))    return VillageEvent.EventType.TIDES_RETURN;
+        if (ReligionRegistry.FORGE_CREED.equals(religionId)) return VillageEvent.EventType.FOUNDING_DAY;
+        return null;
+    }
+
+    /** religionId → the calendar-day name of its principal high holy day. */
+    private static String grandFestivalDayName(String religionId) {
+        if (ReligionRegistry.SUNSTEAD.equals(religionId))    return "Harvest Equinox";
+        if (ReligionRegistry.THE_LOOM.equals(religionId))    return "Fourth Threading";
+        if (ReligionRegistry.TIDECALL.equals(religionId))    return "Last Catch";
+        if (ReligionRegistry.FORGE_CREED.equals(religionId)) return "Founding Day";
+        return null;
     }
 
     private static VillageEvent.EventType holyDayTypeFor(String cultureId) {

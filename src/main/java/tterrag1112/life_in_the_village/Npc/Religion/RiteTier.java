@@ -64,8 +64,9 @@ public enum RiteTier {
             // village-wide spiritual act, on par with the great ceremonies, so
             // it requires a competent officiant (seated priest or high skill).
             // SIGNATURE_RITE (R3b-3): GRAND — a faith's headline annual ceremony.
+            // GRAND_FESTIVAL (R3d-2): GRAND — the grand annual high celebration.
             case FEAST_DAY, HARVEST_THANKSGIVING, CONSECRATION,
-                 SIGNATURE_RITE                                       -> GRAND;
+                 SIGNATURE_RITE, GRAND_FESTIVAL                       -> GRAND;
         };
     }
 }

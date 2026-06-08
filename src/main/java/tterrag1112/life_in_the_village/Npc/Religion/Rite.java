@@ -50,7 +50,16 @@ public enum Rite {
      *  Ancestor Oath) — they differ entirely through {@code ReligionContent}
      *  (mood scale + relationship boost + treasury boon + flavor) and their
      *  distinct named {@code EventType} gatherings + calendar triggers. */
-    SIGNATURE_RITE;
+    SIGNATURE_RITE,
+    // ── Religion Rework R3d-2 ────────────────────────────────────────────
+    /** The shared effect of each faith's <em>grand annual festival</em> — the
+     *  single biggest celebration of its religious year, on its principal high
+     *  holy day. Richer than the routine holy-day blessing; shares
+     *  {@code handleSignatureRite} (the per-faith mix is read from this rite's
+     *  {@code ReligionContent} profile), differentiated by named grand-festival
+     *  {@code EventType}s + calendar triggers. Fronted automatically (R3d-1,
+     *  RELIGIOUS_RITE category). */
+    GRAND_FESTIVAL;
 
     public static final Codec<Rite> CODEC =
             Codec.STRING.xmap(Rite::valueOf, Rite::name);

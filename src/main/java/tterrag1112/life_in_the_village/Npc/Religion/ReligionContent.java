@@ -107,7 +107,11 @@ public final class ReligionContent {
                 // a treasury blessing for the sown year), no relationship lean.
                 Map.entry(Rite.SIGNATURE_RITE,
                         RiteProfile.signature(1.2f, 0, 40L,
-                                "the First Furrow — may the first seed take root and the year run golden"))));
+                                "the First Furrow — may the first seed take root and the year run golden")),
+                // R3d-2 — grand Harvest Home: the year's full granary, shared.
+                Map.entry(Rite.GRAND_FESTIVAL,
+                        RiteProfile.signature(1.6f, 0, 80L,
+                                "Harvest Home — the Sun-Mother's full granary, shared by all the village"))));
 
         // The Loom — abstract fate, no deity. Confession-centric, pattern flavor.
         m.put(ReligionRegistry.THE_LOOM, profiles(
@@ -129,7 +133,11 @@ public final class ReligionContent {
                 // strong relationship boost among attendees (no deity, abstract).
                 Map.entry(Rite.SIGNATURE_RITE,
                         RiteProfile.signature(1.0f, 8, 0L,
-                                "the Thread-Binding — your fates are woven into one cloth"))));
+                                "the Thread-Binding — your fates are woven into one cloth")),
+                // R3d-2 — grand Great Weaving: the year's full pattern revealed.
+                Map.entry(Rite.GRAND_FESTIVAL,
+                        RiteProfile.signature(1.4f, 10, 0L,
+                                "the Great Weaving — the whole year's pattern, revealed and rebound"))));
 
         // Tidecall — sea-spirits, the Sea-Mother. Voyage blessings, tide feasts.
         m.put(ReligionRegistry.TIDECALL, profiles(
@@ -150,7 +158,11 @@ public final class ReligionContent {
                 // seafarers — a steadying mood pulse (no relationship/treasury).
                 Map.entry(Rite.SIGNATURE_RITE,
                         RiteProfile.signature(1.2f, 0, 0L,
-                                "the Voyage Blessing — may the sea bear you out and bring you home"))));
+                                "the Voyage Blessing — may the sea bear you out and bring you home")),
+                // R3d-2 — grand Tides' Return: the sea gives back its bounty.
+                Map.entry(Rite.GRAND_FESTIVAL,
+                        RiteProfile.signature(1.5f, 0, 60L,
+                                "the Tides' Return — the Sea-Mother gives back her bounty to the shore"))));
 
         // The Forge Creed — ancestor / martial. Honor funerals, martial coming-of-age.
         m.put(ReligionRegistry.FORGE_CREED, profiles(
@@ -176,7 +188,11 @@ public final class ReligionContent {
                 // relationship nudge among those who swear together.
                 Map.entry(Rite.SIGNATURE_RITE,
                         RiteProfile.signature(1.2f, 6, 0L,
-                                "the Ancestor Oath — swear before those who held the line"))));
+                                "the Ancestor Oath — swear before those who held the line")),
+                // R3d-2 — grand Founding Day: honour the first who held the line.
+                Map.entry(Rite.GRAND_FESTIVAL,
+                        RiteProfile.signature(1.6f, 8, 40L,
+                                "Founding Day — we honour those who first held the line, and feast in their name"))));
 
         return Map.copyOf(m);
     }

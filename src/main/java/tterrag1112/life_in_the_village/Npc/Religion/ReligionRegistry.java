@@ -117,8 +117,9 @@ public final class ReligionRegistry {
                         // R3b-2 — the confession-centric Loom observes communal
                         // purification (group atonement).
                         Rite.PURIFICATION,
-                        // R3b-3 — the Loom's signature Thread-Binding.
-                        Rite.SIGNATURE_RITE),
+                        // R3b-3 / R3d-2 — the Loom's signature Thread-Binding +
+                        // its grand Great Weaving.
+                        Rite.SIGNATURE_RITE, Rite.GRAND_FESTIVAL),
                 List.of("loom_room", "household"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("First Threading",  30),
@@ -142,8 +143,9 @@ public final class ReligionRegistry {
                         // R3b-2 — Tidecall keeps the "Storm's Vigil" (a sea-
                         // mourning vigil for those lost to the deep).
                         Rite.VIGIL,
-                        // R3b-3 — Tidecall's signature Voyage Blessing.
-                        Rite.SIGNATURE_RITE),
+                        // R3b-3 / R3d-2 — Tidecall's signature Voyage Blessing +
+                        // its grand Tides' Return.
+                        Rite.SIGNATURE_RITE, Rite.GRAND_FESTIVAL),
                 List.of("dock", "shore", "tidepool"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("Spring Tide",     45),
@@ -167,8 +169,9 @@ public final class ReligionRegistry {
                         // R3b-2 — the martial Forge Creed keeps the "Anvil
                         // Vigil" (a vigil of resolve before the ancestors).
                         Rite.VIGIL,
-                        // R3b-3 — the Forge Creed's signature Ancestor Oath.
-                        Rite.SIGNATURE_RITE),
+                        // R3b-3 / R3d-2 — the Forge Creed's signature Ancestor
+                        // Oath + its grand Founding Day festival.
+                        Rite.SIGNATURE_RITE, Rite.GRAND_FESTIVAL),
                 List.of("forge", "barracks", "ancestor_hall"),
                 ReligiousCalendar.of(Map.ofEntries(
                         Map.entry("Founding Day",     12),
