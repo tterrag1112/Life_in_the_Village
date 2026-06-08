@@ -2257,3 +2257,171 @@ wants an in-game check.
    independent.
 6. No NPC freeze / brain-tick error (no new brain memory); rite officiation
    still works (orders don't gate, only nudge).
+
+---
+
+## Religion Rework — Phase R3d-1: Priest festival-leading + crowd-blessing payoff
+
+R3's festival phase, part 1. Makes the priest FRONT village-wide religious
+gatherings — stay at the venue for the gathering's active window, lead it
+(sermon gestures + periodic crowd-blessing pulses), and pay attendees back for
+showing up — instead of officiating the one-shot blessing once and leaving.
+
+### Disposition (verified; findings)
+
+- `PriestBehavior` phase machine: `IDLE / WALKING_TO_RITE / OFFICIATING /
+  PRODUCING`, fields `claimedRite`/`timer`/`idleCooldown`/`lastBlessTick`;
+  `analyze()` → `findClaimableRite` (claim → walk → officiate via
+  `runImmediate`, guarded by a re-fetch-PENDING check) → produce → idle;
+  `blessNearby` is the R1 ambient aura (every `BLESS_INTERVAL` 600t, radius 12,
+  mood +4). State is field-held — so a fronted festival fits the same idiom (no
+  new brain memory).
+- **The frontable predicate is `EventType.category() == RELIGIOUS_RITE`** —
+  confirmed it covers ALL the village-wide religious gatherings (holy-days
+  SUNSTEAD_EQUINOX/etc., VIGIL, PURIFICATION, AND the signature rites
+  FIRST_FURROW/THREAD_BINDING/VOYAGE_BLESSING/ANCESTOR_OATH — all categorized
+  RELIGIOUS_RITE in R3b-3), and naturally EXCLUDES life-events (LIFE_STAGE_RITE)
+  and secular festivals (SEASONAL_FESTIVAL: HARVEST_FESTIVAL/VILLAGE_FAIR).
+  Standalone rites (ordination/consecration) aren't `VillageEvent` gatherings,
+  so they're excluded too. No explicit signature-type carve-out needed.
+- `CommunityGatherings.activeInVillage(level, villageId, tick)` is the union
+  query; the gathering→blessing-rite link is `eventData["riteId"]`
+  (`CeremonyBlessings.RITE_ID_KEY` → `RiteSavedData.getRite`); `VillageEvent`
+  exposes `endTick()` + `isActiveAt(tick)` (the R2a `CommunityGathering`
+  contract); `VillageSavedData.getEventById` re-resolves a gathering.
+- R3b-1 holy-day blessing: the one-shot FEAST_DAY/HARVEST/etc. rite fires at
+  gathering start; the priest's `tickOfficiating` re-fetch-PENDING guard already
+  prevents re-applying it.
+- `ReligionContent.profileFor` + `RiteProfile` (R3a) tune the crowd blessing
+  per-faith; R2b excludes PRIEST from the holy-day attendance override, so the
+  fronter is NOT pulled into the congregation (stays in WORK, fronts).
+
+### Design
+
+- **Phase-in-PriestBehavior, not a sibling behavior** (Simplification Sweep
+  choice): fronting reuses the existing claim→walk→officiate path for the
+  opening blessing, then a new `FRONTING` phase continues at the venue. One new
+  enum constant + six fields + five methods — no parallel behavior, no new brain
+  memory.
+- **Fronter election reuses the blessing-rite presider**: `tryStartFronting`
+  claims the gathering's linked rite (`presider=me`); other priests see
+  `presider≠them` and skip — **one fronter**, no new gating mechanism. The R1a
+  `RiteCapability.canOfficiate` gate governs who may front.
+- **Precedence**: `analyze()` checks `tryStartFronting` BEFORE `findClaimableRite`
+  / produce — fronting an active festival preempts routine work for the (short,
+  ~6000t) festival window. Non-festival rites (weddings/funerals) are still
+  claimed by OTHER priests; in a single-priest village they defer until the
+  festival ends.
+- **No double-apply**: entering fronting routes through `WALKING_TO_RITE →
+  OFFICIATING`, where the existing re-fetch-PENDING guard performs the one-shot
+  blessing exactly once (or skips it if already applied abstractly); then
+  `tickOfficiating` transitions to `FRONTING` instead of `IDLE`.
+- **Crowd-blessing payoff** (`festivalCrowdBless`): while fronting, every
+  `FESTIVAL_PULSE_INTERVAL` (600t), a stronger-than-ambient mood (+6 vs +4) +
+  small piety (+0.01) bump to NPCs at the venue (the priest stands there;
+  attendees are gathered by R2b), per-faith-scaled by the festival rite's
+  `ReligionContent` profile. **Bounded**: `FESTIVAL_MAX_PULSES` (6) caps total
+  piety (≤ 0.06/festival) — no piety farming. The **ambient R1 aura is
+  superseded** during fronting (`tick` skips `blessNearby` when `FRONTING`).
+- **Field-held, exits cleanly**: `frontedGatheringId`/`frontEndTick`/
+  `frontReligionId`/`frontRiteType`/`frontPulseCount`/`lastFrontPulseTick`;
+  `tickFronting` ends when `endTick` passes or `getEventById(...).isActiveAt`
+  goes false; `clearFronting()` runs on end + in `stop`/`goIdle`.
+
+### Tie-In Audit
+
+- **Upstream feeders** — the gathering schedulers (holy-day R3b-1, signature
+  R3b-3, VIGIL/PURIFICATION R3b-2) create the RELIGIOUS_RITE `VillageEvent`s +
+  their linked blessing rite; `CommunityGatherings.activeInVillage` discovers
+  them; R2b populates `actualAttendees` / pulls the congregation to the venue.
+- **Downstream callers** — the `PriestBehavior` phase machine (new FRONTING
+  case); `blessNearby` (superseded during fronting); attendees' mood + piety
+  (`PietyComponent.adjustBelief`/`recordRiteAttendance`); `VillageSavedData
+  .getEventById` (re-check active). The one-shot officiation path is unchanged
+  for non-festival rites (frontedGatheringId null → IDLE as before).
+- **Sibling systems** — R2b `AttendGatheringBehavior`: the priest is excluded
+  from the attendance override (PRIEST), so the fronter leads while the
+  congregation attends — both at the same venue. R3b-1 holy-day blessing: not
+  double-applied (re-fetch-PENDING guard). R1a gate / R1b building preference /
+  R3c order: untouched — fronting preempts via `analyze` ordering but
+  `findClaimableRite` (with its building/order preference) is unchanged for the
+  non-fronting path.
+- **Exhaustive switches** — `EventType.category()` arms confirmed (festivals =
+  RELIGIOUS_RITE, life-events = LIFE_STAGE_RITE); NO new enum / `Rite` /
+  `EventType` added this phase. The `Phase` switch in `tick` is a statement
+  switch (FRONTING arm added).
+
+### Simplification Sweep
+
+In scope: `PriestBehavior` only (one file). Chose phase-in-behavior over a
+sibling (reuses the claim/walk/officiate path + state fields). The crowd
+blessing reuses the `blessNearby` AABB-radius + `ReligionContent` tuning path
+(no new effect mechanism); fronter election reuses the rite presider (no new
+"who leads" gate); fronted festival is field-held (no new brain memory). The
+only ambient-vs-festival interaction (double aura) is resolved by superseding
+`blessNearby` during FRONTING.
+
+### Memory safety
+
+No new brain `MemoryModuleType` — fronting is held in PriestBehavior fields;
+the behavior writes only `WALK_TARGET` + `NO_ACTIONABLE_WORK` (already
+registered). No freeze risk.
+
+### Deviations from prompt
+
+- **Fronting preempts non-festival rite claiming in a single-priest village**
+  (a wedding/funeral defers until the short festival window ends), rather than
+  interleaving. In multi-priest villages there's no starvation (one fronts,
+  others officiate). This keeps the precedence simple (check fronting first in
+  `analyze`) and is bounded by the ~6000t festival duration; flagged.
+- **All RELIGIOUS_RITE gatherings are frontable**, including VIGIL and
+  PURIFICATION (not only "festive" holy-days) — they ARE village-wide religious
+  gatherings the priest should lead, so the category predicate includes them
+  (the priest leads the vigil / atonement and crowd-blesses attendees). Their
+  one-shot effects (clear MELANCHOLY, etc.) still fire once via the linked rite.
+
+### Out-of-scope but flagged
+
+- New grand-festival types → R3d-2 (this phase fronts what exists). Secular
+  festivals (HARVEST_FESTIVAL/VILLAGE_FAIR) untouched (SEASONAL_FESTIVAL, not
+  fronted). Festival economy/commerce → R4. Life-events/ordination/consecration
+  stay one-shot.
+- Crowd-blessing targets NPCs within `BLESS_RADIUS` of the priest-at-venue (the
+  congregation), not the gathering's exact `actualAttendees` list — avoids a
+  per-pulse reverse lookup + keeps the radius-aura idiom; everyone present is
+  blessed. A future precise-attendee variant could read `actualAttendees`.
+- A fully-idle (non-fronting) priest still doesn't run the ambient aura (R1
+  limitation, unchanged).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (build fails before javac).
+Static review: no new enum/`Rite`/`EventType`; the frontable predicate is the
+RELIGIOUS_RITE category (excludes life-events + secular); fronter election via
+the rite presider (one fronter); the re-fetch-PENDING guard prevents
+double-applying the one-shot blessing; crowd pulses are capped
+(`FESTIVAL_MAX_PULSES`) and per-faith-scaled; ambient aura superseded while
+fronting; field-held (no new brain memory); `endTick`/`isActiveAt`/`getEventById`
+/`category`/`FESTIVAL_ATTENDED`/`profileFor` confirmed. Runtime-sensitive
+(active-window timing, claim race, crowd radius) — wants an in-game check.
+
+### Smoke test
+
+1. Advance a village to a holy day (e.g. a Sunstead equinox) with a temple +
+   priest. Confirm the priest walks to the venue and STAYS for the gathering's
+   active window leading it (periodic swing gesture, activity text "Leading
+   <festival>"), rather than officiating once and leaving.
+2. Confirm attendees (the R2b congregation at the venue) receive the crowd
+   blessing on the interval — a mood lift + a small piety gain — and that the
+   total piety is capped over the festival (stops after `FESTIVAL_MAX_PULSES`).
+3. Separately advance to a signature rite (e.g. Forge Ancestor Oath @ day 330)
+   and confirm the priest fronts it the same way, with that faith's scaling.
+4. Confirm a wedding/funeral still ONE-SHOT officiates (priest officiates and
+   leaves — not fronted); confirm a secular HARVEST_FESTIVAL / VILLAGE_FAIR is
+   unaffected (no fronting).
+5. In a two-priest village during a festival, confirm only ONE priest fronts
+   (no mobbing) and the other handles other rites; confirm the R1a capability
+   gate still governs who may front (an under-tier priest can't claim a GRAND
+   holy-day blessing).
+6. Confirm the priest leaves the venue and resumes produce/idle when the
+   gathering ends; no NPC freeze (no new brain memory).

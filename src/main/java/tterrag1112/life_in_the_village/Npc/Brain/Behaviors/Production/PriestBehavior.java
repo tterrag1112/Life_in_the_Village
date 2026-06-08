@@ -18,12 +18,15 @@ import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
+import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteCapability;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecution;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecutor;
 import tterrag1112.life_in_the_village.Npc.Apprentice.ApprenticeRank;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteOutcome;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteProfile;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteTier;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
@@ -32,9 +35,15 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Profession.ProfessionSupplyChain;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
+import tterrag1112.life_in_the_village.Village.Event.CeremonyBlessings;
+import tterrag1112.life_in_the_village.Village.Event.CommunityGatherings;
+import tterrag1112.life_in_the_village.Village.Event.EventCategory;
+import tterrag1112.life_in_the_village.Village.Event.VillageEvent;
+import tterrag1112.life_in_the_village.Village.Gathering.CommunityGathering;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -77,7 +86,14 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
     private static final int    XP_PER_PRODUCE  = 1;
     private static final float  WALK_SPEED      = 1.0f;
 
-    private enum Phase { IDLE, WALKING_TO_RITE, OFFICIATING, PRODUCING }
+    // R3d-1 — festival fronting: the priest leads village-wide RELIGIOUS_RITE
+    // gatherings for their active window with a sustained crowd-blessing.
+    private static final int    FESTIVAL_PULSE_INTERVAL = 600;   // ~30s; NOT per-tick
+    private static final int    FESTIVAL_MAX_PULSES     = 6;     // anti-farm cap
+    private static final int    FESTIVAL_BLESS_MOOD     = 6;     // > ambient aura (4)
+    private static final float  FESTIVAL_BLESS_PIETY    = 0.01f; // ≤ 6 × 0.01 over a festival
+
+    private enum Phase { IDLE, WALKING_TO_RITE, OFFICIATING, PRODUCING, FRONTING }
     /** Specialization seam — the religion rework branches per building type. */
     private enum TempleKind { TEMPLE, CHAPEL, SHRINE, OTHER }
 
@@ -90,6 +106,13 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
     private long lastBlessTick = Long.MIN_VALUE;
     /** R1b order seam — last-seen specialization id, for change-only debug. */
     private net.minecraft.resources.Identifier lastOrderId;
+    // R3d-1 — fronted-festival state, held in fields (no new brain memory).
+    private UUID frontedGatheringId;
+    private long frontEndTick;
+    private String frontReligionId;
+    private Rite frontRiteType;
+    private int frontPulseCount;
+    private long lastFrontPulseTick = Long.MIN_VALUE;
 
     public PriestBehavior() {
         super(ImmutableMap.of(MemoryModuleType.WALK_TARGET, MemoryStatus.REGISTERED), 24000);
@@ -127,11 +150,16 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
     @Override
     protected void tick(ServerLevel level, TownspersonMob entity, long gameTime) {
         this.entity = entity;
-        blessNearby(level, gameTime); // cooldowned aura while the priest is active
+        // R3d-1 — the festival crowd-blessing pulse supersedes the ambient aura
+        // while fronting (no odd stacking).
+        if (phase != Phase.FRONTING) {
+            blessNearby(level, gameTime); // cooldowned aura while the priest is active
+        }
         switch (phase) {
             case WALKING_TO_RITE -> tickWalkToRite(level);
             case OFFICIATING     -> tickOfficiating(level);
             case PRODUCING       -> tickProducing(level);
+            case FRONTING        -> tickFronting(level, gameTime);
             case IDLE            -> {}
         }
     }
@@ -143,6 +171,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         // reason here — only the transient reset.
         phase = Phase.IDLE;
         claimedRite = null;
+        clearFronting();
         timer = 0;
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
     }
@@ -154,6 +183,14 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         // (priest/cleric) today — a no-op beyond the change-only debug
         // trace. Runs behind idleCooldown, never per-tick.
         readOrderSeam();
+
+        // R3d-1 — front an active village-wide religious festival in this
+        // priest's village (preempts routine one-shot officiation + produce for
+        // the festival window). One fronter: claiming the gathering's blessing
+        // rite (presider=me) makes other priests skip it. Non-festival rites
+        // (weddings/funerals) are still claimed by OTHER priests; in a
+        // single-priest village they defer until the (short) festival ends.
+        if (tryStartFronting(level)) return;
 
         RiteExecution rite = findClaimableRite(level);
         if (rite != null) {
@@ -192,6 +229,7 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         phase = Phase.IDLE;
         idleCooldown = IDLE_COOLDOWN;
         claimedRite = null;
+        clearFronting();
         timer = 0;
         entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
     }
@@ -323,8 +361,18 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         if (current != null && current.outcome() == RiteOutcome.PENDING) {
             RiteExecutor.runImmediate(current, level);
         }
-        phase = Phase.IDLE;
+        // R3d-1 — if this was a festival's opening blessing, stay and front the
+        // gathering for its window; otherwise it's a one-shot rite → idle. The
+        // re-fetch-PENDING guard above means an already-applied linked rite is
+        // NOT double-applied — the priest still fronts.
         claimedRite = null;
+        if (frontedGatheringId != null) {
+            phase = Phase.FRONTING;
+            timer = 0;
+            lastFrontPulseTick = level.getGameTime(); // don't pulse instantly on arrival
+        } else {
+            phase = Phase.IDLE;
+        }
     }
 
     // ── Production ───────────────────────────────────────────────────────
@@ -371,6 +419,116 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
                 npc -> npc != entity && npc.isAlive())) {
             other.getMood().applyWithRawMagnitude(MoodTrigger.GIFT_RECEIVED, BLESS_MAGNITUDE, gameTime);
         }
+    }
+
+    // ── Festival fronting (R3d-1) ────────────────────────────────────────
+
+    /**
+     * Looks for an active village-wide RELIGIOUS_RITE gathering this priest
+     * should FRONT (holy-days + signature rites + vigils/purifications — the
+     * frontable predicate is the RELIGIOUS_RITE category, which excludes
+     * LIFE_STAGE life-events and SEASONAL secular festivals). Fronter election
+     * reuses the gathering's blessing-rite presider: claim it (presider=me) and
+     * other priests skip; respect the R1a capability gate. On success, walks to
+     * the venue (the linked rite's location — the R2b convergence point) and
+     * arms the fronting flow. Returns true when fronting started.
+     */
+    private boolean tryStartFronting(ServerLevel level) {
+        Village v = entity.getAssignedVillageName()
+                .flatMap(n -> VillageSavedData.get(level).getVillageByName(n)).orElse(null);
+        if (v == null) return false;
+        long now = level.getGameTime();
+        UUID me = entity.getUUID();
+        for (CommunityGathering g : CommunityGatherings.activeInVillage(level, v.getId(), now)) {
+            if (!(g instanceof VillageEvent ve)) continue;          // festivals are events
+            if (ve.getType().category() != EventCategory.RELIGIOUS_RITE) continue; // predicate
+            RiteExecution linked = linkedRite(level, ve);
+            if (linked == null) continue;                           // no blessing to lead
+            UUID presider = linked.presidingPriestId().orElse(null);
+            if (presider != null && !presider.equals(me)) continue; // another priest fronts
+            if (!RiteCapability.canOfficiate(entity, linked.type())) continue; // R1a gate
+
+            // Become the fronter: claim the blessing rite, walk to the venue.
+            claimedRite = linked.withPresider(me);
+            RiteSavedData.get(level).putRite(claimedRite);
+            frontedGatheringId = ve.getId();
+            frontEndTick = ve.endTick();
+            frontReligionId = ReligionContent.villageReligionId(level, v);
+            frontRiteType = linked.type();
+            frontPulseCount = 0;
+            lastFrontPulseTick = Long.MIN_VALUE;
+            phase = Phase.WALKING_TO_RITE;
+            entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+            entity.setCurrentActivity(clergyTitle() + ": Leading "
+                    + ve.getType().name().replace('_', ' ').toLowerCase(Locale.ROOT));
+            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
+                    new WalkTarget(claimedRite.location(), WALK_SPEED, 1));
+            return true;
+        }
+        return false;
+    }
+
+    /** Lead the festival for its window: periodic sermon gesture + a bounded,
+     *  per-faith crowd-blessing pulse to attendees at the venue. */
+    private void tickFronting(ServerLevel level, long gameTime) {
+        timer++;
+        if (timer % 20 == 0) entity.swing(InteractionHand.MAIN_HAND); // sermon gesture
+        if (gameTime - lastFrontPulseTick >= FESTIVAL_PULSE_INTERVAL
+                && frontPulseCount < FESTIVAL_MAX_PULSES) {
+            lastFrontPulseTick = gameTime;
+            frontPulseCount++;
+            festivalCrowdBless(level, gameTime);
+        }
+        // End when the gathering's window closes or it is no longer active.
+        if (gameTime >= frontEndTick || !gatheringStillActive(level, gameTime)) {
+            clearFronting();
+            phase = Phase.IDLE;
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        }
+    }
+
+    /** The crowd-blessing payoff: a stronger-than-ambient mood boost + a small,
+     *  bounded piety bump to attendees gathered at the venue (the priest stands
+     *  there while fronting), tuned per-faith by the festival rite's
+     *  {@link ReligionContent} profile. The one-shot blessing rite already fired
+     *  at gathering start — these are the SUSTAINED layer, not a re-application;
+     *  the per-festival pulse cap prevents piety farming. */
+    private void festivalCrowdBless(ServerLevel level, long gameTime) {
+        RiteProfile profile = ReligionContent.profileFor(frontReligionId, frontRiteType);
+        AABB box = new AABB(entity.blockPosition()).inflate(BLESS_RADIUS);
+        for (TownspersonMob other : level.getEntitiesOfClass(TownspersonMob.class, box,
+                npc -> npc != entity && npc.isAlive())) {
+            other.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED,
+                    profile.scaleMood(FESTIVAL_BLESS_MOOD), gameTime);
+            String rel = other.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
+            other.getPiety().adjustBelief(rel, profile.scalePiety(FESTIVAL_BLESS_PIETY));
+            other.getPiety().recordRiteAttendance(gameTime);
+        }
+    }
+
+    private boolean gatheringStillActive(ServerLevel level, long gameTime) {
+        if (frontedGatheringId == null) return false;
+        return VillageSavedData.get(level).getEventById(frontedGatheringId)
+                .map(e -> e.isActiveAt(gameTime)).orElse(false);
+    }
+
+    private static RiteExecution linkedRite(ServerLevel level, VillageEvent ve) {
+        String riteIdStr = ve.getEventData().get(CeremonyBlessings.RITE_ID_KEY);
+        if (riteIdStr == null) return null;
+        try {
+            return RiteSavedData.get(level).getRite(UUID.fromString(riteIdStr)).orElse(null);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private void clearFronting() {
+        frontedGatheringId = null;
+        frontEndTick = 0L;
+        frontReligionId = null;
+        frontRiteType = null;
+        frontPulseCount = 0;
+        timer = 0;
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
