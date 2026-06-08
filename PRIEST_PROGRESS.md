@@ -5703,3 +5703,192 @@ and `/religion me` is wired.
 5. **Graceful unaffiliated.** As a brand-new player with no piety, run `/religion
    me`: confirm "Unaffiliated" + the offerings hint, no pledge, no crash, and
    the calendar still lists the faiths' days (nothing starred).
+
+---
+
+## R9d — player participation verbs + piety payoff (2026-06-08)
+
+### Disposition (findings)
+
+The final R9 phase adds player **actions** (the two remaining designed verbs)
+and a **piety payoff** so accumulated piety matters. On-branch verification:
+
+- **Verb system.** `PlayerVerb` (id / `label():Component` / `isAvailable(ctx)` /
+  `invoke(ctx)` + args overload / `displayOrder` / `cooldownTicks`); `VerbContext`
+  (player, npc, level, tick); `VerbResult` (`success(treeId)` /
+  `failure(reason)` / `opensScreen`); `VerbInvocation.invoke` runs availability →
+  cooldown → `invoke` → routes a dialogue tree / failure text to chat;
+  `PlayerVerbRegistry.register(...)` in `registerDefaults()` +
+  `availableFor(ctx)` (sorted by `displayOrder`). The shipped religious verbs
+  (`make_offering` / `confess` / `request_blessing` / `pay_tithe`) are the exact
+  mirrors — `MakeOfferingVerb` shows the player-piety + relationship + temple-
+  economy bookkeeping; `CommissionVerb` shows the work-time gate;
+  `PayTitheVerb`/`MakeOfferingVerb` show priest→building→`BuildingEconomy`.
+- **UI (no fork).** `NpcInteractionHandler` builds the priest's
+  `BusinessFrontScreen` verb grid from `PlayerVerbRegistry.availableFor(ctx)`
+  (capped 8, by display order). So a verb that returns `isAvailable == true` for
+  a priest context **auto-appears** at the priest — no button wiring, no new
+  packet. (The R9b temple action row stays read-only; wiring a button there
+  needs the staffing priest resolved client→server — flagged.)
+- **Rite scheduling + R1a gate.** `RiteScheduler.schedule(level, village, rite,
+  participantIds, delayTicks)` queues a `RiteExecution` (the priest officiates
+  via the normal pipeline). `RiteCapability.canOfficiate(priest, rite)` =
+  `RiteTier.tierOf(rite).ordinal() <= capOf(priest).ordinal()` (seated village
+  priest → GRAND; else SOCIAL/LITERACY-capped) — the R1a gate.
+- **Active-gathering detection.** `VillageSavedData.getActiveEventsForVillage(id)`
+  (live `VillageEvent`s, faith in `eventData[CeremonyBlessings.FAITH_KEY]`) +
+  `RiteSavedData.ritesForVillage(id)` filtered by `outcome == PENDING &&
+  isActiveAt(now)` (the `CommunityGathering` 1200-tick window).
+- **Payoff site.** `TownspersonMob.getRelationships().adjust(playerId, n)` is the
+  player↔NPC channel `make_offering`/`give_gift` already use;
+  `PietyComponent.primaryTier()` → `PietyTier` (UNAFFILIATED/FAITHFUL/DEVOUT/
+  PIOUS, ordinal 0–3). `FaithReconciliation.faithBenefit(playerFaith, riteFaith)`
+  → `FaithBenefit(moodMultiplier, sameFaith)` for the cross-faith reduction.
+- **Fee.** `CoinHelper.playerCanAfford` / `playerPay(player, CurrencyValue.of(b))`
+  debits the purse; `BuildingEconomy.depositRevenue(b)` credits the temple.
+
+**Payoff design (chosen).** The prompt's first option — *co-religionist NPCs
+regard a higher-piety player more warmly* — implemented as a bounded,
+faith-aware, tier-scaled relationship regard in a shared `PietyPayoff` helper
+(FAITHFUL +2 / DEVOUT +4 / PIOUS +6, capped to 6 nearby same-faith NPCs per
+act), applied by the two new verbs as the public act of devotion that earns it.
+Reuses the relationship channel; no new mechanism. (The blessing-strength option
+is flagged as an alternative not taken — it would require threading a per-player
+scalar through the `RiteProfile` execution path.)
+
+### What shipped
+
+- **`Npc/Religion/PietyPayoff.java`** (new) — `regardBonus(PietyTier)` (bounded
+  `ordinal * 2`) + `applyCoReligionistRegard(...)` (warms ≤6 loaded same-faith
+  villagers by the tier regard; no-op for unaffiliated / zero tier).
+- **`Npc/Verbs/Impl/AttendRiteVerb.java`** (new, id `attend_rite`) — available
+  only while a rite/festival is active in the npc's village; deepens the player's
+  piety (faith-aware via `FaithReconciliation` — full for the rite's faith,
+  reduced/syncretic drift otherwise), records attendance, and applies the
+  co-religionist payoff. Action-bar feedback; mirrors `MakeOfferingVerb`'s
+  player-piety bookkeeping.
+- **`Npc/Verbs/Impl/CommissionRiteVerb.java`** (new, id `commission_rite`) — at a
+  working priest with a temple: runs the R1a `canOfficiate` gate, checks
+  affordability, debits a 25b fee → the temple `BuildingEconomy` (R4a), schedules
+  `Rite.BLESSING` for the player (priest officiates via the pipeline), nudges the
+  player's piety, and pays the priest-regard. Mirrors `CommissionVerb` +
+  `MakeOfferingVerb`.
+- **`Npc/Verbs/PlayerVerbRegistry.java`** — registered both verbs after
+  `PayTitheVerb`; they auto-surface in the priest's BusinessFront verb grid.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `PlayerVerbRegistry`/`availableFor` (UI surfacing),
+   `RiteScheduler.schedule` (commission), `getActiveEventsForVillage` +
+   `ritesForVillage`/`isActiveAt` (attend gating), `RiteSavedData` player piety,
+   `CoinHelper`/`CurrencyValue` (fee), `RiteCapability` (gate),
+   `FaithReconciliation` (cross-faith), `BuildingFaith`/`BuildingEconomy` (temple
+   fee). All consumed read-or-through-existing-mutators; no system forked.
+2. **Downstream callers.** `PlayerVerbInvokePacket.handle` →
+   `VerbInvocation.invoke` dispatches both new verbs unchanged (no packet/codec
+   change — the verb list rides the existing `OpenBusinessFrontPacket.verbIds`,
+   which is capped at 8; the two verbs' low displayOrder (64/66) keeps them in
+   range). `RiteScheduler`/`RiteSavedData` receive a normal commissioned
+   `RiteExecution`. `BuildingEconomy` receives the fee like `make_offering`'s
+   deposit. `getRelationships().adjust` receives bounded payoff bumps.
+3. **Sibling systems.** Fee/piety/relationship handling matches the shipped
+   `make_offering`/`pay_tithe` shape (same `getOrCreatePlayerPiety` +
+   `adjustBelief`/`recordRiteAttendance` + `depositRevenue` + `relationships.
+   adjust`). The R1a gate is the same `canOfficiate` the priest brain uses.
+   Cross-faith attend reuses `FaithReconciliation.faithBenefit`. `PietyPayoff` is
+   a new shared helper (2 callers now; adoptable by the shipped verbs later).
+4. **Exhaustive switches.** No new enum; no `Rite`/`PietyTier` constant added, so
+   no exhaustive `switch` (e.g. `RiteTier.tierOf`, `PietyTier.displayName`)
+   needs an arm. The payoff uses `PietyTier.ordinal()`, not a switch. Confirmed.
+
+### Simplification Sweep
+
+- **Verb + GUI + religion classes in scope + inbound callers:** `AttendRiteVerb`
+  (1 — the registry), `CommissionRiteVerb` (1 — the registry), `PietyPayoff` (2
+  — the two verbs). No orphans. Both verbs reuse the `PlayerVerb` pattern +
+  `CommissionVerb`/`MakeOfferingVerb` fee/piety/scheduling idioms; the payoff
+  reuses `getRelationships().adjust` + `FaithReconciliation`; the buttons reuse
+  the existing `availableFor`-driven BusinessFront verb grid — no parallel verb
+  or button framework introduced. (Continues the R9b `ClergyTitles` / R9c
+  `CalendarView` precedent of a single shared religion helper per concern —
+  `PietyPayoff` is the payoff equivalent.)
+
+### Deviations from prompt
+
+- **Commissioned rite is fixed to `Rite.BLESSING`** (the prompt's first named
+  example, always applicable to the player). The R1a `canOfficiate` gate is
+  genuinely called and respected, though BLESSING is MINOR so any priest passes;
+  **player-selectable grander rites** (NAMING/MARRIAGE/FUNERAL — which need a
+  subject and would gate harder) are flagged as a follow-up, since the verb UI
+  sends no args and those rites need a target picker.
+- **Payoff = co-religionist regard only** (option 1), not blessing-strength
+  scaling (option 2) — chosen for boundedness and reuse; the blessing-scaling
+  alternative is flagged.
+- **UI is the priest BusinessFront verb grid** (auto-populated), not a new
+  button on the R9b temple screen — the natural, no-fork home; the temple-row
+  button is flagged.
+- **`AttendRite` feedback + `CommissionRite` feedback use an action-bar message**
+  (`displayClientMessage`) rather than a dialogue tree, since neither maps to an
+  existing priest dialogue tree cleanly; success returns `VerbResult.success("")`.
+
+### Out-of-scope but flagged
+
+- **Join-an-order (player order membership)** — OUT per the prompt. It needs a
+  *player* order-membership model (the NPC `ClergyOrders` system is NPC-assigned
+  only; there is no player-side order store, no membership persistence, no rank
+  ladder for players). Flagged as the prerequisite for any "join an order" /
+  player religious-office work.
+- Player-selectable commissioned rite tiers (NAMING/MARRIAGE/FUNERAL + a subject
+  picker); the blessing-strength piety payoff; a `CommissionRite` button on the
+  R9b temple action row; `PietyPayoff` adoption by the shipped `make_offering`/
+  `request_blessing` verbs for consistency.
+
+### R9 completion
+
+This completes the brought-forward **R9** player layer: R9a (NPC religion
+panel), R9b (temple screen), R9c (player piety + calendar), R9d (participation
+verbs + payoff). The player can now see NPC / temple / self+calendar religious
+state and act on it (offer / tithe / confess / request-blessing / attend /
+commission), with piety tier producing a tangible co-religionist regard.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: all signatures confirmed by grep against source
+(`PlayerVerb`/`VerbContext`/`VerbResult`, `PlayerVerbRegistry.register`,
+`RiteScheduler.schedule`, `RiteCapability.canOfficiate`,
+`PietyComponent.adjustBelief`/`setBelief`/`recordRiteAttendance`/`primaryTier`,
+`NpcRelationshipComponent.adjust`, `CoinHelper.playerCanAfford`/`playerPay`,
+`CurrencyValue.of`, `BuildingEconomy.depositRevenue`,
+`getActiveEventsForVillage`, `RiteExecution.isActiveAt`/`outcome`,
+`FaithReconciliation.faithBenefit`+`FaithBenefit`, `BuildingFaith.
+isReligiousBuilding`/`resolveFaith`, `ReligionContent.villageReligionId`); both
+verbs mirror `MakeOfferingVerb`/`CommissionVerb` exactly; no packet/codec change
+(verbs ride the existing `availableFor`→BusinessFront path); no new enum or
+exhaustive-switch arm.
+
+### Smoke test (user-runnable)
+
+1. **Attend during a festival.** While a rite/festival is active in a village
+   (e.g. trigger a signature rite via the calendar, or `/religion` a gathering),
+   right-click the temple priest → the BusinessFront grid shows **Attend rite**.
+   Use it: confirm an action-bar acknowledgement, your piety grows (cross-check
+   `/religion me`), and attendance increments. Confirm it is **unavailable** when
+   no rite is under way ("no rite to attend").
+2. **Cross-faith attend.** Attend a rite of a faith that is NOT your primary:
+   confirm the gain is reduced (syncretic drift toward that faith), not a full
+   own-faith deepening.
+3. **Commission a rite.** At a working temple priest, use **Commission rite**
+   with ≥25b in purse: confirm 25b leaves your purse, the temple treasury rises
+   by 25 (cross-check `/religion temple`), a BLESSING rite schedules and the
+   priest officiates it shortly. With <25b, confirm the "can't afford" failure
+   and no charge. Confirm a priest who cannot officiate is refused by the gate.
+4. **Piety payoff.** Raise your piety tier (repeated offerings/attendance to
+   DEVOUT/PIOUS), then attend a rite / commission with co-religionist villagers
+   nearby: confirm same-faith NPCs' regard toward you climbs more at higher tiers
+   (re-open their NPC profile → Reputation/personal delta), and that NON-same-
+   faith NPCs are unaffected (faith-aware), and the bump is bounded.
+5. **UI consistency.** Confirm Attend/Commission sit alongside the shipped
+   make-offering/confess/request-blessing/tithe verbs in the priest grid and
+   respect cooldowns like the others.
