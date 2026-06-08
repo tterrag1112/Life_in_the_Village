@@ -1679,6 +1679,12 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                         // Preferred over the plain stroll; director is the fallback.
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .HobbyBehavior(),
+                        // Religion R3e-1 — solo private devotion for an unserved
+                        // minority believer. Below hobby (leisure flavor wins),
+                        // above the director (a niche practice beats the plain
+                        // stroll). Self-dormant for served majorities + atheists.
+                        new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                .SoloDevotionBehavior(),
                         // Liveliness L1 — idle director (anywhere-stroll / light
                         // rest), lowest IDLE priority: the catch-all so an NPC
                         // with nothing else to do still moves.

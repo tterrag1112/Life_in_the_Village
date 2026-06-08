@@ -18,8 +18,8 @@ import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
+import tterrag1112.life_in_the_village.Npc.Religion.FaithReconciliation;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteCapability;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteExecution;
@@ -498,10 +498,13 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         AABB box = new AABB(entity.blockPosition()).inflate(BLESS_RADIUS);
         for (TownspersonMob other : level.getEntitiesOfClass(TownspersonMob.class, box,
                 npc -> npc != entity && npc.isAlive())) {
-            other.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED,
-                    profile.scaleMood(FESTIVAL_BLESS_MOOD), gameTime);
-            String rel = other.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
-            other.getPiety().adjustBelief(rel, profile.scalePiety(FESTIVAL_BLESS_PIETY));
+            // R3e-1 — route through the single cross-faith reconciliation site.
+            // Fixes the prior bug where the crowd pulse deepened the ATTENDEE's
+            // own faith regardless of the festival's faith: a minority now gets
+            // a reduced mood + a syncretic drift toward the officiating faith.
+            FaithReconciliation.applyCommunalBenefit(other, frontReligionId,
+                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(FESTIVAL_BLESS_MOOD),
+                    profile.scalePiety(FESTIVAL_BLESS_PIETY), gameTime);
             other.getPiety().recordRiteAttendance(gameTime);
         }
     }

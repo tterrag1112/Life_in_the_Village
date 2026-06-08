@@ -2597,3 +2597,178 @@ in-game check.
 5. Confirm a faith does NOT fire another faith's grand festival; confirm secular
    festivals (HARVEST_FESTIVAL / VILLAGE_FAIR) are unaffected (not fronted).
 6. No NPC freeze (no new brain memory); rite officiation + fronting unaffected.
+
+---
+
+## R3e-1 — Minority practice ladder + cross-faith effect reconciliation (2026-06-08)
+
+First of the R3e multi-faith mini-arc. Pure behavior + effect-tuning: no
+building data, no placement, no travel (those are R3e-2 / R3e-3). Gives an
+**unserved minority** believer something to do (solo private devotion) and stops
+another faith's ceremony from deepening an attendee's *own* faith (cross-faith
+reconciliation).
+
+### Disposition (findings, verified on branch)
+
+- **PietyComponent** — confirmed: `primaryReligion()`, `primaryStrength()`,
+  `beliefIn`/`setBelief`/`adjustBelief` (clamped [0,1], multi-belief map →
+  syncretism support), `recordRiteAttendance`, `primaryTier()` (UNAFFILIATED
+  <0.2 / FAITHFUL <0.5 / DEVOUT <0.8 / PIOUS). The multi-belief map is exactly
+  the substrate the syncretic drift writes to.
+- **ReligionContent.villageReligionId** — confirmed the dominant/officiating
+  resolver (kingdom culture → `ReligionRegistry.dominantReligionFor`). This is
+  the served/unserved axis.
+- **RiteExecutor** — confirmed the village-wide communal handlers
+  (`handleHarvestThanksgiving`, `handleFeastDay`, `handleConsecration`,
+  `handleVigil`, `handleSignatureRite`) each iterate village NPCs and credited
+  `npc.primaryReligion()` (the ATTENDEE's own faith) regardless of the
+  officiating faith — the cross-faith bug, present in the communal handlers too,
+  not only R3d-1. The personal/life handlers (offering/tithe/coming-of-age/…)
+  correctly credit the participant's own faith (their OWN rite) — left untouched.
+- **PriestBehavior.festivalCrowdBless (R3d-1)** — confirmed it credited
+  `other.primaryReligion()` regardless of the festival's faith (the named bug)
+  and applies mood + a small piety pulse to nearby NPCs, capped by COUNT
+  (`FESTIVAL_MAX_PULSES`).
+- **Idle/hobby infra** — `HobbyBehavior` is the model: `BrainNavGuard`-gated,
+  resolves the spot once per pick via `HobbyLocationResolver.resolve(...)`
+  (HOME resolves to the NPC's house — the quiet spot), registered in
+  `Activity.IDLE` (LEISURE maps to IDLE) above the idle director. Cooldown idiom
+  is a `*_COOLDOWN` brain memory OR a field. Chose a **field** (no new brain
+  memory → no freeze-trap surface). `brainMemories()` confirmed unchanged.
+
+### Design
+
+- **One new helper class** `Npc/Religion/FaithReconciliation` holds BOTH canonical
+  tests (so neither is scattered):
+  - `faithBenefit(attendeeFaith, riteFaith)` → `FaithBenefit(moodMultiplier,
+    sameFaith)`. Same faith → 1.0 + own-faith credit; different/none →
+    `CROSS_FAITH_MOOD_MULT = 0.4` + no own-faith credit.
+  - `applyCommunalBenefit(npc, riteFaith, trigger, scaledMood, scaledPiety, now)`
+    — the SINGLE apply site every cross-faith effect routes through. Co-religionist
+    gets full mood + deepens own faith by `scaledPiety`; everyone else gets
+    `0.4×` mood and (when the rite carries piety) a `SYNCRETIC_DRIFT = 0.004`
+    nudge toward the OFFICIATING faith instead of any own-faith credit. Scaling
+    still comes from `RiteProfile` (passed in pre-scaled) — no parallel scaler.
+  - `isUnservedLocally(level, village, npc)` — the served/unserved predicate:
+    primary faith ≠ `villageReligionId`, OR no seated `VILLAGE_PRIEST` (mirrors
+    `RiteExecutor.findPriest`). Atheists (no primary) are not "unserved".
+- **`SoloDevotionBehavior`** (`Npc/Brain/Behaviors/`) — modelled on
+  `HobbyBehavior`: gate (not child + `BrainNavGuard` + field cadence throttle
+  `DEVOTION_INTERVAL = 6000t` + `primaryStrength ≥ 0.2` + `isUnservedLocally` +
+  HOME spot resolves), WALK→PRAY(100t)→DONE, reward = own-faith `+0.004` piety +
+  `+3` mood (`LETTER_FROM_FRIEND`, daily-stack-capped) + `recordRiteAttendance`
+  (upkeep so the unserved stay in practice). Cadence held in a **field**
+  (`lastDevotionTick`), reset in `stop()` on every run (completed OR aborted) so
+  a contended/unreachable spot can't retry per-tick.
+- **Registration** — IDLE, directly below `HobbyBehavior`, above
+  `IdleDirectorBehavior`. Leisure flavor (hobby) still wins; devotion beats the
+  plain stroll. Self-dormant for served majorities + atheists.
+
+### What shipped
+
+- `Npc/Religion/FaithReconciliation.java` (new) — `faithBenefit` + `FaithBenefit`
+  record + `applyCommunalBenefit` + `isUnservedLocally`.
+- `Npc/Religion/RiteExecutor.java` — 5 communal handlers (harvest, feast,
+  consecration, vigil, signature/grand) now call `applyCommunalBenefit` in place
+  of the open-coded mood + own-faith-credit pair.
+- `Npc/Brain/Behaviors/Production/PriestBehavior.java` — `festivalCrowdBless`
+  routes through `applyCommunalBenefit` (fixes the R3d-1 own-faith bug); dropped
+  the now-unused `ReligionRegistry` import.
+- `Npc/Brain/Behaviors/SoloDevotionBehavior.java` (new) — the unserved-minority
+  practice rung.
+- `Entities/custom/TownspersonMob.java` — registered `SoloDevotionBehavior` in
+  `Activity.IDLE` (below hobby, above the director).
+
+### Tie-In Audit
+
+1. **Upstream feeders** — spawn-time per-culture belief population (@0.3) is the
+   source of minorities; `villageReligionId` (kingdom culture) is the local-faith
+   axis. Both unchanged. The migrant/visitor path that mixes faiths is the
+   minority source and is unaffected (read-only here).
+2. **Downstream callers** — `RiteExecutor` communal effects + R3d-1 crowd pulse
+   are the only cross-faith credit sites; both now go through the one helper.
+   `PietyComponent` consumers (UI/debug, monthly-attendance) read the same map;
+   the syncretic drift writes a real belief entry so they stay consistent. Idle
+   selection: `SoloDevotionBehavior` self-gates (unserved + devout + cadence) and
+   sits below hobby, so it cannot starve hobby/director or trip the
+   work-satisfied/`NO_ACTIONABLE_WORK` idle logic (it's an IDLE-activity peer,
+   only active when the NPC is already idle).
+3. **Sibling systems** — R2b attendance: a minority may still physically attend
+   the dominant festival (attendance/override path unchanged) but now benefits
+   less (reduced mood, drift not own-faith). R3a/R3d profile tuning unchanged —
+   reconciliation layers on top of the scaled magnitudes. Liveliness idle
+   director unaffected (devotion sits above it; director is still the catch-all).
+4. **Exhaustive switches** — none touched. No new `Rite`/`EventType`/enum.
+
+### Simplification Sweep
+
+- Classes in scope: `FaithReconciliation` (new, 6 inbound call sites — 5
+  RiteExecutor handlers + 1 PriestBehavior), `SoloDevotionBehavior` (new, 1
+  registration site), `RiteExecutor` (edited), `PriestBehavior` (edited),
+  `TownspersonMob` (registration).
+- The cross-faith modifier is ONE helper hit from all six effect sites (not
+  copy-pasted) — confirmed by grep. Solo devotion reuses the existing
+  personal-behavior idiom (`HobbyBehavior` shape + `HobbyLocationResolver` +
+  `BrainNavGuard`), no new framework, no new brain memory.
+- No orphans created; no overlapping pair introduced (FaithReconciliation is the
+  consolidation point the prompt called for).
+
+### Deviations from prompt
+
+- The prompt named only `RiteExecutor` attendee effects + the R3d-1 crowd pulse
+  as cross-faith sites. I routed ALL five village-wide communal handlers
+  (incl. feast + vigil, which carry mood but no piety) through the helper for
+  one consistent reconciliation point — feast/vigil minorities now get the
+  reduced mood (no drift, since those rites grant no piety). Bounded, and avoids
+  a half-reconciled set of handlers.
+- Atheists (no primary faith): previously the communal handlers credited a
+  `SUNSTEAD` fallback at full strength. Now an atheist gets the reduced mood and
+  a small drift toward the officiating faith (acculturation) — i.e. the
+  unaffiliated slowly pick up the local faith rather than silently banking
+  Sunstead piety. This is the intended direction; flagged as a behavior change.
+- Solo-devotion cadence + reward live in a field, not a new `*_COOLDOWN` memory:
+  the only cost is the throttle resets on save/load (worst case one extra
+  devotion after a reload) — acceptable for a flavor behavior, and it keeps the
+  freeze-trap surface at zero.
+
+### Out-of-scope but flagged
+
+- Secondary shrines / building-faith / minority clergy → R3e-2. Today every
+  religious building serves the dominant faith, so "unserved locally" == minority
+  faith (the simplification the prompt specified). When R3e-2 adds per-building
+  faith, `isUnservedLocally` should consult the building's faith, not just the
+  village dominant.
+- Pilgrimage / travel to a served venue → R3e-3.
+- Solo devotion currently always uses HOME as the quiet spot; a dedicated
+  shrine/altar spot is an R3e-2 concern.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac runs). Static review done:
+grep-verified all six cross-faith sites route through `applyCommunalBenefit`, the
+three remaining own-faith `SUNSTEAD` fallbacks are personal rites (untouched),
+no new enum/exhaustive-switch, `brainMemories()` unchanged (no freeze trap),
+imports reconciled (`FaithReconciliation` added to PriestBehavior, unused
+`ReligionRegistry` dropped).
+
+### Smoke test (user-runnable)
+
+1. In a Sunstead village, drop a minority believer (a Tidecall NPC, Tidecall
+   belief ~0.3). When idle/leisure and the village has a priest, confirm they
+   periodically walk home and perform "Private devotion" (no officiant) — their
+   Tidecall belief ticks up slowly and mood lifts a little.
+2. Run a Sunstead grand festival (or any holy day). Confirm the Tidecall NPC, if
+   present at the venue, gets a REDUCED mood bump and a tiny SUNSTEAD drift (not
+   Tidecall piety), while Sunstead NPCs get the full mood + their Sunstead faith
+   deepens. (Check the piety/belief debug readout before/after.)
+3. Confirm a served Sunstead majority NPC behaves exactly as in R3d — full
+   festival benefit, and they do NOT perform solo devotion.
+4. Confirm solo devotion is low-priority: an NPC with real work or an active
+   social/hobby task does that instead; devotion only fills genuine idle time,
+   on a long cadence (not every tick).
+5. Vacate the VILLAGE_PRIEST office in a single-faith Sunstead village; confirm
+   devout Sunstead NPCs now also count as "unserved" and perform solo devotion
+   (own-faith upkeep while the seat is empty). Re-seat a priest → devotion stops.
+6. No NPC freeze (no new brain memory); rite officiation, fronting, and R2b
+   attendance unaffected.

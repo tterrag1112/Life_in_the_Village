@@ -420,9 +420,11 @@ public final class RiteExecutor {
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
-            npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(12), now);
-            String npcReligion = npc.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
-            npc.getPiety().adjustBelief(npcReligion, profile.scalePiety(0.02f));
+            // R3e-1 — reconcile across faiths: co-religionists deepen their own
+            // faith at full mood; minorities get a reduced mood + a syncretic
+            // drift toward the officiating faith (no own-faith credit).
+            FaithReconciliation.applyCommunalBenefit(npc, religionId,
+                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(12), profile.scalePiety(0.02f), now);
             npc.getPiety().recordRiteAttendance(now);
         }
         // Treasury bonus — small gesture from the village to mark the
@@ -443,7 +445,10 @@ public final class RiteExecutor {
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
-            npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(8), now);
+            // R3e-1 — mood-only feast; minorities still attend but benefit less
+            // (no piety either way, so no syncretic drift here).
+            FaithReconciliation.applyCommunalBenefit(npc, religionId,
+                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(8), 0f, now);
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;
@@ -470,9 +475,9 @@ public final class RiteExecutor {
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
-            npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), now);
-            String npcReligion = npc.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
-            npc.getPiety().adjustBelief(npcReligion, profile.scalePiety(0.03f));
+            // R3e-1 — cross-faith reconciliation (see handleHarvestThanksgiving).
+            FaithReconciliation.applyCommunalBenefit(npc, religionId,
+                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), profile.scalePiety(0.03f), now);
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;
@@ -491,7 +496,10 @@ public final class RiteExecutor {
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
-            npc.getMood().applyWithRawMagnitude(MoodTrigger.LETTER_FROM_FRIEND, profile.scaleMood(8), now);
+            // R3e-1 — mood-only vigil; cross-faith attendees get the reduced
+            // comfort (no piety either way).
+            FaithReconciliation.applyCommunalBenefit(npc, religionId,
+                    MoodTrigger.LETTER_FROM_FRIEND, profile.scaleMood(8), 0f, now);
             npc.getPiety().recordRiteAttendance(now);
         }
         return RiteOutcome.SUCCESSFUL;
@@ -533,9 +541,11 @@ public final class RiteExecutor {
         for (var entity : level.getEntities().getAll()) {
             if (!(entity instanceof TownspersonMob npc)) continue;
             if (!npc.getAssignedVillageName().filter(n -> n.equals(name)).isPresent()) continue;
-            npc.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), now);
-            String npcReligion = npc.getPiety().primaryReligion().orElse(ReligionRegistry.SUNSTEAD);
-            npc.getPiety().adjustBelief(npcReligion, profile.scalePiety(0.03f));
+            // R3e-1 — cross-faith reconciliation (see handleHarvestThanksgiving).
+            // The relationship "binding ring" below still includes everyone at
+            // the festival regardless of faith (it is social, not devotional).
+            FaithReconciliation.applyCommunalBenefit(npc, religionId,
+                    MoodTrigger.FESTIVAL_ATTENDED, profile.scaleMood(10), profile.scalePiety(0.03f), now);
             npc.getPiety().recordRiteAttendance(now);
             attendees.add(npc);
         }
