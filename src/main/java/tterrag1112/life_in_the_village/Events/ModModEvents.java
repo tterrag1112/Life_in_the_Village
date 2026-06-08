@@ -334,6 +334,12 @@ public class ModModEvents {
                 tterrag1112.life_in_the_village.Networking.OpenTempleScreenPacket.CODEC,
                 tterrag1112.life_in_the_village.Networking.OpenTempleScreenPacket::handle);
 
+        // Religion R9c: read-only player-religion + calendar screen open packet.
+        registrar.playToClient(
+                tterrag1112.life_in_the_village.Networking.OpenPlayerReligionPacket.TYPE,
+                tterrag1112.life_in_the_village.Networking.OpenPlayerReligionPacket.CODEC,
+                tterrag1112.life_in_the_village.Networking.OpenPlayerReligionPacket::handle);
+
     }
 
     @SubscribeEvent

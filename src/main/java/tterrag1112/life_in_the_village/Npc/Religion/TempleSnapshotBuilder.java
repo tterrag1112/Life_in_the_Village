@@ -36,7 +36,6 @@ public final class TempleSnapshotBuilder {
     private static final double SCAN_INFLATE = 32;
     /** Number of upcoming holy days to surface. */
     private static final int MAX_UPCOMING = 3;
-    private static final long DAY = 24000L;
 
     public static OpenTempleScreenPacket build(ServerLevel level, Village village,
                                                Building building) {
@@ -131,31 +130,15 @@ public final class TempleSnapshotBuilder {
                         && origin.distSqr(r.location()) <= CONSECRATION_RADIUS_SQ);
     }
 
-    /** The next few holy days for the faith, as "Name — in N day(s)" / "today". */
+    /** The next few holy days for the faith, as "Name — in N day(s)" / "today",
+     *  via the shared {@link CalendarView} day math (R9c). */
     private static List<String> upcomingHolyDays(ServerLevel level, Religion religion) {
         List<String> out = new ArrayList<>();
-        if (religion == null) return out;
-        ReligiousCalendar cal = religion.calendar();
-        if (cal.holyDaysByName().isEmpty()) return out;
-
-        int today = (int) ((level.getGameTime() / DAY) % ReligiousCalendar.DAYS_PER_YEAR);
-        List<int[]> byDelta = new ArrayList<>();     // [delta, labelIndex]
-        List<String> labels = new ArrayList<>();
-        for (var e : cal.holyDaysByName().entrySet()) {
-            Integer eff = cal.effectiveDayOfYear(e.getKey());
-            if (eff == null) continue;
-            int delta = ((eff - today) % ReligiousCalendar.DAYS_PER_YEAR
-                    + ReligiousCalendar.DAYS_PER_YEAR) % ReligiousCalendar.DAYS_PER_YEAR;
-            byDelta.add(new int[]{delta, labels.size()});
-            labels.add(prettyLabel(e.getKey()));
-        }
-        byDelta.sort((a, b) -> Integer.compare(a[0], b[0]));
-        for (int i = 0; i < byDelta.size() && out.size() < MAX_UPCOMING; i++) {
-            int delta = byDelta.get(i)[0];
-            String label = labels.get(byDelta.get(i)[1]);
-            String when = delta == 0 ? "today"
-                    : "in " + delta + (delta == 1 ? " day" : " days");
-            out.add(label + " — " + when);
+        for (CalendarView.Entry e : CalendarView.upcomingFor(religion, level.getGameTime())) {
+            if (out.size() >= MAX_UPCOMING) break;
+            String when = e.daysAway() == 0 ? "today"
+                    : "in " + e.daysAway() + (e.daysAway() == 1 ? " day" : " days");
+            out.add(prettyLabel(e.dayLabel()) + " — " + when);
         }
         return out;
     }

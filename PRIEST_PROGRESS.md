@@ -5533,3 +5533,173 @@ command is wired into `/religion`.
 5. **Numbers track R4.** Seed the temple treasury (or attend rites to raise
    piety), wait a day, re-run the command, and confirm Treasury / surplus /
    health / congregation move with the underlying R4/R4c systems.
+
+---
+
+## R9c — player piety + religious calendar view (2026-06-08)
+
+### Disposition (findings)
+
+The prompt asks for a **read-only player-facing screen** with two sections —
+the player's own religious standing, and an upcoming religious-calendar list —
+opened via a `/religion me`-style command (testable). Investigation on-branch:
+
+- **Player piety + pledge.** `RiteSavedData` holds the player-side state:
+  `getPlayerPiety(UUID)` → `Optional<PietyComponent>` (faith / strength / tier /
+  beliefs / `ritesAttendedThisMonth` / `meetsMonthlyAttendance`, same shape R9a
+  reads for NPCs), and the R4d-1 auto-tithe pledge map via `isAutoTithe(UUID)` +
+  `autoTitheTemples().get(UUID)` → the temple building id. The pledge temple's
+  faith resolves through `BuildingFaith.resolveFaith(level, village, building)`
+  (finding the owning village by scanning `getAllVillages()` for the building
+  id), falling back to `Building.getPatronFaith()`.
+- **Calendar axis.** Every faith's holy days, signature-rite day, and
+  grand-festival day are **named entries** in its `ReligiousCalendar`
+  (`holyDaysByName`); the schedulers (`VillageEventScheduler.checkSignatureRite`
+  / `checkGrandFestival` / `checkCalendarVigil`, and the per-faith signature
+  day names "Spring Equinox" / "First Threading" / "First Catch" / "Ancestor
+  Day") all resolve their fire-day via
+  `religion.calendar().effectiveDayOfYear(name)` on the `% 365` liturgical axis
+  (`(gameTime/24000) % DAYS_PER_YEAR`) — **NOT** `SeasonTracker`'s 96-day
+  seasonal axis. So iterating the named calendar days per faith captures every
+  calendar event, exactly as the existing `/religion calendar <village>` command
+  already does.
+- **Shared computation.** Factored `Npc/Religion/CalendarView` as the single
+  source of the `% 365` day math (`dayOfYear`, `upcomingFor(religion)`,
+  `upcomingAcross(religions, max)` — soonest-first), and routed `/religion
+  calendar` AND the R9b temple builder's `upcomingHolyDays` through it (the R9b
+  copy is now deleted), so the day math lives in exactly one place.
+- **Screen.** `Chrome.COMPACT` (320×240), no sidebar: a fixed top piety block
+  (faith line, piety `NeedMeter.bar` + tier `Pill`, "Piety NN%", a one-line
+  syncretic belief summary, tithe-pledge line, observance line) over a
+  `ScrollList<CalendarRow>` calendar (today highlighted, own-faith starred), and
+  a Close button. Mirrors the `TempleScreen` render order (dim → Chrome →
+  content → `super.render`).
+
+### What shipped
+
+- **`Npc/Religion/CalendarView.java`** (new) — the shared `% 365` calendar
+  helper (`Entry` record + `dayOfYear` + `upcomingFor` + `upcomingAcross`).
+- **`Networking/OpenPlayerReligionPacket.java`** (new) — the data-carrying Open
+  packet: faith (name/deity/strength/tier/syncretic beliefs), tithe pledge
+  (has/temple/faith), observance (rites this month + observant flag), the
+  current day-of-year, and a `List<CalendarRow>` (faith / day label / day-of-year
+  / days-away / own-faith). Manual `StreamCodec.of`; `handle` opens the screen.
+- **`Npc/Religion/PlayerReligionSnapshotBuilder.java`** (new) — pure-read server
+  gatherer; reads the player `PietyComponent` + pledge from `RiteSavedData`, the
+  pledge temple's faith, and the merged upcoming calendar across all faiths via
+  `CalendarView`. Graceful for an unaffiliated player (empty faith, "Make
+  offerings…" hint on the screen).
+- **`Gui/PlayerReligionScreen.java`** (new) — the read-only screen + scrolling
+  calendar, `Gui.Framework` primitives only.
+- **Refactors:** `/religion calendar` (`ReligionDebugCommand.handleCalendar`)
+  and `TempleSnapshotBuilder.upcomingHolyDays` now call `CalendarView` (deleted
+  the duplicated day math + the now-unused `DAY` field / `ReligiousCalendar`,
+  `Map` imports).
+- **Wiring:** registered `OpenPlayerReligionPacket` (`playToClient`) in
+  `ModModEvents`; added the `/religion me` subcommand.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `RiteSavedData` (player piety + pledge map),
+   `ReligiousCalendar` via the new `CalendarView` (day logic), `ReligionRegistry`
+   (`all()` + `find`), `BuildingFaith.resolveFaith` (pledge temple faith). All
+   read-only; the builder mutates nothing — notably it uses `getPlayerPiety`
+   (Optional) NOT `getOrCreatePlayerPiety`, so merely viewing never creates a
+   piety record for an unaffiliated player.
+2. **Downstream callers.** New: `OpenPlayerReligionPacket.handle` (client
+   setScreen), `PlayerReligionScreen` (renderer), `/religion me` (server send),
+   the `ModModEvents` registration. `CalendarView` has three inbound callers
+   (`/religion calendar`, `TempleSnapshotBuilder`, `PlayerReligionSnapshotBuilder`)
+   — all verified to pass a `Religion` + `gameTime` and consume the sorted
+   `Entry` list.
+3. **Sibling systems.** `/religion calendar`'s output is now soonest-first
+   (previously insertion order) since it shares `CalendarView` — same dates,
+   same "(N days away)" text, improved ordering (flagged). R9a/R9b piety/faith
+   presentation reused verbatim (primary tier `displayName`, syncretic
+   `beliefs.size() > 1` rule). The R4d-1 pledge map is read through its existing
+   accessors; no tithe behavior touched.
+4. **Exhaustive switches.** No new enum; no `switch` added over any enum (the
+   only branching is `Optional`/`if`). Confirmed.
+
+### Simplification Sweep
+
+- **GUI/religion classes in scope + inbound callers:** `CalendarView` (3 —
+  command, temple builder, player builder), `OpenPlayerReligionPacket` (2 —
+  register + `/religion me`), `PlayerReligionSnapshotBuilder` (1 — the command),
+  `PlayerReligionScreen` (1 — the packet handler). No orphans created.
+- **Duplication retired:** the `% 365` upcoming-day computation existed inline in
+  both `/religion calendar` and R9b's `TempleSnapshotBuilder.upcomingHolyDays`;
+  both now delegate to the single `CalendarView` — exactly the consolidation the
+  prompt's sweep called for. (This continues R9b's `ClergyTitles` precedent of
+  retiring a duplication as part of the same change.)
+- The piety block reuses the R9a presentation shape (bar + tier pill + "Piety
+  NN%" + syncretic summary) rather than a parallel one.
+
+### Deviations from prompt
+
+- **Open trigger is `/religion me`** (the prompt's suggested form); no item/key
+  binding exists, and a command is the testable path the prompt endorsed.
+- **The calendar lists ALL four faiths' named days** (capped at 24, scrollable),
+  with the player's own-faith entries starred + today highlighted — the prompt
+  allowed "showing the four faiths' headline days is fine for testing" and the
+  player has no single village context when standing anywhere. Scoping to the
+  local village's faith(s) is a flagged refinement.
+- **`/religion calendar` ordering changed** from calendar-map insertion order to
+  soonest-first (a side effect of sharing `CalendarView`). Same data + text;
+  arguably an improvement — flagged rather than special-cased.
+- **Calendar "kind" (holy day vs signature rite vs grand festival) is not
+  labelled** — all named days render uniformly with their countdown. The kinds
+  share the same calendar source and the same `effectiveDayOfYear` fire-day, so
+  distinguishing them would require re-deriving the scheduler's per-faith
+  signature/grand-festival name matching; deferred (flagged) to keep the helper
+  a thin single-source.
+
+### Out-of-scope but flagged
+
+- **Participation verbs** (make offering / pledge tithe / cancel pledge) — the
+  prompt scoped this read-only and assigns verbs to R9d; the layout leaves the
+  Close-button row free for a later action pass.
+- **A live sync** (one-shot snapshot at open; re-run `/religion me` to refresh) —
+  a 5s sync packet is a clean follow-up if live piety-growth tracking is wanted.
+- **Per-village calendar scoping** + **labelling each entry's kind** (holy day /
+  signature / grand festival) as described above.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: accessor signatures confirmed by grep (`getPlayerPiety`,
+`isAutoTithe`/`autoTitheTemples`, `PietyComponent` accessors, `ReligionRegistry.
+all()`/`find`, `BuildingFaith.resolveFaith`, `Building.getPatronFaith`/`getName`,
+`getAllVillages`/`getBuildingById`, `ReligiousCalendar.effectiveDayOfYear`/
+`holyDaysByName`/`DAYS_PER_YEAR`); the packet encode/decode field order is
+consistent (10 scalar/list fields + the nested `CalendarRow` 5-field rows);
+`PlayerReligionScreen` uses only public `Gui.Framework` primitives and the
+correct NeoForge 1.21 event signatures (`mouseScrolled(d,d,d,d)` /
+`mouseClicked(MouseButtonEvent,boolean)`, delegating to `ScrollList`'s
+`mouseScrolled(d,d,d)` / `mouseClicked(d,d,int)`); `CalendarView` is the sole
+`% 365` computation and its three callers consume it; the packet is registered
+and `/religion me` is wired.
+
+### Smoke test (user-runnable)
+
+1. **Affiliated player grows.** Make offerings / attend rites to raise your
+   piety, then run `/religion me`. Confirm the screen shows your primary faith
+   (+ deity), a filled piety bar + tier pill (UNAFFILIATED→FAITHFUL→DEVOUT→
+   PIOUS), "Piety NN%", and that re-running after more offerings shows the bar +
+   tier climbing.
+2. **Tithe pledge (R4d-1).** Opt into auto-tithing a temple, re-run `/religion
+   me`, and confirm "Tithing to <temple> (<faith>)"; opt out and confirm "No
+   tithe pledge".
+3. **Observance.** Attend rites and confirm "N rite(s) this month — observant"
+   appears once you cross the monthly threshold.
+4. **Calendar countdowns on the 365 axis.** Confirm the calendar lists upcoming
+   named days per faith with "in N days" / "today", soonest-first, your own
+   faith starred and today's row highlighted. Cross-check a couple against
+   `/religion calendar <village>` (same dates) and against when a festival
+   actually fires (e.g. wait until a "today" entry and confirm that faith's
+   event/rite triggers that day). Confirm the header day-of-year advances by 1
+   per in-game day and wraps at 365.
+5. **Graceful unaffiliated.** As a brand-new player with no piety, run `/religion
+   me`: confirm "Unaffiliated" + the offerings hint, no pledge, no crash, and
+   the calendar still lists the faiths' days (nothing starred).

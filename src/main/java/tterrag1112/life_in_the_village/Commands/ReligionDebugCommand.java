@@ -14,14 +14,12 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Religion.Religion;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligiousCalendar;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteScheduler;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * {@code /religion} debug subcommands per spec line 224.
@@ -88,7 +86,26 @@ public final class ReligionDebugCommand {
                 // religious building in the village at the executor's position.
                 .then(Commands.literal("temple")
                         .executes(ReligionDebugCommand::handleTemple))
+                // R9c — open the read-only player-religion + calendar screen.
+                .then(Commands.literal("me")
+                        .executes(ReligionDebugCommand::handleMe))
         );
+    }
+
+    // ── /religion me ───────────────────────────────────────────────────────
+
+    private static int handleMe(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) {
+            src.sendFailure(Component.literal("Run as a player."));
+            return 0;
+        }
+        net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                tterrag1112.life_in_the_village.Npc.Religion.PlayerReligionSnapshotBuilder
+                        .build(player, level));
+        return 1;
     }
 
     // ── /religion temple ──────────────────────────────────────────────────
@@ -362,17 +379,15 @@ public final class ReligionDebugCommand {
             return 0;
         }
         long now = level.getGameTime();
-        int today = (int) ((now / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
+        int today = tterrag1112.life_in_the_village.Npc.Religion.CalendarView.dayOfYear(now);
         StringBuilder sb = new StringBuilder();
         sb.append("§e=== ").append(village.getName()).append(" — ")
                 .append(religion.displayName()).append(" calendar ===");
         sb.append("\n§7Today is day-of-year §f").append(today);
-        for (Map.Entry<String, Integer> e : religion.calendar().holyDaysByName().entrySet()) {
-            int d = ((e.getValue() % ReligiousCalendar.DAYS_PER_YEAR) + ReligiousCalendar.DAYS_PER_YEAR)
-                    % ReligiousCalendar.DAYS_PER_YEAR;
-            int days = (d - today + ReligiousCalendar.DAYS_PER_YEAR) % ReligiousCalendar.DAYS_PER_YEAR;
+        for (var entry : tterrag1112.life_in_the_village.Npc.Religion.CalendarView
+                .upcomingFor(religion, now)) {
             sb.append(String.format(Locale.ROOT, "%n  §a%-22s§r day §f%d§7 (%d days away)",
-                    e.getKey(), d, days));
+                    entry.dayLabel(), entry.dayOfYear(), entry.daysAway()));
         }
         src.sendSuccess(() -> Component.literal(sb.toString()).withStyle(ChatFormatting.WHITE), false);
         return 1;
