@@ -125,7 +125,64 @@ public final class ReligionDebugCommand {
                                             return b.buildFuture();
                                         })
                                         .executes(ReligionDebugCommand::handleMiracleCast))))
+
+                // Divine Layer V4 — /religion sacrilege <faith> <amount>  (drive
+                // displeasure for testing curses/wrath without committing a crime).
+                .then(Commands.literal("sacrilege")
+                        .then(Commands.argument("religionId", StringArgumentType.word())
+                                .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 200f))
+                                        .executes(ReligionDebugCommand::handleSacrilege))))
+
+                // Divine Layer V5 — /religion theophany favour|wrath  (force-fire the
+                // manifestation for the executing player's primary faith, for testing).
+                .then(Commands.literal("theophany")
+                        .then(Commands.literal("favour")
+                                .executes(ctx -> handleTheophany(ctx, false)))
+                        .then(Commands.literal("wrath")
+                                .executes(ctx -> handleTheophany(ctx, true))))
         );
+    }
+
+    private static int handleTheophany(CommandContext<CommandSourceStack> ctx, boolean wrath) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String faith = tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData.get(level)
+                .getPlayerPiety(player.getUUID())
+                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.PietyComponent::primaryReligion)
+                .orElse(null);
+        if (faith == null) { src.sendFailure(Component.literal("You have no faith.")); return 0; }
+        long now = level.getGameTime();
+        if (wrath) {
+            tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany
+                    .fireWrath(level, player, faith, now);
+        } else {
+            tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany
+                    .fireFavour(level, player, faith, now);
+        }
+        return 1;
+    }
+
+    private static int handleSacrilege(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String fid = StringArgumentType.getString(ctx, "religionId");
+        if (ReligionRegistry.get(fid) == null) {
+            src.sendFailure(Component.literal("Unknown religion " + fid));
+            return 0;
+        }
+        float amount = FloatArgumentType.getFloat(ctx, "amount");
+        long now = level.getGameTime();
+        tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                .offend(level, player.getUUID(), fid, amount, now);
+        float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                .current(level, player.getUUID(), fid, now);
+        src.sendSuccess(() -> Component.literal(
+                "§cSacrilege§7 against " + fid + " — favour now §f" + Math.round(fav)), false);
+        return 1;
     }
 
     // ── /religion miracle ────────────────────────────────────────────────────

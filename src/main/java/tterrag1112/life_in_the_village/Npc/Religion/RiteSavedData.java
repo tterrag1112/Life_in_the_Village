@@ -60,7 +60,16 @@ public class RiteSavedData extends SavedData {
                     com.mojang.serialization.Codec.unboundedMap(
                                     UUID_STRING_KEY, PlayerCalling.CODEC)
                             .optionalFieldOf("playerCalling", Map.of())
-                            .forGetter(d -> Map.copyOf(d.playerCalling))
+                            .forGetter(d -> Map.copyOf(d.playerCalling)),
+                    // Divine Layer V5 — theophany milestones: playerId → ("faith|pole"
+                    // → last-fired tick) so a manifestation is rare (long cooldown).
+                    com.mojang.serialization.Codec.unboundedMap(
+                                    UUID_STRING_KEY,
+                                    com.mojang.serialization.Codec.unboundedMap(
+                                            com.mojang.serialization.Codec.STRING,
+                                            com.mojang.serialization.Codec.LONG))
+                            .optionalFieldOf("playerTheophany", Map.of())
+                            .forGetter(d -> Map.copyOf(d.playerTheophany))
             ).apply(i, RiteSavedData::fromCodec)));
 
     private final Map<UUID, RiteExecution>     rites           = new HashMap<>();
@@ -68,6 +77,7 @@ public class RiteSavedData extends SavedData {
     private final Map<UUID, UUID>              autoTitheTemple = new HashMap<>();
     private final Map<UUID, PlayerFavour>      playerFavour    = new HashMap<>();
     private final Map<UUID, PlayerCalling>     playerCalling   = new HashMap<>();
+    private final Map<UUID, Map<String, Long>> playerTheophany = new HashMap<>();
 
     public RiteSavedData() {}
 
@@ -75,13 +85,16 @@ public class RiteSavedData extends SavedData {
                                            Map<UUID, PietyComponent> playerPiety,
                                            Map<UUID, UUID> autoTitheTemple,
                                            Map<UUID, PlayerFavour> playerFavour,
-                                           Map<UUID, PlayerCalling> playerCalling) {
+                                           Map<UUID, PlayerCalling> playerCalling,
+                                           Map<UUID, Map<String, Long>> playerTheophany) {
         RiteSavedData d = new RiteSavedData();
         if (rites != null) for (RiteExecution r : rites) d.rites.put(r.riteId(), r);
         if (playerPiety != null) d.playerPiety.putAll(playerPiety);
         if (autoTitheTemple != null) d.autoTitheTemple.putAll(autoTitheTemple);
         if (playerFavour != null) d.playerFavour.putAll(playerFavour);
         if (playerCalling != null) d.playerCalling.putAll(playerCalling);
+        if (playerTheophany != null)
+            playerTheophany.forEach((k, v) -> d.playerTheophany.put(k, new HashMap<>(v)));
         return d;
     }
 
@@ -205,6 +218,25 @@ public class RiteSavedData extends SavedData {
 
     public void clearPlayerCalling(UUID playerId) {
         if (playerCalling.remove(playerId) != null) setDirty();
+    }
+
+    // ── Theophany milestones (Divine Layer V5) ───────────────────────────────
+
+    /** Last tick a {@code key} ("faith|pole") theophany fired for the player, or 0. */
+    public long getTheophanyTick(UUID playerId, String key) {
+        Map<String, Long> m = playerTheophany.get(playerId);
+        return m == null ? 0L : m.getOrDefault(key, 0L);
+    }
+
+    public void setTheophanyTick(UUID playerId, String key, long tick) {
+        playerTheophany.computeIfAbsent(playerId, k -> new HashMap<>()).put(key, tick);
+        setDirty();
+    }
+
+    /** The player's theophany ledger ("faith|pole" → tick), read-only. */
+    public Map<String, Long> theophanies(UUID playerId) {
+        Map<String, Long> m = playerTheophany.get(playerId);
+        return m == null ? Map.of() : java.util.Collections.unmodifiableMap(new HashMap<>(m));
     }
 
     // ── Player auto-tithe opt-in (R4d-1) ─────────────────────────────────────

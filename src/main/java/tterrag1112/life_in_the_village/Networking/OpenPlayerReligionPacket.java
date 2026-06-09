@@ -51,7 +51,10 @@ public record OpenPlayerReligionPacket(
         List<String> miracleSummary,
 
         // Divine Layer V3 — the active divine calling, or "" if none
-        String activeCalling
+        String activeCalling,
+
+        // Divine Layer V5 — last theophany witnessed ("✦ Sun-Mother's glory"), or ""
+        String theophany
 ) implements CustomPacketPayload {
 
     /** One upcoming calendar event for the list. {@code ownFaith} = the player's
@@ -104,6 +107,7 @@ public record OpenPlayerReligionPacket(
                         for (String s : pkt.miracleSummary()) buf.writeUtf(s);
 
                         buf.writeUtf(pkt.activeCalling());
+                        buf.writeUtf(pkt.theophany());
                     },
                     buf -> {
                         String religionName = buf.readUtf();
@@ -142,12 +146,14 @@ public record OpenPlayerReligionPacket(
                         for (int i = 0; i < miracleCount; i++) miracleSummary.add(buf.readUtf());
 
                         String activeCalling = buf.readUtf();
+                        String theophany = buf.readUtf();
 
                         return new OpenPlayerReligionPacket(
                                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                                 hasPledge, pledgeTemple, pledgeFaith,
                                 ritesThisMonth, meetsMonthly,
-                                today, calendar, favourSummary, miracleSummary, activeCalling);
+                                today, calendar, favourSummary, miracleSummary, activeCalling,
+                                theophany);
                     });
 
     @Override

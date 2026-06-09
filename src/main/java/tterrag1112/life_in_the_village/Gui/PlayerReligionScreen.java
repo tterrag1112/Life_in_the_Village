@@ -66,8 +66,10 @@ public class PlayerReligionScreen extends Screen {
         int x = panelX + PADDING;
         int bw = W - PADDING * 2;
 
-        // ── Title ────────────────────────────────────────────────────────────
-        g.drawString(font, "Your Religion", x, panelY + PADDING, BookScreenColors.DARK, false);
+        // ── Title (+ a V5 theophany mark, when one has been witnessed) ───────
+        String title = "Your Religion";
+        if (!data.theophany().isEmpty()) title += "    " + data.theophany();
+        g.drawString(font, title, x, panelY + PADDING, BookScreenColors.DARK, false);
 
         // ── Your faith ───────────────────────────────────────────────────────
         if (data.religionName().isEmpty()) {

@@ -101,9 +101,19 @@ public final class PlayerReligionSnapshotBuilder {
         List<String> favourSummary = new ArrayList<>();
         for (String faithId : favourFaiths) {
             float fav = DivineFavour.current(level, playerId, faithId, now);
-            if (fav >= 1f) {
-                String fname = ReligionRegistry.find(faithId)
-                        .map(Religion::displayName).orElse(faithId);
+            String fname = ReligionRegistry.find(faithId)
+                    .map(Religion::displayName).orElse(faithId);
+            // V4 — the favour line is the favour/displeasure counter (signed).
+            DivineFavour.DispleasureTier dt = DivineFavour.displeasureOf(fav);
+            if (dt != DivineFavour.DispleasureTier.NONE) {
+                String tag = switch (dt) {
+                    case OMEN  -> "angered";
+                    case CURSE -> "cursed";
+                    case WRATH -> "WRATH";
+                    case NONE  -> "";
+                };
+                favourSummary.add(fname + " " + Math.round(fav) + " (" + tag + ")");
+            } else if (fav >= 1f) {
                 favourSummary.add(fname + " " + Math.round(fav));
             }
         }
@@ -131,11 +141,26 @@ public final class PlayerReligionSnapshotBuilder {
                 })
                 .orElse("");
 
+        // ── Last theophany witnessed (Divine Layer V5) ───────────────────────
+        String theophany = "";
+        long bestTick = -1L;
+        String bestKey = null;
+        for (var e : rites.theophanies(playerId).entrySet()) {
+            if (e.getValue() > bestTick) { bestTick = e.getValue(); bestKey = e.getKey(); }
+        }
+        if (bestKey != null) {
+            String[] parts = bestKey.split("\\|");
+            String deity = ReligionRegistry.find(parts[0])
+                    .map(r -> r.deity().orElse(r.displayName())).orElse(parts[0]);
+            boolean wrath = parts.length > 1 && parts[1].equals("wrath");
+            theophany = "✦ " + deity + (wrath ? "'s wrath" : "'s glory");
+        }
+
         return new OpenPlayerReligionPacket(
                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                 hasPledge, pledgeTempleName, pledgeFaithName,
                 ritesThisMonth, meetsMonthly,
-                today, calendar, favourSummary, miracleSummary, activeCalling);
+                today, calendar, favourSummary, miracleSummary, activeCalling, theophany);
     }
 
     /** The village owning {@code buildingId}, if any. */
