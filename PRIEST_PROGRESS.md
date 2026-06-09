@@ -6793,3 +6793,168 @@ table + amenity scan are each single-sourced now.
    a monk once it's a producer.
 6. **No regressions.** HOME family production + the profession behaviors are
    unchanged; nothing crashes (the daily pass is guarded).
+
+---
+
+## R6d — mealtime distribution + monastery economy (2026-06-09)
+
+### Disposition (findings)
+
+Closes the monk production → consumption → economy loop. R6b/R6c made monks
+produce by skill into the monastery shared store and self-organize around needs.
+R6d makes the monastery a living, self-sustaining community: monks eat from the
+store, the monastery derives + fills a food need, and surplus monastic goods fund
+the inputs it can't make.
+
+1. **Eating.** `EatMealBehavior` is pure item-removal (no hunger stat) gated on
+   `entity.hasHome()`, sourcing food from `getHomeBuilding` = the family house
+   (then market/bakery). A monk has **no household**, so it never ate. The clean
+   redirect (no forked eating system): make `getHomeBuilding` return the **monastery**
+   (the monk's assigned MONASTERY/ABBEY) for a MONK — then every existing
+   food-source path (`homeHasFood`, walk-home, `tryEatFromHome` which consumes via
+   `FoodValueHelper.isFood` + `stack.shrink`) sources from the **shared store** —
+   and relax the `hasHome` gate to admit a monk whose food-home exists.
+2. **Food need.** Added a **BAKING → bread** monastic craft to `MonasticCrafts`
+   (`WHEAT_TO_BREAD` + a furnace/smoker amenity, target 32). A monk with BAKING +
+   the amenity bakes bread (R6c need-priority); the developer steers idle initiates
+   toward BAKING when the monastery has a furnace/smoker + is short on bread.
+   (Target is a fixed buffer; consumption scales the depletion rate with the monk
+   count; the economy buys bread/wheat when production can't keep up.)
+3. **Economy = the monastery's own `BuildingEconomy`** (the shared pool;
+   `getOrCreateBuildingEconomy(monasteryId)` — exactly the R4 temple pattern, but
+   monasteries are `isRiteVenue`-excluded (R6a) so they are OUTSIDE
+   `TempleProsperity`/decay). Surplus-sell reuses the workshop sell formula
+   (`VillageEconomy.getBasePrice × 0.8` + `postListing`) but credits the pool
+   (`depositRevenue`) rather than chest coins (so the buy path can spend it).
+   Input procurement reuses the `ChannelRouter` path (`TradeIntent.buy` →
+   `findBestChannel` → `channel.execute`), funded from the pool. A fresh monastery
+   is bootstrap-seeded via `BuildingStarterTable` so it can buy its first inputs.
+
+### What shipped
+
+- **`Npc/Brain/Behaviors/EatMealBehavior.java`** — a monk's `getHomeBuilding`
+  resolves to its monastery (so it eats from the shared store); the `hasHome` gate
+  admits a monk with a food-home. Non-monks unchanged (the redirect is
+  `Profession.MONK`-gated; the gate change is a no-op for them).
+- **`Npc/Religion/MonasticCrafts.java`** — added the BAKING → bread food craft
+  (first row; food is primary).
+- **`Npc/Religion/MonasteryEconomy.java`** (new) — the daily per-village economy
+  pass: per MONASTERY/ABBEY with monks, debit `MONASTERY_DAILY_UPKEEP` (+ a
+  non-decaying solvency signal), **sell surplus** monastic goods (above target,
+  capped) to market crediting the pool, **buy inputs** for producer-backed needed
+  crafts (wheat for bread, honeycomb/string for candles, paper for books, …) from
+  the pool via `ChannelRouter`, and a **food safety net** (buy bread directly when
+  the store dips below a survival floor and there's no baker). The agent monk's
+  wallet is a transient conduit, fully restored on failure/leftover (mirrors
+  `executeBuy`).
+- **`Npc/Religion/MonasteryDeveloper.java`** — `monksOf` made package-visible (the
+  economy reuses the same scan).
+- **`Npc/Religion/RiteScheduler.java`** — step 8 of `dailyTick` runs
+  `MonasteryEconomy.tickVillage` per village (guarded).
+- **`Village/Economy/EconomicBalance.java`** — `MONASTERY_DAILY_UPKEEP = 4`.
+- **`Village/Economy/BuildingStarterTable.java`** — MONASTERY (120) / ABBEY (160)
+  starter pool so a fresh house bootstraps.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The eating/hunger behavior (food source → the monastery
+   store via the `getHomeBuilding` redirect), R6c `MonasticCrafts`/needs (the new
+   food need + the supported/need/isProducer helpers reused by the economy), the
+   monastery store (R6b `BuildingStorageAccess`), the monastery `BuildingEconomy`
+   pool, the `ChannelRouter` + market sell formula, `BuildingStarterTable`.
+2. **Downstream callers.** `EatMealBehavior` (monks eat from the store — the only
+   change, gated to monks); `MonkProductionBehavior`/`MonasteryDeveloper` (bread is
+   now a need-priority craft + a development target); the surplus-sell + `ChannelRouter`
+   procurement; the monastery `BuildingEconomy`. `RiteScheduler.dailyTick` gains a
+   guarded step 8.
+3. **Sibling systems.** The R4 temple economy is SEPARATE — monasteries are not
+   rite venues (`isRiteVenue` split, R6a), so `TempleProsperity` never touches them;
+   `MonasteryEconomy` is a parallel, decoupled, non-decaying pass on the same
+   `BuildingEconomy` primitive. The market/trade channels are reused (sell + buy).
+   HOME production + the profession behaviors + the temple economy are untouched.
+4. **Exhaustive switches.** None added; no enum touched. Confirmed.
+
+### Simplification Sweep
+
+Eating reuses `EatMealBehavior` (a redirect of the food-home for monks, not a new
+eating system); the economy reuses the `BuildingEconomy` pool + the workshop sell
+formula + the `ChannelRouter` procurement + the `BuildingStarterTable`/`EconomicBalance`
+patterns; food is just another R6c `MonasticCrafts` craft/need. No new eating or
+economy framework. Classes in scope + inbound callers: `MonasteryEconomy` (new; 1 —
+RiteScheduler.dailyTick), `MonasticCrafts` (+1 craft; consumed by the behavior +
+developer + economy), `EatMealBehavior` (the universal eater — monk branch added),
+`EconomicBalance`/`BuildingStarterTable` (+constants), `MonasteryDeveloper.monksOf`
+(now shared). The monk-scan is single-sourced; the channel-buy mirrors `executeBuy`
+(a flagged future extraction of a shared building-level buy helper).
+
+### Deviations from prompt
+
+- **Surplus-sell credits the `BuildingEconomy` pool, not chest coins** — the
+  reusable static `executeSellForWorkshop` deposits revenue as coins into the
+  building's chest, which the buy path can't spend; the monastery pool IS the
+  `BuildingEconomy` (matching R4 + the buy funding), so I reuse the sell FORMULA +
+  market routing + `postListing` and credit the pool directly. Justified.
+- **The input-buy mirrors `executeBuy`'s core** rather than calling it (it's a
+  private instance method on `AbstractProductionBehavior`); the reusable pieces
+  (`ChannelRouter.findBestChannel`/`registeredChannels`, `channel.execute`, the
+  `BuildingEconomy` two-source funding) are reused. Extracting a shared
+  building-level buy helper is flagged.
+- **The food target is a fixed buffer (32), not literally monk-count-scaled** — the
+  per-tick production behavior stays scan-free; the consumption rate scales the
+  depletion with the monk count, and the economy's food safety net + input-buy keep
+  a larger house fed. A monk-count-scaled target is a flagged refinement.
+- **A monk uses the universal `EatMealBehavior`** (redirected), not a monastic
+  refectory behavior — reuse over a new behavior, per the constraint.
+
+### Out-of-scope but flagged
+
+- **This completes the monk's CORE loop** (spawn → produce-by-skill → self-organize
+  → eat + economy). Remaining R6: the **standalone-district worldgen** (layout
+  rework); the **Abbot office** + the abbot's authority over the pool (offices pass
+  — the pool is the `BuildingEconomy` this phase); **mead + a BREWING skill**; the
+  in-game **MONASTERY-vs-ABBEY distinction** (both behave identically today).
+- A shared building-level buy/sell helper (extract from `executeBuy`/the monastery
+  economy); a monk-count-scaled food target; a monastic refectory/communal-meal
+  behavior; routing surplus to alms/library like the temple's `spendSurplus`.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: all channel/economy signatures confirmed verbatim against
+source (`TradeIntent.buy` 8-arg, `ChannelRouter.findBestChannel`/`registeredChannels`,
+`ChannelQuote(channel,intent,pricePerUnit,availableQuantity,travelTimeTicks,quoteValidUntilTick,location)`,
+`EconomicChannel.type/execute`, `TradeResult(success,quantityTraded,totalBronze)`,
+`Urgency.NORMAL`, `MarketPriceHelper.getDynamicSellPrice(level,village,item)`,
+`VillageEconomy.postListing/getBasePrice`, `NpcWallet.receive/spend`,
+`ProductionHelpers.findMarketInVillage`, `getOrCreateBuildingEconomy` +
+`BuildingEconomy.withdraw/depositRevenue`); the agent-wallet conduit nets to zero
+(receive − channel-spend − leftover-refund); the buy is affordability-capped
+(qty ≤ 0.9·treasury/price) so funding never underflows; the eating redirect is
+monk-gated (non-monks byte-unchanged); the economy is `isRiteVenue`-decoupled from
+temple decay; the daily pass is guarded; a fresh monastery is starter-seeded.
+
+### Smoke test (user-runnable)
+
+1. **Monks eat from the shared store.** Stock bread in a monastery's store; at the
+   monks' meal window, confirm they eat from the MONASTERY store (the bread count
+   drops), not personal inventory, and that a monk with no personal food no longer
+   starves.
+2. **Self-feeding.** Give a monk BAKING + a furnace/smoker in the monastery + stock
+   wheat; confirm it bakes bread into the store (need-priority), the others eat it,
+   and an idle initiate is steered toward BAKING when bread is needed.
+3. **Surplus → pool.** Let the monastery overproduce honey/books (above target);
+   confirm the surplus is sold to market and the monastery's `BuildingEconomy`
+   treasury rises (cross-check `/religion temple` near the monastery if it reads the
+   pool, or observe inputs being bought next).
+4. **Buy inputs.** With a baker but no wheat, confirm the monastery BUYS wheat from
+   the pool (via the market/channels) so the baker can produce; with no baker and
+   low bread, confirm it buys BREAD directly (the food safety net) so monks don't
+   starve.
+5. **Self-contained run.** Leave a stocked, amenity-equipped monastery with a few
+   monks running for several in-game days; confirm it sustains — produces, eats,
+   sells surplus, buys inputs, pays upkeep — without starving or going broke, and a
+   productive house stays solvent.
+6. **No regressions.** Confirm non-monk eating, HOME production, the profession
+   behaviors, and the temple economy are unchanged; nothing crashes (the daily pass
+   is guarded).

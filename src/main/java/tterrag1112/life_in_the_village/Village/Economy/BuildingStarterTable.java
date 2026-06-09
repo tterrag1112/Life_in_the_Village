@@ -73,6 +73,10 @@ public final class BuildingStarterTable {
         m.put(BuildingType.TEMPLE,       150L);
         m.put(BuildingType.CHAPEL,        80L);
         m.put(BuildingType.SHRINE,        40L);
+        // R6d — a starter pool so a fresh monastery can buy its first inputs
+        // (wheat for bread, honeycomb/paper, …), produce, sell surplus, sustain.
+        m.put(BuildingType.MONASTERY,    120L);
+        m.put(BuildingType.ABBEY,        160L);
         m.put(BuildingType.LIBRARY,      120L);
         m.put(BuildingType.SCRIBE_WORKSHOP,  80L);
         m.put(BuildingType.SCHOLARS_RETREAT, 100L);
