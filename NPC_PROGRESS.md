@@ -3221,3 +3221,133 @@ memory.
 6. NPCs transition at slightly staggered times (jitter once, not desynced; the
    brain Activity flips in step with isWorkTime/shouldBeHome).
 7. No movement freeze / per-tick regression (no unregistered memory).
+
+## Liveliness L6 — village chunkloading + festival-gather participation
+
+### Goal
+
+Make a village **fully active while a player is inside it** so NPCs on the
+far/unloaded side are real entities (position + pathfinding) that commute,
+work, go home, and — the motivating case — **converge on the town square /
+temple for a festival or rite**. Village NPCs are ordinary persistent entities
+that cease to exist when their chunks unload; rather than a heavyweight per-NPC
+position LOD, we force-load the player's village footprint so the EXISTING
+gather machinery just works. Builds on the L5 committing-preempts-ambient fix.
+
+### Disposition (findings)
+
+- **No existing force-loading** (grep `setChunkForced`/`forceLoad`/`ForcedChunk`/
+  `addTicket`/`TicketType` — empty). `RosterChunkLoadHandler` reacts to chunk
+  load/unload to realize livestock rosters and demonstrates the codebase's
+  hysteresis idiom (`DEREALIZE_HYSTERESIS_TICKS = 200`).
+- **Footprint** = `Village.getBounds(data)` → `Optional<AABB>` (union of building
+  AABBs). **Player-in-village** = bounds-contains (the existing
+  `PlayerEventProximityHandler` already inflates bounds by 32 for its event
+  proximity check). The per-player tick hook is `PlayerEventProximityHandler
+  .onPlayerTick` (drives `BuildingPresenceTracker` every tick).
+- **API**: `ServerLevel.setChunkForced(x, z, add)` — the vanilla `/forceload`
+  mechanism; forced chunks are level-31 (entity-ticking), so NPC brains run. It
+  shows in `/forceload query` (the smoke-test's verification surface), which is
+  why it's the right call over a bespoke ticket.
+- **Gather (Part B)**: `AttendGatheringBehavior` already walks an event-flagged
+  NPC (gate: `isEventTime()`, i.e. an `eventOverride` is set) to the venue
+  (pinned loc → linked rite/temple → town square/centre). It's registered in
+  IDLE @3 and SOCIAL — strictly ABOVE the hobby (@13) and idle director (@15).
+  The only gap: the running ambient stroll didn't YIELD to it (the L5 fix only
+  yielded to home/work/greet).
+
+### What shipped
+
+**Part A — `Village/VillageChunkLoader.java` (new).**
+- Driven from `PlayerEventProximityHandler.onPlayerTick` (self-throttled to one
+  reconcile per `RECONCILE_INTERVAL = 40` ticks — no new per-tick scan / no new
+  `@SubscribeEvent`). A village is "occupied" while any online player is within
+  its bounds inflated by `ENTRY_INFLATE = 16`.
+- Forces every chunk the footprint occupies (`getBounds` inflated by
+  `FOOTPRINT_MARGIN = 16`, capped at `MAX_VILLAGE_CHUNKS = 400`) via
+  `ServerLevel.setChunkForced` — scoped tightly to the footprint, entity-ticking.
+- **Release with hysteresis** — a village with no player inside releases after
+  `RELEASE_HYSTERESIS_TICKS = 200` of continuous absence (mirrors the roster
+  derealize window) so edge-walking doesn't thrash tickets. Chunks are
+  **ref-counted** (`forceCount`) so overlapping villages don't unforce a shared
+  chunk while the other still needs it.
+- **Every release path covered**: a normal leave → hysteresis; **logout** →
+  `onPlayerLogout` releases emptied villages immediately (also the only path that
+  reaches the "last player leaves" case — once no players tick, the periodic
+  reconcile never runs again); a **removed** village → released on the next
+  reconcile (`getVillageById` empty → release); **server stop** →
+  `releaseAll(server)` drops everything. Wired in `PlayerEventProximityHandler`
+  (tick), `ModModEvents.onPlayerLogout`, and `ModModEvents.onServerStopping`.
+
+**Part B — festival-gather preemption (minimal wire).**
+- Added `entity.isEventTime()` to the ambient yield predicates so attending a
+  gathering is treated as a *committing* need that preempts ambient strolling:
+  `IdleDirectorBehavior.yieldToCommitting`, `GatherAtSquareBehavior
+  .yieldToCommitting`, and `HobbyBehavior` (checkExtra + canStillUse). The
+  ambient behavior stops + frees the nav channel (L5 `stop()` already erases
+  `WALK_TARGET` + `navigation.stop()`), so `AttendGatheringBehavior` (already
+  higher priority) starts and walks the now-loaded far-side NPC to the venue.
+  No change to `AttendGatheringBehavior` itself — it already resolves the venue
+  and converges with the officiant.
+
+### Tie-In Audit
+
+- **Forced chunks** keep the village's block entities + entities ticking
+  (intended). Vanilla forced chunks are entity-ticking → NPC brains run; the
+  `RosterChunkLoadHandler` ChunkEvent.Load path also fires for newly-forced
+  chunks (livestock realize) — a benign, desirable side effect.
+- **No new brain memory** (no `brainMemories()` change — freeze trap avoided).
+  Part B reuses `isEventTime()` and the existing `AttendGatheringBehavior`
+  memories (`UPCOMING_EVENT_TARGET` / `EVENT_ATTENDANCE_POS`, already registered).
+- **No new per-tick scan** — the reconcile is throttled (40-tick window) and
+  reuses the existing player tick; villages count is small.
+- **Detection cadence** shares the `PlayerEventProximityHandler` tick already
+  used for `BuildingPresenceTracker` + event proximity.
+
+### Out of scope (flagged)
+
+- **Per-NPC position LOD / simulated movement** — explicitly NOT built; the
+  chunkload replaces the need.
+- **Brain-tick LOD / compute throttling** — THE perf follow-on: distant loaded
+  NPCs should tick their brains less often to cap the per-NPC cost a fully-loaded
+  village now pays. Flagged as the next step; deliberately not done here.
+- New festival/rite content; the religion rework.
+
+### Deviations from prompt
+
+- The reconcile is invoked from the existing per-player tick but self-throttles
+  with a single shared `lastReconcileTick` (so N online players don't each run
+  it on the same tick) and aggregates across all players (needed for the
+  release-when-empty decision) — still "driven off the existing tracker tick, no
+  new per-tick scan", just guarded.
+- **Known caveat (save-safety not required, per prompt):** `setChunkForced`
+  persists to `ForcedChunksSavedData`. All *live* release paths are covered
+  (leave/logout/stop/removal), so normal play leaves no leak; a hard **crash**
+  (no `ServerStoppingEvent`) could persist forced entries our in-memory maps no
+  longer track. Flagged; a start-time cleanup is the mitigation if it matters.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Runtime-sensitive — wants an in-game check, chunk tickets especially. Static
+review: force/release ref-counted and symmetric; every release path
+(leave-hysteresis / logout / server-stop / village-removed) calls
+`setChunkForced(false)`; footprint scoped + capped; reconcile throttled, no new
+per-tick scan; Part B adds only `isEventTime()` reads (no new memory).
+
+### Smoke test (user-runnable)
+
+1. Stand at one edge of a large village: NPCs on the FAR side are active
+   (moving/working), not frozen — the whole village ticks.
+2. Walk away: the forced chunks RELEASE after ~10s (far side goes quiet; verify
+   via `/forceload query` — our chunks disappear). No leaked loaded chunks.
+3. Cross the village edge in/out repeatedly: no ticket thrash (200-tick
+   hysteresis holds).
+4. Trigger a festival/rite at the square/temple: involved NPCs from across the
+   WHOLE village walk to the venue and attend, leaving their ambient behavior.
+5. A festival-attending NPC isn't pulled away by the idle director (committing
+   preempts ambient — the director yields on `isEventTime`).
+6. Perf: note tick time with a full village loaded — bounded/acceptable for now
+   (brain-tick LOD is the follow-on if heavy).
+7. No movement freeze / unregistered-memory error.

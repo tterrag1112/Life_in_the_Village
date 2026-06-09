@@ -111,6 +111,10 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
      */
     private boolean yieldToCommitting(ServerLevel level, TownspersonMob entity) {
         if (GreetPlayerBehavior.isGreetPending(entity)) return true;
+        // A festival/rite attendee (flagged via eventOverride) must converge on the
+        // venue — attending is committing, so the stroll yields to
+        // AttendGatheringBehavior (registered above the director).
+        if (entity.isEventTime()) return true;
         if (requireWorkSatisfied) {
             // WORK instance: stop the moment production has a task again.
             return !entity.getBrain().hasMemoryValue(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());

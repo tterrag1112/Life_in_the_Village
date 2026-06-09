@@ -63,7 +63,12 @@ public class GatherAtSquareBehavior extends Behavior<TownspersonMob> {
      * past the transition and pin itself at the square. Cheap predicate reads.
      */
     private static boolean yieldToCommitting(TownspersonMob entity) {
-        return GreetPlayerBehavior.isGreetPending(entity) || !entity.isSocialTime();
+        // Greet / a festival-rite the NPC is pulled into / SOCIAL ending all
+        // preempt the ambient square-gather (an event attendee converges on the
+        // venue via AttendGatheringBehavior, registered above this).
+        return GreetPlayerBehavior.isGreetPending(entity)
+                || entity.isEventTime()
+                || !entity.isSocialTime();
     }
 
     @Override

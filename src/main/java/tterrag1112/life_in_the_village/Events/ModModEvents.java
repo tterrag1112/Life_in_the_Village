@@ -411,6 +411,10 @@ public class ModModEvents {
         if (event.getEntity() instanceof ServerPlayer player) {
             tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
                     .onPlayerLogout(player.getUUID());
+            // Liveliness — release village chunks emptied by this logout immediately
+            // (covers the last-player-leaves case the periodic reconcile can't reach).
+            tterrag1112.life_in_the_village.Village.VillageChunkLoader
+                    .onPlayerLogout(player);
         }
     }
 
@@ -472,6 +476,10 @@ public class ModModEvents {
 
     @SubscribeEvent
     public static void onServerStopping(ServerStoppingEvent event) {
+        // Liveliness — drop every village-forced chunk so none persist past shutdown.
+        tterrag1112.life_in_the_village.Village.VillageChunkLoader
+                .releaseAll(event.getServer());
+
         ServerLevel overworld = event.getServer().overworld();
         AdventurerSavedData data = AdventurerSavedData.get(overworld);
 

@@ -59,8 +59,9 @@ public class HobbyBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         if (entity.isChild()) return false;
-        // Committing-preempts-ambient — a customer to greet preempts a hobby trip.
-        if (GreetPlayerBehavior.isGreetPending(entity)) return false;
+        // Committing-preempts-ambient — a customer to greet, or a festival/rite the
+        // NPC is pulled into, preempts a hobby trip.
+        if (GreetPlayerBehavior.isGreetPending(entity) || entity.isEventTime()) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
 
         if (!hobbyEligible(level, entity)) return false;
@@ -90,9 +91,10 @@ public class HobbyBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
         if (activeDefinition == null) return false;
-        // Committing-preempts-ambient — a customer to greet preempts the hobby; stop
-        // and free the nav channel now (don't pin the NPC through LEAVING).
-        if (GreetPlayerBehavior.isGreetPending(entity)) return false;
+        // Committing-preempts-ambient — a customer to greet, or a festival/rite the
+        // NPC is pulled into, preempts the hobby; stop and free the nav channel now
+        // (don't pin the NPC through LEAVING).
+        if (GreetPlayerBehavior.isGreetPending(entity) || entity.isEventTime()) return false;
         long tick = level.getGameTime();
         // Wind down (LEAVING) once no longer eligible — i.e. leisure/day-off
         // ended, OR (idle work time) production has work again and cleared the
