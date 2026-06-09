@@ -94,6 +94,16 @@ public final class NpcDialogue {
         Optional<String> seasonLine = getSeasonLine(level, rng);
         if (seasonLine.isPresent() && rng.nextInt(4) == 0) return seasonLine.get();
 
+        // 4.5 Faith voice (D3b) — a priest/monk speaks their faith readily; a
+        // devout lay adherent occasionally lets it colour their lines. One more
+        // weighted source, not an override: a lukewarm/unaffiliated/atheist NPC
+        // gets nothing here and falls through to their normal lines.
+        Optional<String> faithLine = getFaithLine(npc, rng);
+        if (faithLine.isPresent()) {
+            boolean clergy = tterrag1112.life_in_the_village.Npc.Religion.FaithVoice.isClergy(npc);
+            if (rng.nextInt(clergy ? 2 : 5) == 0) return faithLine.get();
+        }
+
         // 5. Profession idle
         Optional<String> profLine = getProfessionLine(npc, rng);
         if (profLine.isPresent() && rng.nextInt(2) == 0) return profLine.get();
@@ -312,6 +322,18 @@ public final class NpcDialogue {
         };
 
         return Optional.ofNullable(line);
+    }
+
+    /**
+     * D3b — the speaker's faith voice, drawn from its {@link
+     * tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity} via {@link
+     * tterrag1112.life_in_the_village.Npc.Religion.FaithVoice}. Empty unless the NPC
+     * is eligible (clergy, or a DEVOUT/PIOUS lay adherent); the call-site gate
+     * controls how readily it surfaces (clergy often, devout laity occasionally).
+     */
+    private static Optional<String> getFaithLine(TownspersonMob npc,
+                                                 RandomSource rng) {
+        return tterrag1112.life_in_the_village.Npc.Religion.FaithVoice.line(npc, rng);
     }
 
     private static Optional<String> getTraitLine(TownspersonMob npc,

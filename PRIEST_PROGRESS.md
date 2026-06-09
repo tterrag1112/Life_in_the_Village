@@ -7416,3 +7416,143 @@ elsewhere.
 5. **No regressions.** Confirm HOME-context homestead production deposits its normal
    item unchanged, non-`COPY_MANUSCRIPT` monk crafts deposit their normal outputs,
    and existing (non-religious) library stocking elsewhere is unaffected.
+
+## D3b — the faith's voice (dialogue + sermons) (2026-06-09)
+
+(Religion Deepening, a D3 follow-up — the lore made audible.)
+
+### Disposition (findings)
+
+D1 gave each faith an identity, D2 behavioural teeth, D3 readable scripture. D3b
+gives it a *voice* — a Sunstead priest should greet you differently from a Tidecall
+one — drawn straight from `ReligionIdentity`, gated by who actually holds the faith.
+
+1. **Injection point.** `NpcDialogue.getGreeting` is a weighted cascade: the
+   dialogue tree runs first (`DialogueRunner.lineFor`), then event → reputation →
+   need → season → **profession** (~line 254 switch) → trait → fallback, each later
+   pool gated by an `rng.nextInt(n)==0` roll so it's "one of several flavours". The
+   clean injection is one more weighted pool here — NOT a tree fork and NOT a hard
+   override (the prompt's invariant). Placed at step 4.5 (after season, before
+   profession) so a clergy NPC voices faith readily but the profession/trait/season
+   colour still surfaces.
+2. **Voice source.** `ReligionIdentity` (D1) carries everything needed: the deity
+   `domain`/`character`/`demands`/`rewards` (the NAME stays single-sourced in
+   `Religion.deity()`), the authored `virtues` (complete sentences), and — for the
+   deity-less Loom (`Religion.deity()` is `Optional.empty()`) — the abstract
+   Pattern/fate idiom. `ReligionContent.invocation` already proves the
+   name-or-abstract pattern; the voice reuses `Religion.deity()` directly.
+3. **Eligibility.** `PietyComponent.primaryReligion()` (has a faith?) +
+   `primaryTier()` (`UNAFFILIATED`/`FAITHFUL`/`DEVOUT`/`PIOUS`). Rule: clergy
+   (PRIEST/MONK) always; lay only DEVOUT/PIOUS; everyone else silent (faith voice
+   returns empty → normal lines). The lay-vs-clergy *frequency* is the call-site
+   gate (clergy 1/2, lay 1/5), keeping it "one weighted source".
+
+### What shipped
+
+- **`Npc/Religion/FaithVoice.java`** (new) — the single faith-voice line source:
+  - `speaks(npc)` — eligibility (clergy always; lay DEVOUT/PIOUS; else false).
+  - `isClergy(npc)` — PRIEST/MONK (the call-site frequency split).
+  - `line(npc, rng)` — builds a small varied pool **from the speaker's
+    `ReligionIdentity`** and returns one at random: a domain-idiom greeting (SUN →
+    "The Sun-Mother's light upon you, traveller."; SEA → "…tides carry you safely.";
+    FORGE → "…iron at your back…"; FATE/Loom → "May your thread run true in the
+    Pattern."), a blessing (`"May " + deity + " grant you " + rewards`, or the
+    abstract "Weave true…" for the Loom), what the faith asks (`deity + " asks " +
+    demands`), and a virtue spoken plainly (a random authored `Virtue.text()`). The
+    deity name is single-sourced from `Religion.deity()`; the deity-less Loom uses
+    "the Pattern" with no personification. A faith with no authored identity falls
+    back to its `coreTenets` (still on-faith). Empty for ineligible NPCs / unknown
+    religion.
+- **`Entities/NpcDialogue.java`** (edit) — added step 4.5 in `getGreeting`: consult
+  `getFaithLine(npc, rng)` (a thin shim over `FaithVoice.line`) and, when present,
+  return it on a `rng.nextInt(clergy ? 2 : 5) == 0` roll — clergy readily, devout
+  laity occasionally. Additive; every existing pool and gate is unchanged.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `ReligionIdentity` (voice content), `Religion.deity()`
+   (name, single source), `PietyComponent.primaryReligion()/primaryTier()` (faith +
+   devoutness). None changed shape; all read-only.
+2. **Downstream callers.** `FaithVoice` has exactly one caller (`NpcDialogue`'s new
+   step 4.5 via `getFaithLine`). `NpcDialogue.getGreeting`'s callers
+   (`mobInteract`, greeting prefixes, `NpcProfileSnapshotBuilder`) are unchanged —
+   the method's contract (never-null greeting) holds; the faith pool only ever
+   *adds* a possible return, never removes the existing fallbacks.
+3. **Sibling systems.** Composes with profession/trait/season/event/need/reputation
+   pools (faith is one more weighted source, reached only when the earlier pools
+   don't fire and the roll hits). The dialogue tree (`DialogueRunner`) still runs
+   first and is untouched (no fork). R9's priest panel and D1–D3 are unaffected
+   (read-only reuse of identity/piety).
+4. **Exhaustive switches.** One new local switch over `ReligionIdentity.DeityDomain`
+   (4 arms: SUN/SEA/FORGE/FATE) — all arms covered, no `default` (a future domain
+   would force a compile-time update here, which is desirable). No existing
+   exhaustive switch over `Profession`/`Religion`/any enum was touched (the
+   PRIEST/MONK check is two `==` comparisons, not a switch).
+
+### Simplification sweep
+
+- One faith-voice source (`FaithVoice`) drawn from `ReligionIdentity`, consulted
+  from a single `NpcDialogue` site — faith logic is NOT scattered across the
+  dialogue code. Classes in scope: `FaithVoice` (new, 1 inbound caller),
+  `NpcDialogue` (1 new private shim + 1 cascade step), `ReligionIdentity`/`Religion`/
+  `PietyComponent` (read-only sources). No orphan, no overlapping pair: this is the
+  only NPC-speech faith source; `ReligionContent.invocation/tenet` remain the
+  rite-text helpers (distinct consumer — rite flavor, not NPC greetings).
+- No dead code introduced; the removed `personified` param on `domainGreeting` was
+  pruned during authoring.
+
+### Deviations from prompt
+
+None. Faith-aware greeting/idle lines for priests + devout adherents, selected by
+the NPC's faith, sourced from `ReligionIdentity`, injected as one weighted source
+(no tree fork, no hard override); deity-less Loom uses abstract phrasing; lukewarm/
+unaffiliated/atheist speak normally; no `Religion` codec change, no new memory.
+
+### Out-of-scope but flagged
+
+- **D3c** — sacred history → village records + commemorative festivals (the
+  `SacredHistory` events feeding history/log systems and festival lore). Not touched
+  here; flagged for the next pass.
+- **D4** — aesthetics (`ReligionIdentity.Aesthetics`), layout-parked.
+- **Full sermon/conversation trees** — this phase is greeting/idle lines only (the
+  prompt's "start with greeting/idle lines"). A dedicated multi-turn sermon flow in
+  the dialogue tree (`DialogueRunner` options) is a later, larger piece.
+- The faith voice currently surfaces through `NpcDialogue.getGreeting` (the
+  shim-over-tree path). If/when a faith-specific *tree* is authored, `FaithVoice`
+  is the natural content source for it — no rework needed, just an additional
+  consumer.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: `Religion.deity()` → `Optional<String>` (single-sourced name),
+`coreTenets()` → `List<String>`, `PietyComponent.primaryReligion()` → `Optional`,
+`primaryTier()` → `PietyTier{UNAFFILIATED,FAITHFUL,DEVOUT,PIOUS}`,
+`ReligionIdentity` accessors (`deity().{domain,demands,rewards}`, `virtues().text`)
+all exist; the `DeityDomain` switch covers all four arms; `FaithVoice` has the one
+`NpcDialogue` caller; the new cascade step is additive (the never-null greeting
+contract holds).
+
+### Smoke test (user-runnable)
+
+1. **Sunstead priest.** Talk to a Sunstead PRIEST repeatedly; confirm faith-flavoured
+   lines that invoke the Sun-Mother (a "Sun-Mother's light upon you" greeting, a
+   "May the Sun-Mother grant you…" blessing, "The Sun-Mother asks…", or an honest-
+   labour/generosity virtue) mixed with the occasional normal line.
+2. **Tidecall priest.** Confirm a Tidecall priest invokes the Sea-Mother / the tides
+   and the respect-the-sea / remembrance virtues — distinctly different from #1.
+3. **Loom priest (deity-less).** Confirm a Loom priest speaks of the Pattern / thread
+   / weaving with NO deity name (no "Mother"/"Father"), e.g. "May your thread run
+   true in the Pattern." and the truthfulness/harmony virtues.
+4. **Devout lay adherent.** Talk to a DEVOUT/PIOUS non-clergy adherent several times;
+   confirm their faith colours their lines *occasionally* (less often than a priest),
+   still mixed with profession/trait lines.
+5. **No preaching from the unfaithful.** Confirm a FAITHFUL-but-lukewarm lay NPC, an
+   UNAFFILIATED NPC, and an atheist (no primary religion) speak only normal lines —
+   never a faith line.
+6. **Varied + distinct.** Confirm a single priest doesn't repeat one line every time
+   (the pool varies) and two faiths' priests read clearly differently.
+7. **No regressions.** Confirm normal profession/trait/season/event/need/reputation
+   dialogue still works (faith voice is additive — it only sometimes wins), and the
+   dialogue-tree path is unchanged.
