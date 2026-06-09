@@ -72,6 +72,13 @@ public final class MakeOfferingVerb implements PlayerVerb {
         piety.recordRiteAttendance(ctx.level().getGameTime());
         RiteSavedData.get(ctx.level()).markDirty();
 
+        // Divine Layer V1 — an offering earns Divine Favour with the deity
+        // (deity-demand weighted: a faith that esteems GENEROSITY earns the bonus).
+        tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.award(
+                ctx.level(), playerId, religionId,
+                tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.OFFERING,
+                ctx.level().getGameTime());
+
         ctx.npc().getRelationships().adjust(playerId, 5);
         // Temple treasury bump — uses the existing per-building economy
         // attached to the temple if present.

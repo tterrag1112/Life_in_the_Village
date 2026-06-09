@@ -74,6 +74,13 @@ public final class AttendRiteVerb implements PlayerVerb {
         piety.recordRiteAttendance(ctx.level().getGameTime());
         rdata.markDirty();
 
+        // Divine Layer V1 — attending a rite earns Divine Favour with the rite's
+        // deity (the faith the attendance credits).
+        tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.award(
+                ctx.level(), playerId, targetFaith,
+                tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.ATTEND_RITE,
+                ctx.level().getGameTime());
+
         // R9d payoff — the public act of devotion warms co-religionists present.
         int warmed = PietyPayoff.applyCoReligionistRegard(ctx.level(), ctx.player(),
                 village, vdata, piety.primaryReligion().orElse(null), piety.primaryTier());

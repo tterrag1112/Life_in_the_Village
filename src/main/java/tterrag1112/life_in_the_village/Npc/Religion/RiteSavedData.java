@@ -48,22 +48,31 @@ public class RiteSavedData extends SavedData {
                     com.mojang.serialization.Codec.unboundedMap(
                                     UUID_STRING_KEY, UUID_STRING_KEY)
                             .optionalFieldOf("autoTitheTemple", Map.of())
-                            .forGetter(d -> Map.copyOf(d.autoTitheTemple))
+                            .forGetter(d -> Map.copyOf(d.autoTitheTemple)),
+                    // Divine Layer V1 — player Divine Favour ledger: playerId →
+                    // per-deity favour. Optional so pre-V1 saves load empty.
+                    com.mojang.serialization.Codec.unboundedMap(
+                                    UUID_STRING_KEY, PlayerFavour.CODEC)
+                            .optionalFieldOf("playerFavour", Map.of())
+                            .forGetter(d -> Map.copyOf(d.playerFavour))
             ).apply(i, RiteSavedData::fromCodec)));
 
     private final Map<UUID, RiteExecution>     rites           = new HashMap<>();
     private final Map<UUID, PietyComponent>    playerPiety     = new HashMap<>();
     private final Map<UUID, UUID>              autoTitheTemple = new HashMap<>();
+    private final Map<UUID, PlayerFavour>      playerFavour    = new HashMap<>();
 
     public RiteSavedData() {}
 
     private static RiteSavedData fromCodec(List<RiteExecution> rites,
                                            Map<UUID, PietyComponent> playerPiety,
-                                           Map<UUID, UUID> autoTitheTemple) {
+                                           Map<UUID, UUID> autoTitheTemple,
+                                           Map<UUID, PlayerFavour> playerFavour) {
         RiteSavedData d = new RiteSavedData();
         if (rites != null) for (RiteExecution r : rites) d.rites.put(r.riteId(), r);
         if (playerPiety != null) d.playerPiety.putAll(playerPiety);
         if (autoTitheTemple != null) d.autoTitheTemple.putAll(autoTitheTemple);
+        if (playerFavour != null) d.playerFavour.putAll(playerFavour);
         return d;
     }
 
@@ -161,6 +170,16 @@ public class RiteSavedData extends SavedData {
 
     public Map<UUID, PietyComponent> allPlayerPieties() {
         return java.util.Collections.unmodifiableMap(playerPiety);
+    }
+
+    // ── Player Divine Favour (Divine Layer V1) ───────────────────────────────
+
+    public PlayerFavour getOrCreatePlayerFavour(UUID playerId) {
+        return playerFavour.computeIfAbsent(playerId, k -> new PlayerFavour());
+    }
+
+    public Optional<PlayerFavour> getPlayerFavour(UUID playerId) {
+        return Optional.ofNullable(playerFavour.get(playerId));
     }
 
     // ── Player auto-tithe opt-in (R4d-1) ─────────────────────────────────────

@@ -86,8 +86,16 @@ public class PlayerReligionScreen extends Screen {
             g.drawString(font, "Piety " + Math.round(clamp01(data.pietyStrength()) * 100) + "%",
                     x, panelY + 42, BookScreenColors.DARK, false);
 
+            // Divine Favour per deity (V1) + any syncretic beliefs, one line.
+            java.util.List<String> info = new java.util.ArrayList<>();
+            if (!data.favourSummary().isEmpty()) {
+                info.add("Favour: " + String.join(" · ", data.favourSummary()));
+            }
             if (!data.beliefSummary().isEmpty()) {
-                g.drawString(font, "Beliefs: " + String.join(" · ", data.beliefSummary()),
+                info.add("Beliefs: " + String.join(" · ", data.beliefSummary()));
+            }
+            if (!info.isEmpty()) {
+                g.drawString(font, String.join("   ", info),
                         x, panelY + 53, BookScreenColors.LIGHT, false);
             }
         }

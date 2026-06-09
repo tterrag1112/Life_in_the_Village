@@ -7713,3 +7713,153 @@ staggered ticks dodge the tail-dedupe; the idempotency guard prevents re-seeding
 5. **No regressions.** Confirm normal history producers (births, crimes, offices)
    and festival scheduling/fronting/crowd-bless are otherwise unchanged; the live
    chronicle isn't flooded; per-faith content is distinct.
+
+## V1 — Divine Favour foundation (Divine Layer, Pillar 3) (2026-06-09)
+
+(First phase of the divine layer — the resource miracles/visions/wrath will
+later spend or gate on.)
+
+### Disposition (findings)
+
+Before miracles we need the resource: **Divine Favour** — a per-deity measure of
+a deity's regard for the player. Piety is *belief*; favour is *standing* — built
+on piety but distinct and spendable.
+
+1. **Player religion data** lives on `RiteSavedData` (per-world SavedData): a
+   `Map<UUID, PietyComponent> playerPiety` + the R4d-1 `autoTitheTemple` map, both
+   `optionalFieldOf` (codec at 3 fields — room under the 16 cap). Favour is a
+   sibling per-player structure here.
+2. **`ReligionIdentity.deity` (D1)** carries `demands`/`rewards` (prose) and the
+   **structured** form — the faith's authored `virtues` (`FaithConcept`-tagged).
+   The virtues ARE the machine-readable "what the deity esteems", so favour weights
+   an act by whether its concept is one of the faith's virtues.
+3. **Earning acts** that fire discrete player events: `MakeOfferingVerb` (resolves
+   `religionId` + `playerId`), `AttendRiteVerb` (`targetFaith`), `CommissionRiteVerb`
+   (`faith`), and the R4d-1 player auto-tithe (`Tithing.tickPlayerTithes`, `faith`).
+   **Pilgrimage is NPC-only** (no player pilgrimage verb), so it is not a player
+   hook this phase. D2's player-virtue side is thin (no live player-virtue trigger).
+4. **Surfacing**: R9c `PlayerReligionSnapshotBuilder` → `OpenPlayerReligionPacket`
+   (manual StreamCodec) → `PlayerReligionScreen`. Add favour-per-deity alongside
+   piety.
+
+**Model chosen — one lazy relaxation formula (no per-tick scan).** Favour is
+stored per (player, deity) as `(amount, lastTick)` and relaxed on read toward a
+piety-tier **equilibrium** with τ ≈ 3 in-game days: `v' = eq + (v−eq)·e^(−Δt/τ)`,
+clamped to `[0, cap]`. One formula yields all three required behaviours —
+**passive accrual** (idle devout player rises to the tier equilibrium), **gentle
+decay** (favour earned above eq by service drifts back to eq), and **lapse-fade**
+(losing the faith drops the tier → eq = cap = 0 → favour fades). Tier is computed
+from the player's belief in **that** faith, so favour is genuinely coupled to
+piety and per-deity. Deity-demand weighting: an act whose `FaithConcept` is one of
+the faith's virtues earns ×1.5.
+
+### What shipped
+
+- **`Npc/Religion/PlayerFavour.java`** (new) — pure per-player data: `Map<religionId,
+  Entry(amount, lastTick)>` + CODEC (nested record codec; `set` drops non-positive
+  entries). Persisted via `RiteSavedData`.
+- **`Npc/Religion/DivineFavour.java`** (new) — the one economy helper:
+  `FavourAct` enum (OFFERING/TITHE/ATTEND_RITE/COMMISSION_RITE/PILGRIMAGE/VIRTUE,
+  each base + concept); `award` (deity-weighted, piety-capped — the verbs/tithe
+  call it), `awardVirtue(concept)` (ready for player-virtue hooks), `current`
+  (relaxed read), `spend` (V2's entry point), `debugGrant` (raw, cap-bypassing for
+  testing). Per-tier `equilibrium` (0/5/15/30) and `cap` (0/30/60/100) as exhaustive
+  `PietyTier` switches; alignment via `ReligionIdentity.virtues()`.
+- **`RiteSavedData`** — +1 codec field `playerFavour` (`optionalFieldOf` → pre-V1
+  saves load empty; now 4 fields, under the cap) + `getOrCreatePlayerFavour` /
+  `getPlayerFavour`.
+- **Earning hooks** — `MakeOfferingVerb` (OFFERING), `AttendRiteVerb` (ATTEND_RITE),
+  `CommissionRiteVerb` (COMMISSION_RITE), `Tithing.tickPlayerTithes` (TITHE), each
+  one `DivineFavour.award(...)` after the existing piety bookkeeping. Additive — no
+  existing behaviour changed.
+- **Surfacing** — `OpenPlayerReligionPacket` +`favourSummary` field (StreamCodec
+  write/read appended); `PlayerReligionSnapshotBuilder` builds it from
+  `DivineFavour.current` across the player's faiths; `PlayerReligionScreen` renders
+  a "Favour: <deity> NN" line in the faith block.
+- **Debug** — `/religion favour [view] | grant <faith> <amt> | spend <faith> <amt>`
+  (operates on the executing player; `grant` is the raw cap-bypassing test grant,
+  `spend` exercises the V2 API).
+
+### Tie-in audit
+
+1. **Upstream feeders.** The earning acts (offering/tithe/attend/commission),
+   `ReligionIdentity.virtues()` (the deity-demand weighting), `PietyComponent` (the
+   per-faith tier favour is capped/baselined by). All read-only; none changed shape.
+2. **Downstream callers.** `RiteSavedData` persists it; the R9c packet/screen
+   surface it; `DivineFavour.spend` is V2's future consumer (exercised now by the
+   debug command). `current` has the snapshot + command + award callers.
+3. **Sibling systems.** Piety is **distinct** — favour reads piety (tier → cap/eq)
+   but never writes it; the acts' existing `adjustBelief` calls are untouched, so
+   piety is unchanged by favour. R4d-1 tithe / R9d verbs / pilgrimage hooks are
+   additive. R9 panels: the screen gains one line; the packet stays backward-shaped
+   (new field appended).
+4. **Exhaustive switches.** Two new `PietyTier` switches (`equilibrium`, `cap`) —
+   both cover all four arms with no `default` (a new tier would force an update —
+   intended). No `DeityDomain`/`FaithConcept` switch (alignment uses a stream
+   `anyMatch`, not a switch).
+
+### Simplification sweep
+
+- One favour resource (`PlayerFavour`) + one economy helper (`DivineFavour`) the
+  acts call; the deity-demand weighting is a single `ReligionIdentity.virtues()`
+  lookup. No parallel system: piety stays in `PietyComponent`, favour is a sibling
+  map on the same `RiteSavedData`. Classes in scope: `PlayerFavour`/`DivineFavour`
+  (new, callers = 4 verbs/tithe + snapshot + command), `RiteSavedData` (+1 field),
+  the 4 earning verbs/tithe (+1 call each), the R9c packet/snapshot/screen (+1 field
+  / +1 line), `ReligionDebugCommand` (+1 subcommand). No orphan; `FavourAct
+  .PILGRIMAGE`/`VIRTUE` are defined for the (flagged) future player-pilgrimage /
+  player-virtue hooks + NPC favour.
+
+### Deviations from prompt
+
+- **Pilgrimage not hooked** — there is no player pilgrimage verb (pilgrimage is an
+  NPC role/behavior), so no player favour hook exists for it this phase. The
+  `FavourAct.PILGRIMAGE` slot is defined for when a player pilgrimage / NPC favour
+  lands. Flagged, not invented.
+- **Decay model** — implemented the recommended gentle decay (the lazy
+  relaxation-to-equilibrium), not deferred.
+- **Debug `grant` is a raw cap-bypassing grant** (not the honest `award`) so a
+  tester can load favour to exercise the V2 `spend` API regardless of their piety.
+
+### Out-of-scope but flagged
+
+- **V2 miracles** (the first real `spend` consumer — favour gates/pays for them),
+  **V3 visions**, **V4 curses/wrath**, **V5 theophany** — no deity *effects* this
+  phase, only the ledger + earning + spend API.
+- **NPC favour** — player-primary this phase; the favour math is player-keyed but
+  the relaxation/weighting model would generalize.
+- **Player-virtue earning** — `awardVirtue` is ready, but D2's player-side virtue
+  trigger is still thin; wiring a real player-virtue → favour hook is a follow-up
+  (favour may be the first meaningful player-virtue reward, as the prompt notes).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review: `RiteSavedData` codec now 4 fields (under the 16 cap), the new field
+`optionalFieldOf` (old saves load empty); the packet StreamCodec write/read are
+balanced (favourSummary appended both sides); `DivineFavour` reads piety but never
+writes it (piety/favour distinct); the two `PietyTier` switches are exhaustive;
+alignment uses a stream (no enum switch); favour clamps to `[0, cap]` everywhere
+(bounded).
+
+### Smoke test (user-runnable)
+
+1. **Earning + per-deity surfacing.** As a devout Sunstead player, make an offering,
+   tithe, attend a rite, and commission a rite; open `/religion me` (R9c screen) and
+   confirm a "Favour: Sunstead NN" line rises with each act, distinct from the piety
+   bar. Cross-check with `/religion favour view`.
+2. **Deity-demand weighting.** Confirm a giving act (offering/tithe — GENEROSITY)
+   earns MORE for a faith that esteems GENEROSITY (Sunstead) than for one that does
+   not, and that the four faiths' favour economies differ accordingly (use
+   `/religion favour view` after equivalent acts in different faiths).
+3. **Passive accrual + gentle decay.** As a PIOUS adherent, let favour sit with no
+   service and confirm it settles toward the tier baseline (not zero); after earning
+   above the baseline, confirm it drifts gently back down over in-game days.
+4. **Lapse-fade.** Drop piety in a faith (e.g. `/religion set` low) and confirm that
+   faith's favour fades toward 0 (favour can't be held without standing).
+5. **Spend API (for V2).** `/religion favour grant sunstead 50` then `/religion
+   favour spend sunstead 20` — confirm the spend succeeds and the balance drops;
+   confirm spending more than held fails.
+6. **Piety unchanged.** Confirm none of the favour operations move the piety bar —
+   they are distinct resources.
