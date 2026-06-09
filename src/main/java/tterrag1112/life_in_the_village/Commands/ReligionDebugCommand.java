@@ -89,7 +89,68 @@ public final class ReligionDebugCommand {
                 // R9c — open the read-only player-religion + calendar screen.
                 .then(Commands.literal("me")
                         .executes(ReligionDebugCommand::handleMe))
+                // D1 — print a faith's realized-culture identity (cosmology, deity,
+                // history, virtues, taboos, aesthetics, practices).
+                .then(Commands.literal("identity")
+                        .then(Commands.argument("religionId", StringArgumentType.word())
+                                .suggests((c, b) -> {
+                                    for (Religion r : ReligionRegistry.all()) b.suggest(r.id());
+                                    return b.buildFuture();
+                                })
+                                .executes(ReligionDebugCommand::handleIdentity)))
         );
+    }
+
+    // ── /religion identity <religion> ───────────────────────────────────────
+
+    private static int handleIdentity(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        String id = StringArgumentType.getString(ctx, "religionId");
+        Religion religion = ReligionRegistry.get(id);
+        if (religion == null) {
+            src.sendFailure(Component.literal("Unknown religion " + id));
+            return 0;
+        }
+        tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity identity =
+                tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.get(id);
+        if (identity == null) {
+            src.sendFailure(Component.literal("No authored identity for " + religion.displayName()));
+            return 0;
+        }
+        // Deity NAME stays the single source in Religion.deity() (reconciliation);
+        // the rich domain/character/demands/rewards come from the identity.
+        String deityName = religion.deity().orElse(religion.displayName());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("§e=== ").append(religion.displayName()).append(" — identity ===");
+        sb.append("\n§6Cosmology§7: ").append(identity.cosmology());
+        sb.append("\n§6Deity§7: §f").append(deityName)
+                .append("§7 (domain §f").append(identity.deity().domain()).append("§7)");
+        sb.append("\n  §7character: ").append(identity.deity().character());
+        sb.append("\n  §7demands: ").append(identity.deity().demands());
+        sb.append("\n  §7rewards: ").append(identity.deity().rewards());
+        sb.append("\n§6Sacred history§7: ").append(identity.history().foundingMyth());
+        for (var e : identity.history().events()) {
+            sb.append("\n  §a").append(e.title()).append("§7 — ").append(e.text());
+        }
+        sb.append("\n§6Virtues§7:");
+        for (var v : identity.virtues()) {
+            sb.append("\n  §a[").append(v.concept().name()).append("]§7 ").append(v.text());
+        }
+        sb.append("\n§6Taboos§7:");
+        for (var t : identity.taboos()) {
+            sb.append("\n  §c[").append(t.concept().name()).append("]§7 ").append(t.text());
+        }
+        var a = identity.aesthetics();
+        sb.append("\n§6Aesthetics§7: style §f").append(a.styleId())
+                .append("§7; palette ").append(a.palette())
+                .append("; iconography ").append(a.iconography());
+        sb.append("\n§6Practices§7:");
+        for (String p : identity.practices()) sb.append("\n  §7• ").append(p);
+
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
     }
 
     // ── /religion me ───────────────────────────────────────────────────────

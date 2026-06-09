@@ -6958,3 +6958,143 @@ temple decay; the daily pass is guarded; a fresh monastery is starter-seeded.
 6. **No regressions.** Confirm non-monk eating, HOME production, the profession
    behaviors, and the temple economy are unchanged; nothing crashes (the daily pass
    is guarded).
+
+---
+
+## D1 — the ReligionIdentity model + first authoring pass (2026-06-09)
+
+(Religion Deepening, Pillar 1.)
+
+### Disposition (findings)
+
+The four faiths are mechanically distinct (R3) but thin on identity — no cosmology,
+no deity with character, no sacred history, no virtues/taboos. D1 builds the MODEL
+that holds a realized-culture identity per faith, seeds a first authored pass, and
+a debug readout. Per the dead-content rule, the content is authorable + inspectable
+NOW even though its behaviour consumer is later (D2).
+
+1. **Registry pattern.** `ReligionContent` (R3a) is the model to mirror: a `final`
+   class with a private static `Map<String, …>` keyed by `ReligionRegistry` ids
+   (SUNSTEAD/THE_LOOM/TIDECALL/FORGE_CREED), hand-authored `build()` entries, static
+   lookups — a parallel registry, NOT a `Religion` record/codec change. The four
+   faiths' tenets/deity/rites live in `ReligionRegistry`.
+2. **Reconciliation (don't duplicate/break the existing flavor fields).** The deity
+   NAME stays the single source in `Religion.deity()` (consumed by
+   `ReligionContent.invocation`); the identity adds the rich layer on top (a `Deity`
+   = domain + character + demands + rewards, NO name). `Religion.coreTenets()` stay
+   put (consumed by `ReligionContent.tenet`); the identity's `virtues` are the
+   structured, concept-tagged version (distinct from the raw tenet strings, informed
+   by them). The `/religion identity` readout pulls the name from `ReligionRegistry`
+   and the rich layer from the identity — one source per attribute.
+3. **D2 forward-consumer (the concept representation).** Virtues/taboos are stored
+   as `{FaithConcept concept, String text}` so D2 can key behaviour on the concept.
+   `FaithConcept` is a small, concrete, top-level enum — every value anchored to one
+   of the four faiths' actual values (no speculative concepts), each mappable to an
+   observable NPC act (working/idling, honest dealing/theft, sharing/hoarding,
+   defending kin/fleeing, ancestor veneration, desecration, …).
+
+### What shipped
+
+- **`Npc/Religion/FaithConcept.java`** (new top-level enum) — the controlled
+  vocabulary (16 values: HONEST_LABOUR/GENEROSITY/TRUTHFULNESS/HARMONY/
+  RESPECT_THE_SEA/REMEMBRANCE/HONOUR_THE_ANCESTORS/LOYALTY/VALOUR + IDLENESS/GREED/
+  DECEIT/DISCORD/RECKLESSNESS/COWARDICE/SACRILEGE), each with a `displayName()`.
+  Every value is used by ≥1 faith (D2 is the behaviour consumer).
+- **`Npc/Religion/ReligionIdentity.java`** (new) — the record schema (cosmology,
+  `Deity` {domain, character, demands, rewards}, `SacredHistory` {foundingMyth,
+  ordered `HistoryEvent`s}, `List<Virtue>`, `List<Taboo>`, `Aesthetics` {styleId,
+  palette, iconography}, `List<String>` practices), a nested `DeityDomain` enum
+  (SUN/SEA/FORGE/FATE — only the four faiths' domains), and the parallel registry
+  (`get`/`all`/`build`) with the **first authored pass** for all four faiths.
+- **`Commands/ReligionDebugCommand.java`** — `/religion identity <religion>` prints
+  the faith's cosmology, deity (name reconciled from `Religion.deity()` + domain +
+  character + demands + rewards), sacred history, virtues + taboos (with their
+  concept tags), aesthetics, and practices.
+
+**Authored first pass (consistent with each faith's existing tenets/deity/rites):**
+- **Sunstead** (Sun-Mother, SUN): cosmology of the turning agrarian wheel; virtues
+  HONEST_LABOUR + GENEROSITY; taboos IDLENESS + GREED.
+- **The Loom** (no deity, FATE): the impersonal Pattern; virtues TRUTHFULNESS +
+  HARMONY; taboos DECEIT + DISCORD.
+- **Tidecall** (Sea-Mother, SEA): the deep that gives and takes; virtues
+  RESPECT_THE_SEA + REMEMBRANCE; taboos RECKLESSNESS + SACRILEGE.
+- **The Forge Creed** (First Forge-Father, FORGE): the line of iron ancestors;
+  virtues HONOUR_THE_ANCESTORS + LOYALTY + VALOUR; taboos COWARDICE + SACRILEGE.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionRegistry` (the four faiths + their ids); the
+   existing `Religion.deity()` NAME + `coreTenets()` — folded in (the readout reads
+   the name from `ReligionRegistry`), NOT duplicated or broken. No `Religion` change.
+2. **Downstream callers.** The `/religion identity` readout (the only consumer this
+   phase). D2 (the forward consumer of `FaithConcept` virtues/taboos — the schema
+   carries the concept tag it needs). `ReligionContent` (R3a) is unaffected — it
+   still owns deity-NAME/tenet flavor + rite profiles; `ReligionIdentity` is a
+   separate, additive content layer. R9 panels could surface identity later (not
+   this phase).
+3. **Sibling systems.** `ReligionContent`/`MonasticCrafts` — same parallel-registry
+   pattern; the calendar/rites are untouched.
+4. **Exhaustive switches.** `DeityDomain` is a new enum but is never exhaustively
+   switched (rendered via `name()` in the readout); `FaithConcept` likewise
+   (rendered via `name()`/`displayName()`). No exhaustive switch over either.
+   Confirmed.
+
+### Simplification Sweep
+
+`ReligionIdentity` reuses the `ReligionContent` parallel-registry pattern; the deity
+NAME + core tenets fold into the rich identity with one source per attribute (name
+in `Religion`, domain/character/virtues in the identity — not duplicated). No new
+registry framework. Classes in scope + inbound callers: `ReligionIdentity` (new;
+1 — the `/religion identity` readout; D2 to come), `FaithConcept` (new; 1 — the
+identity's virtues/taboos; D2 to come), `ReligionDebugCommand` (+1 subcommand),
+`ReligionRegistry` (read-only, the name/id source). No duplicate identity copy.
+
+### Deviations from prompt
+
+- **`FaithConcept` is one shared vocabulary for BOTH virtues and taboos** (not two
+  enums) — D2 judges actions against a single concept set, and several taboos are the
+  inverse of a virtue; one controlled vocabulary is the cleaner key for D2.
+- **The deity NAME is not stored in the identity** — it stays in `Religion.deity()`
+  and the readout reconciles the two, so the name has exactly one source (the
+  alternative — copying the name into the identity — would duplicate it).
+- **`FaithConcept`/`DeityDomain` rendered via `name()` in the readout** (the concept
+  TAG) so the smoke test can see what D2 keys on; `displayName()` is available for a
+  prettier later surface.
+
+### Out-of-scope but flagged
+
+- **D2** — virtues/taboos → NPC behaviour/mood (map an observed act to a
+  `FaithConcept`, approve/disapprove per the officiating faith's lists). The schema
+  is structured for it (the concept tag is the hook); no behaviour wired here.
+- **D3** — consuming deity/sacred-history/cosmology in dialogue/sermons/history.
+- **D4** — consuming `Aesthetics` (style/palette/iconography) in the building NBT /
+  visual hook.
+- Surfacing identity in the R9 player/temple panels; promoting the first-pass
+  authored text as Garrett refines it.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: no `Religion` record/codec change (git diff clean on
+`Religion.java`); `ReligionIdentity` mirrors the `ReligionContent` registry shape +
+keys by `ReligionRegistry` ids; all four faiths authored; every `FaithConcept` (16)
+and `DeityDomain` (4) value is used by ≥1 faith (no speculative/unused); the readout
+resolves the deity name from `Religion.deity()` (reconciliation) and the rich layer
+from the identity; the new enums are not exhaustively switched.
+
+### Smoke test (user-runnable)
+
+1. **Readout per faith.** Run `/religion identity sunstead`, `the_loom`, `tidecall`,
+   `forge_creed`; confirm each prints a coherent cosmology, deity (name + domain +
+   character + demands + rewards), sacred history (founding myth + ordered events),
+   virtues, taboos, aesthetics, and practices, and that each reads as a distinct,
+   refinable first pass.
+2. **Concept tags visible.** Confirm each virtue/taboo line shows its `FaithConcept`
+   tag (e.g. `[HONEST_LABOUR]`, `[COWARDICE]`) so D2 has a controlled value to key on.
+3. **Reconciliation intact.** Confirm the deity NAME in the readout matches
+   `Religion.deity()` (the Sun-Mother / the Sea-Mother / the First Forge-Father / "The
+   Loom" for the deity-less Loom), and that R3a effects + the existing deity/tenet
+   usage (rite invocations, confession tenet lines) still work unchanged.
+4. **Unknown/unauthored.** `/religion identity <bad-id>` fails cleanly ("Unknown
+   religion"); an authored-but-future id would report "No authored identity".
