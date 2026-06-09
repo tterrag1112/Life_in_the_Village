@@ -32,6 +32,10 @@ public final class GodRegistry {
     public static final String FORGE_FATHER = "forge_father";
 
     private static final Map<String, God> GODS = new LinkedHashMap<>();
+    /** F1a sub-stage 3a — reverse index: god id → the religions that venerate it.
+     *  Used by the favour economy to resolve a god's piety tier (piety is belief in
+     *  a RELIGION) and by 3b to map a god back to its religion for content. */
+    private static final Map<String, List<String>> RELIGIONS_BY_GOD = new LinkedHashMap<>();
     private static volatile boolean initialised = false;
 
     private GodRegistry() {}
@@ -51,6 +55,44 @@ public final class GodRegistry {
         return List.copyOf(GODS.values());
     }
 
+    // ── Religion → god(s) resolver (F1a sub-stage 2) ─────────────────────────
+
+    /**
+     * The gods a religion venerates, in order (first = primary), resolved from
+     * {@link Religion#godIds()}. An unknown / not-yet-registered god id is skipped
+     * with a warn (graceful — a typo degrades, never NPEs). The link sub-stage 3
+     * rides on (which god owns a religion's favour/miracles).
+     */
+    public static List<God> godsFor(Religion religion) {
+        ensureInit();
+        if (religion == null) return List.of();
+        List<God> out = new java.util.ArrayList<>();
+        for (String gid : religion.godIds()) {
+            God g = GODS.get(gid);
+            if (g == null) {
+                LOGGER.warn("[GodRegistry] Religion '{}' references unknown god id '{}' — skipping",
+                        religion.id(), gid);
+                continue;
+            }
+            out.add(g);
+        }
+        return out;
+    }
+
+    /** The religion's primary (first venerated) god, or empty for a god-less one. */
+    public static Optional<God> primaryGod(Religion religion) {
+        List<God> gods = godsFor(religion);
+        return gods.isEmpty() ? Optional.empty() : Optional.of(gods.get(0));
+    }
+
+    /** F1a sub-stage 3a — the religion ids that venerate {@code godId} (reverse of
+     *  {@link Religion#godIds()}). Used to resolve a god's piety tier (the best
+     *  belief among its venerating religions). Empty for an unknown god. */
+    public static List<String> religionsVenerating(String godId) {
+        ensureInit();
+        return godId == null ? List.of() : RELIGIONS_BY_GOD.getOrDefault(godId, List.of());
+    }
+
     // ── Init ───────────────────────────────────────────────────────────────
 
     private static synchronized void ensureInit() {
@@ -59,6 +101,12 @@ public final class GodRegistry {
         register(derive(THE_PATTERN,  ReligionRegistry.THE_LOOM));
         register(derive(SEA_MOTHER,   ReligionRegistry.TIDECALL));
         register(derive(FORGE_FATHER, ReligionRegistry.FORGE_CREED));
+        // Build the reverse index from the authored religion → godIds links.
+        for (Religion r : ReligionRegistry.all()) {
+            for (String gid : r.godIds()) {
+                RELIGIONS_BY_GOD.computeIfAbsent(gid, k -> new java.util.ArrayList<>()).add(r.id());
+            }
+        }
         initialised = true;
         LOGGER.info("[GodRegistry] Registered {} gods", GODS.size());
     }

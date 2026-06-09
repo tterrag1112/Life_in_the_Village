@@ -58,11 +58,11 @@ public final class DivineTheophany {
         String faith = primaryFaith(level, pid);
         if (faith == null) return;
 
-        float fav = DivineFavour.current(level, pid, faith, now);
+        float fav = DivineFavour.currentForReligion(level, pid, faith, now);
         RiteSavedData data = RiteSavedData.get(level);
 
         if (fav >= FAVOUR_PEAK
-                && DivineFavour.tierIn(level, pid, faith) == PietyTier.PIOUS) {
+                && DivineFavour.tierForReligion(level, pid, faith) == PietyTier.PIOUS) {
             if (now - data.getTheophanyTick(pid, faith + "|favour") >= COOLDOWN) {
                 fireFavour(level, player, faith, now);
             }
@@ -88,7 +88,7 @@ public final class DivineTheophany {
         player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, 12000, 3));
         player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 12000, 0));
         // The lasting mark of favour: pinned to the cap.
-        DivineFavour.addCapped(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
+        DivineFavour.addCappedForReligion(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
         RiteSavedData.get(level).setTheophanyTick(player.getUUID(), faith + "|favour", now);
     }
 
@@ -108,7 +108,7 @@ public final class DivineTheophany {
         player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 600, 0));
         player.addEffect(new MobEffectInstance(MobEffects.NAUSEA, 600, 0));
         player.addEffect(new MobEffectInstance(MobEffects.POISON, 300, 1));
-        DivineFavour.offend(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
+        DivineFavour.offendForReligion(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
         DivineWrath.armConsequenceCooldown(player.getUUID(), now);   // no double curse
         RiteSavedData.get(level).setTheophanyTick(player.getUUID(), faith + "|wrath", now);
     }

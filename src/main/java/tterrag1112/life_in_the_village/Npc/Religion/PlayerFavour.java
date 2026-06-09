@@ -7,11 +7,13 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Divine Layer V1 — a player's <b>Divine Favour</b> ledger: a per-deity standing,
- * <b>distinct from piety</b> (piety is belief; favour is the deity's regard) and
+ * Divine Layer V1 — a player's <b>Divine Favour</b> ledger: a per-god standing,
+ * <b>distinct from piety</b> (piety is belief; favour is the god's regard) and
  * spendable (V2 miracles). Pure data — the earning, decay, cap, and deity-demand
- * weighting all live in {@link DivineFavour}; this just persists, per religion id,
- * the last-known favour {@code amount} and the {@code lastTick} it was rebased, so
+ * weighting all live in {@link DivineFavour}; this just persists, <b>per god id</b>
+ * (F1a sub-stage 3a — re-keyed from religion id to god id, so a player's standing
+ * with each god is independent once religions venerate several), the last-known
+ * favour {@code amount} and the {@code lastTick} it was rebased, so
  * {@link DivineFavour} can relax it lazily (no per-tick scan).
  *
  * <p>Stored on the player's religion data in {@code RiteSavedData} (sibling to the
@@ -19,7 +21,7 @@ import java.util.Map;
  */
 public final class PlayerFavour {
 
-    /** One deity's stored favour: the amount at {@code lastTick} (relaxation toward
+    /** One god's stored favour: the amount at {@code lastTick} (relaxation toward
      *  the piety-tier equilibrium is applied lazily by {@link DivineFavour}). */
     public record Entry(float amount, long lastTick) {
         public static final Codec<Entry> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -28,40 +30,41 @@ public final class PlayerFavour {
         ).apply(i, Entry::new));
     }
 
-    private final Map<String, Entry> byReligion = new LinkedHashMap<>();
+    /** god id → stored favour entry (F1a sub-stage 3a — re-keyed from religion id). */
+    private final Map<String, Entry> byGod = new LinkedHashMap<>();
 
     public PlayerFavour() {}
 
-    /** The stored (un-relaxed) entry for {@code religionId}, or null. */
-    public Entry raw(String religionId) {
-        return religionId == null ? null : byReligion.get(religionId);
+    /** The stored (un-relaxed) entry for {@code godId}, or null. */
+    public Entry raw(String godId) {
+        return godId == null ? null : byGod.get(godId);
     }
 
-    /** Rebases the stored favour for {@code religionId} to {@code amount} at
-     *  {@code tick}. Exactly zero drops the entry (no clutter); a NEGATIVE amount is
-     *  KEPT — it's displeasure (Divine Layer V4, signed favour). */
-    public void set(String religionId, float amount, long tick) {
-        if (religionId == null) return;
-        if (amount == 0f) byReligion.remove(religionId);
-        else byReligion.put(religionId, new Entry(amount, tick));
+    /** Rebases the stored favour for {@code godId} to {@code amount} at {@code tick}.
+     *  Exactly zero drops the entry (no clutter); a NEGATIVE amount is KEPT — it's
+     *  displeasure (Divine Layer V4, signed favour). */
+    public void set(String godId, float amount, long tick) {
+        if (godId == null) return;
+        if (amount == 0f) byGod.remove(godId);
+        else byGod.put(godId, new Entry(amount, tick));
     }
 
-    /** Read-only snapshot (religion id → stored entry). */
+    /** Read-only snapshot (god id → stored entry). */
     public Map<String, Entry> all() {
-        return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(byReligion));
+        return java.util.Collections.unmodifiableMap(new LinkedHashMap<>(byGod));
     }
 
-    public boolean isEmpty() { return byReligion.isEmpty(); }
+    public boolean isEmpty() { return byGod.isEmpty(); }
 
-    // ── Persistence ──────────────────────────────────────────────────────────
+    // ── Persistence (codec shape unchanged — only the semantic key changed) ───
 
     public static final Codec<PlayerFavour> CODEC =
             Codec.unboundedMap(Codec.STRING, Entry.CODEC)
-                    .xmap(PlayerFavour::fromMap, p -> Map.copyOf(p.byReligion));
+                    .xmap(PlayerFavour::fromMap, p -> Map.copyOf(p.byGod));
 
     private static PlayerFavour fromMap(Map<String, Entry> map) {
         PlayerFavour p = new PlayerFavour();
-        if (map != null) p.byReligion.putAll(map);
+        if (map != null) p.byGod.putAll(map);
         return p;
     }
 }

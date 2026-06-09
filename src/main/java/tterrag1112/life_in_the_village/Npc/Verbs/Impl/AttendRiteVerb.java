@@ -76,7 +76,7 @@ public final class AttendRiteVerb implements PlayerVerb {
 
         // Divine Layer V1 — attending a rite earns Divine Favour with the rite's
         // deity (the faith the attendance credits).
-        tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.award(
+        tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.awardForReligion(
                 ctx.level(), playerId, targetFaith,
                 tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.ATTEND_RITE,
                 ctx.level().getGameTime());

@@ -76,8 +76,8 @@ public final class DivineVision {
 
         String faith = primaryFaith(level, pid);
         if (faith == null) return;
-        if (DivineFavour.tierIn(level, pid, faith).ordinal() < MIN_TIER.ordinal()) return;
-        if (DivineFavour.current(level, pid, faith, now) < HIGH_FAVOUR) return;
+        if (DivineFavour.tierForReligion(level, pid, faith).ordinal() < MIN_TIER.ordinal()) return;
+        if (DivineFavour.currentForReligion(level, pid, faith, now) < HIGH_FAVOUR) return;
         if (level.getRandom().nextInt(VISION_CHANCE) != 0) return;
 
         deliver(level, player, faith, now);
@@ -131,7 +131,7 @@ public final class DivineVision {
                 && id != null && !id.taboos().isEmpty()) {
             Taboo t = id.taboos().get(level.getRandom().nextInt(id.taboos().size()));
             pool.add("You have strayed. " + t.text());
-        } else if (DivineFavour.current(level, player.getUUID(), faith, now) >= 60f
+        } else if (DivineFavour.currentForReligion(level, player.getUUID(), faith, now) >= 60f
                 && id != null && !id.virtues().isEmpty()) {
             Virtue v = id.virtues().get(level.getRandom().nextInt(id.virtues().size()));
             pool.add("You have served well, and I see it. " + v.text());
@@ -173,7 +173,7 @@ public final class DivineVision {
         if (c == null || !c.religionId().equals(religionId) || c.act() != act) return;
 
         data.clearPlayerCalling(playerId);
-        DivineFavour.addCapped(level, playerId, religionId, CALLING_REWARD, now);
+        DivineFavour.addCappedForReligion(level, playerId, religionId, CALLING_REWARD, now);
 
         ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
         if (player == null) return;

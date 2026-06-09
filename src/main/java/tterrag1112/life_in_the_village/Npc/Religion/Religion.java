@@ -32,6 +32,10 @@ import java.util.Optional;
  * @param preferredBookCategories  drives the temple library's book
  *                                 stocking pass when scribal +
  *                                 religion meet
+ * @param godIds                   F1a — the ordered god ids this religion
+ *                                 venerates (first = primary). All four
+ *                                 starters are single-god today; pantheons
+ *                                 come later. Resolve via {@link GodRegistry}.
  */
 public record Religion(
         String id,
@@ -41,7 +45,8 @@ public record Religion(
         List<String> sacredLocations,
         ReligiousCalendar calendar,
         Optional<String> deity,
-        List<BookCategory> preferredBookCategories
+        List<BookCategory> preferredBookCategories,
+        List<String> godIds
 ) {
     public Religion {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("id required");
@@ -52,10 +57,14 @@ public record Religion(
         if (calendar == null) calendar = new ReligiousCalendar(java.util.Map.of());
         if (deity == null) deity = Optional.empty();
         preferredBookCategories  = preferredBookCategories  == null ? List.of() : List.copyOf(preferredBookCategories);
+        godIds                   = godIds                   == null ? List.of() : List.copyOf(godIds);
     }
 
     public boolean ritualises(Rite r) { return rites.contains(r); }
 
+    // Codec — now 9 fields (still under the 16-field RecordCodecBuilder ceiling).
+    // F1b's per-world fields will eat the remaining headroom; nest into a
+    // sub-record then if needed.
     public static final Codec<Religion> CODEC = RecordCodecBuilder.create(i -> i.group(
             Codec.STRING.fieldOf("id").forGetter(Religion::id),
             Codec.STRING.fieldOf("displayName").forGetter(Religion::displayName),
@@ -67,6 +76,7 @@ public record Religion(
             Codec.STRING.optionalFieldOf("deity").forGetter(Religion::deity),
             Codec.STRING.xmap(BookCategory::valueOf, BookCategory::name).listOf()
                     .optionalFieldOf("preferredBookCategories", List.of())
-                    .forGetter(Religion::preferredBookCategories)
+                    .forGetter(Religion::preferredBookCategories),
+            Codec.STRING.listOf().optionalFieldOf("godIds", List.of()).forGetter(Religion::godIds)
     ).apply(i, Religion::new));
 }

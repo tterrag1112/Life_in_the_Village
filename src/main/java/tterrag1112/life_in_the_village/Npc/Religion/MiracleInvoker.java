@@ -30,9 +30,9 @@ public final class MiracleInvoker {
     public static Status status(ServerLevel level, ServerPlayer player, Miracle m, long now) {
         UUID pid = player.getUUID();
         if (cooldownRemaining(pid, m.id(), now) > 0) return Status.ON_COOLDOWN;
-        PietyTier tier = DivineFavour.tierIn(level, pid, m.religionId());
+        PietyTier tier = DivineFavour.tierForReligion(level, pid, m.religionId());
         if (tier.ordinal() < m.minTier().ordinal()) return Status.LOCKED_TIER;
-        float favour = DivineFavour.current(level, pid, m.religionId(), now);
+        float favour = DivineFavour.currentForReligion(level, pid, m.religionId(), now);
         if (favour < m.minFavour() || favour < m.cost()) return Status.LOCKED_FAVOUR;
         return Status.AVAILABLE;
     }
@@ -51,12 +51,12 @@ public final class MiracleInvoker {
             return new Result(false, m.displayName() + " is still gathering ("
                     + (cd / 20) + "s).");
         }
-        PietyTier tier = DivineFavour.tierIn(level, pid, m.religionId());
+        PietyTier tier = DivineFavour.tierForReligion(level, pid, m.religionId());
         if (tier.ordinal() < m.minTier().ordinal()) {
             return new Result(false, m.displayName() + " requires deeper devotion ("
                     + m.minTier().displayName() + ").");
         }
-        float favour = DivineFavour.current(level, pid, m.religionId(), now);
+        float favour = DivineFavour.currentForReligion(level, pid, m.religionId(), now);
         if (favour < m.minFavour() || favour < m.cost()) {
             return new Result(false, "Not enough favour for " + m.displayName()
                     + " (need " + Math.round(Math.max(m.minFavour(), m.cost()))
@@ -64,7 +64,7 @@ public final class MiracleInvoker {
         }
 
         // Spend the favour (the only cost). Defensive: bail if the spend fails.
-        if (!DivineFavour.spend(level, pid, m.religionId(), m.cost(), now)) {
+        if (!DivineFavour.spendForReligion(level, pid, m.religionId(), m.cost(), now)) {
             return new Result(false, "The deity withholds its favour.");
         }
         // Apply the favour-scaled effect, then arm the cooldown.

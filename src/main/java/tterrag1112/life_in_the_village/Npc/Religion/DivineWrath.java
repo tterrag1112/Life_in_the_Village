@@ -55,7 +55,7 @@ public final class DivineWrath {
         boolean taboo = id.taboos().stream().anyMatch(t -> t.concept() == concept);
         if (!taboo) return;                                  // not YOUR deity's taboo
 
-        DivineFavour.offend(level, player.getUUID(), faith, SACRILEGE_HIT, now);
+        DivineFavour.offendForReligion(level, player.getUUID(), faith, SACRILEGE_HIT, now);
         String reproach = id.taboos().stream()
                 .filter(t -> t.concept() == concept).findFirst()
                 .map(t -> t.text()).orElse("");
@@ -75,7 +75,7 @@ public final class DivineWrath {
         String faith = primaryFaith(level, pid);
         if (faith == null) return;
 
-        float fav = DivineFavour.current(level, pid, faith, now);
+        float fav = DivineFavour.currentForReligion(level, pid, faith, now);
         DispleasureTier tier = DivineFavour.displeasureOf(fav);
         if (tier == DispleasureTier.NONE) return;
 

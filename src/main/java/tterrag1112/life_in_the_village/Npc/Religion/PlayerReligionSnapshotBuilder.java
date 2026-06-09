@@ -93,16 +93,24 @@ public final class PlayerReligionSnapshotBuilder {
                     e.dayOfYear(), e.daysAway(), own));
         }
 
-        // ── Divine Favour per deity (Divine Layer V1) ────────────────────────
+        // ── Divine Favour per GOD (Divine Layer V1; F1a sub-stage 3a — re-keyed) ──
         long now = level.getGameTime();
-        java.util.Set<String> favourFaiths = new java.util.LinkedHashSet<>();
-        pietyOpt.ifPresent(p -> favourFaiths.addAll(p.beliefs().keySet()));
-        rites.getPlayerFavour(playerId).ifPresent(f -> favourFaiths.addAll(f.all().keySet()));
+        java.util.Set<String> favourGods = new java.util.LinkedHashSet<>();
+        // Gods the player already has a favour entry with (keys are god ids now)…
+        rites.getPlayerFavour(playerId).ifPresent(f -> favourGods.addAll(f.all().keySet()));
+        // …plus the gods of every religion the player believes in (so a devout-but-
+        // unspent god still shows its baseline standing).
+        pietyOpt.ifPresent(p -> {
+            for (String rid : p.beliefs().keySet()) {
+                ReligionRegistry.find(rid).ifPresent(r ->
+                        GodRegistry.godsFor(r).forEach(g -> favourGods.add(g.id())));
+            }
+        });
         List<String> favourSummary = new ArrayList<>();
-        for (String faithId : favourFaiths) {
-            float fav = DivineFavour.current(level, playerId, faithId, now);
-            String fname = ReligionRegistry.find(faithId)
-                    .map(Religion::displayName).orElse(faithId);
+        for (String godId : favourGods) {
+            float fav = DivineFavour.current(level, playerId, godId, now);
+            God god = GodRegistry.get(godId);
+            String gname = god != null ? god.displayName() : godId;
             // V4 — the favour line is the favour/displeasure counter (signed).
             DivineFavour.DispleasureTier dt = DivineFavour.displeasureOf(fav);
             if (dt != DivineFavour.DispleasureTier.NONE) {
@@ -112,9 +120,9 @@ public final class PlayerReligionSnapshotBuilder {
                     case WRATH -> "WRATH";
                     case NONE  -> "";
                 };
-                favourSummary.add(fname + " " + Math.round(fav) + " (" + tag + ")");
+                favourSummary.add(gname + " " + Math.round(fav) + " (" + tag + ")");
             } else if (fav >= 1f) {
-                favourSummary.add(fname + " " + Math.round(fav));
+                favourSummary.add(gname + " " + Math.round(fav));
             }
         }
 
