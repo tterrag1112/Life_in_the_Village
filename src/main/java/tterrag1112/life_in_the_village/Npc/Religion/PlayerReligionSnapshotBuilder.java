@@ -48,7 +48,8 @@ public final class PlayerReligionSnapshotBuilder {
             ownFaithId = piety.primaryReligion().orElse(null);
             Optional<Religion> religion = piety.primaryReligion().flatMap(ReligionRegistry::find);
             religionName = religion.map(Religion::displayName).orElse("");
-            deityName = religion.flatMap(Religion::deity).orElse("");
+            // F1a 4a — the headline deity name is the primary god's (per-god rows are 4b).
+            deityName = religion.map(r -> GodRegistry.primaryDeityName(r, "")).orElse("");
             pietyStrength = piety.primaryStrength();
             pietyTier = piety.primaryTier().displayName();
             var beliefs = piety.beliefs();
@@ -157,9 +158,10 @@ public final class PlayerReligionSnapshotBuilder {
             if (e.getValue() > bestTick) { bestTick = e.getValue(); bestKey = e.getKey(); }
         }
         if (bestKey != null) {
+            // F1a 3b/4a — theophany milestone keys are "godId|pole" now; resolve the
+            // GOD's display name for the banner (was reading Religion.deity()).
             String[] parts = bestKey.split("\\|");
-            String deity = ReligionRegistry.find(parts[0])
-                    .map(r -> r.deity().orElse(r.displayName())).orElse(parts[0]);
+            String deity = GodRegistry.find(parts[0]).map(God::displayName).orElse(parts[0]);
             boolean wrath = parts.length > 1 && parts[1].equals("wrath");
             theophany = "✦ " + deity + (wrath ? "'s wrath" : "'s glory");
         }

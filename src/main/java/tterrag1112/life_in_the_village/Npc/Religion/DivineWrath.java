@@ -44,16 +44,21 @@ public final class DivineWrath {
     public static void onPlayerSacrilege(ServerLevel level, ServerPlayer player,
                                          FaithConcept concept, long now) {
         UUID pid = player.getUUID();
-        God god = primaryGod(level, pid);
-        if (god == null) return;
-        if (god.taboos().stream().noneMatch(t -> t.concept() == concept)) return; // not YOUR god's taboo
+        String faith = RiteSavedData.get(level).getPlayerPiety(pid)
+                .flatMap(PietyComponent::primaryReligion).orElse(null);
+        Religion religion = faith == null ? null : ReligionRegistry.get(faith);
+        if (religion == null) return;
 
-        DivineFavour.offend(level, pid, god.id(), SACRILEGE_HIT, now);
-        String reproach = god.taboos().stream()
-                .filter(t -> t.concept() == concept).findFirst()
-                .map(t -> t.text()).orElse("");
-        DivineVision.speak(god, player,
-                "You profane what I hold. " + reproach + " Turn back, lest you know my displeasure.");
+        // F1a 4a — offense targets the SPECIFIC god(s) whose taboo was broken (not a
+        // blanket fan-out). Single-god → the one god if it forbids the concept.
+        for (God god : GodRegistry.godsTabooing(religion, concept)) {
+            DivineFavour.offend(level, pid, god.id(), SACRILEGE_HIT, now);
+            String reproach = god.taboos().stream()
+                    .filter(t -> t.concept() == concept).findFirst()
+                    .map(t -> t.text()).orElse("");
+            DivineVision.speak(god, player, "You profane what I hold. " + reproach
+                    + " Turn back, lest you know my displeasure.");
+        }
     }
 
     // ── Escalating consequences (per-player tick; iterates the player's gods) ──
@@ -113,11 +118,4 @@ public final class DivineWrath {
         }
     }
 
-    /** The player's primary god (their primary religion's primary god), or null. */
-    private static God primaryGod(ServerLevel level, UUID playerId) {
-        String faith = RiteSavedData.get(level).getPlayerPiety(playerId)
-                .flatMap(PietyComponent::primaryReligion).orElse(null);
-        Religion rel = faith == null ? null : ReligionRegistry.get(faith);
-        return rel == null ? null : GodRegistry.primaryGod(rel).orElse(null);
-    }
 }

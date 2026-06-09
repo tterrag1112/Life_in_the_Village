@@ -385,28 +385,35 @@ public final class ReligionDebugCommand {
             src.sendFailure(Component.literal("No authored identity for " + religion.displayName()));
             return 0;
         }
-        // Deity NAME stays the single source in Religion.deity() (reconciliation);
-        // the rich domain/character/demands/rewards come from the identity.
-        String deityName = religion.deity().orElse(religion.displayName());
+        // F1a 4a — deity attributes (name/domain/character/demands/rewards/virtues/
+        // taboos) now come from the GOD; cosmology/history/aesthetics/practices stay
+        // the religion's identity. (Keeps the readout clean of deity() reads so the
+        // cleanup stage can delete the ReligionIdentity deity duplication.)
+        var god = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                .primaryGod(religion).orElse(null);
+        String deityName = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                .primaryDeityName(religion, religion.displayName());
 
         StringBuilder sb = new StringBuilder();
         sb.append("§e=== ").append(religion.displayName()).append(" — identity ===");
         sb.append("\n§6Cosmology§7: ").append(identity.cosmology());
-        sb.append("\n§6Deity§7: §f").append(deityName)
-                .append("§7 (domain §f").append(identity.deity().domain()).append("§7)");
-        sb.append("\n  §7character: ").append(identity.deity().character());
-        sb.append("\n  §7demands: ").append(identity.deity().demands());
-        sb.append("\n  §7rewards: ").append(identity.deity().rewards());
+        if (god != null) {
+            sb.append("\n§6Deity§7: §f").append(deityName)
+                    .append("§7 (domain §f").append(god.domain()).append("§7)");
+            sb.append("\n  §7character: ").append(god.character());
+            sb.append("\n  §7demands: ").append(god.demands());
+            sb.append("\n  §7rewards: ").append(god.rewards());
+        }
         sb.append("\n§6Sacred history§7: ").append(identity.history().foundingMyth());
         for (var e : identity.history().events()) {
             sb.append("\n  §a").append(e.title()).append("§7 — ").append(e.text());
         }
         sb.append("\n§6Virtues§7:");
-        for (var v : identity.virtues()) {
+        for (var v : tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.unionVirtues(religion)) {
             sb.append("\n  §a[").append(v.concept().name()).append("]§7 ").append(v.text());
         }
         sb.append("\n§6Taboos§7:");
-        for (var t : identity.taboos()) {
+        for (var t : tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.unionTaboos(religion)) {
             sb.append("\n  §c[").append(t.concept().name()).append("]§7 ").append(t.text());
         }
         var a = identity.aesthetics();

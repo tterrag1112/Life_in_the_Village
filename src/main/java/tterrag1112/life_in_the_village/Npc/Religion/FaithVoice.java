@@ -63,27 +63,29 @@ public final class FaithVoice {
         if (faith == null) return Optional.empty();
         Religion religion = ReligionRegistry.get(faith);
         if (religion == null) return Optional.empty();
-        ReligionIdentity id = ReligionIdentity.get(faith);
-
-        boolean personified = religion.deity().isPresent();
-        // The holy name: the deity where one exists (single-sourced in
-        // Religion.deity()), the abstract "the Pattern" for a deity-less faith.
-        String holy = personified ? religion.deity().get() : "the Pattern";
+        // F1a 4a — deity attributes (name / domain / demands / rewards) from the
+        // PRIMARY god; "what the faith esteems" (the virtue pool) from the UNION.
+        God god = GodRegistry.primaryGod(religion).orElse(null);
+        List<Virtue> unionVirtues = GodRegistry.unionVirtues(religion);
 
         List<String> pool = new ArrayList<>();
-        if (id != null) {
+        if (god != null) {
+            boolean personified = god.name().isPresent();
+            // The holy name: the deity where one exists, the abstract "the Pattern"
+            // for an impersonal god.
+            String holy = god.name().orElse("the Pattern");
             // 1. A faith greeting in the deity's domain idiom.
-            pool.add(domainGreeting(id.deity().domain(), holy));
+            pool.add(domainGreeting(god.domain(), holy));
             // 2. A blessing — invoking the deity where there is one; abstract for the
             //    Loom (the Pattern "neither rewards nor punishes; it only records").
             pool.add(personified
-                    ? "May " + holy + " grant you " + id.deity().rewards() + "."
+                    ? "May " + holy + " grant you " + god.rewards() + "."
                     : "Weave true, and keep your thread clean of knots.");
             // 3. What the faith asks of its people.
-            pool.add(capitalize(holy) + " asks " + id.deity().demands() + ".");
+            pool.add(capitalize(holy) + " asks " + god.demands() + ".");
             // 4. A virtue spoken plainly (already a complete authored sentence).
-            if (!id.virtues().isEmpty()) {
-                Virtue v = id.virtues().get(rng.nextInt(id.virtues().size()));
+            if (!unionVirtues.isEmpty()) {
+                Virtue v = unionVirtues.get(rng.nextInt(unionVirtues.size()));
                 pool.add(v.text());
             }
         } else {
