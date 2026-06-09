@@ -10,7 +10,6 @@ import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.Block;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
@@ -197,23 +196,10 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
     }
 
     /** First matching block pos across the amenity types, in preference order
-     *  (empty list ⇒ null = no workstation needed). */
+     *  (empty list ⇒ null = no workstation needed). Delegates to the single
+     *  amenity-scan home {@link AmenityType#firstPresent}. */
     protected static BlockPos firstAmenityPos(ServerLevel level, Building b,
                                               List<AmenityType> types) {
-        for (AmenityType type : types) {
-            BlockPos pos = findFirstAmenityPos(level, b, type);
-            if (pos != null) return pos;
-        }
-        return null;
-    }
-
-    protected static BlockPos findFirstAmenityPos(ServerLevel level, Building b, AmenityType type) {
-        BlockPos min = b.getShape().getMin();
-        BlockPos max = b.getShape().getMax();
-        for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
-            Block block = level.getBlockState(pos).getBlock();
-            if (type.matches(block)) return pos.immutable();
-        }
-        return null;
+        return AmenityType.firstPresent(level, b, types);
     }
 }

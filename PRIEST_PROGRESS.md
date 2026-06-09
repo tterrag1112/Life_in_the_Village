@@ -6622,3 +6622,174 @@ added with the existing predicate shape (BeehiveBlock/LecternBlock imported);
    exactly as M2 (same family-need trigger, same amenities, same household output,
    same XP) — the refactor is invisible.
 5. **ABBEY too.** Repeat (1) for an ABBEY — the monk produces identically.
+
+---
+
+## R6c — the self-organizing monastery (initiate → skill → need) (2026-06-09)
+
+### Disposition (findings)
+
+Closes the monk loop. R6b gave a monk skill-driven production, but it only makes
+what it ALREADY has skills for, and a fresh skill-less monk does nothing. R6c
+makes the monastery **self-organize** around its needs: derive needs from the
+shared store, prioritize the most-needed craft in production, and draw idle
+initiates to DEVELOP a needed + supported skill (mentors accelerate) — emergent,
+not scripted.
+
+1. **Needs.** `VillageNeedsCalculator` exists but is **village-scale** (the
+   central stockpile + all NPCs; FOOD/BUILDING_MATERIALS/SEEDS via nutrition).
+   It does not fit a per-monastery role-goods need, so — per the prompt's "else a
+   small store-stock-vs-target computation" — I derive the monastery's need
+   locally: `need(craft) = quota − monasteryStore.countItem(good)`, reusing R6b's
+   per-craft quotas as the targets. (Food eating/distribution is R6d; the derived
+   needs here are the producible role-goods: candles, honey, books, tonics.)
+2. **Need-priority.** R6b's `MonkProductionBehavior.selectPlan` took the first
+   qualifying craft; now it takes the **most-needed** qualifying craft (greatest
+   `need`), keeping every existing gate (skill ≥ level + amenity + inputs +
+   below-quota), tie-broken by craft order.
+3. **Development catalysts (all reused):** `FamilySkillSeeder` awards a biased-low
+   `1 + min(rand15, rand15)` (~5 XP) one-shot at coming-of-age via
+   `SkillXp.award` — I mirror its magnitude with a small **daily directed seed**.
+   `SkillXp.award` **already applies `MentorshipBonus.npcMentorshipFor` + the
+   AMBITION modifier automatically**; the generic "senior monk in the house"
+   accelerator (no apprenticeship contract) I apply by scaling the seed by
+   `MentorshipBonus.NPC_MENTORSHIP_MULTIPLIER` (1.5). Hobby steering via
+   `NpcHobbyPreference.setTopHobbies` feeds the existing hobby-drift XP path where
+   a matching hobby exists (candlemaking → `home_chandlery`).
+4. **Hook.** A daily per-village pass, alongside `TempleProsperity.tickVillage` in
+   `RiteScheduler.dailyTick` (TickSystems' 24000-tick driver). Monks of a
+   monastery are found by the `TempleProsperity.findAssignedPriest` scan pattern
+   (AABB + profession == MONK + assignedBuildingId).
+
+### What shipped
+
+- **`Npc/Religion/MonasticCrafts.java`** (new) — the single source of the
+  monastic-craft definitions (extracted from R6b's behavior-private table):
+  `MonasticCraft(skill, minLevel, amenities, recipe, quota, xp, label, hobbyId)`
+  + the `CRAFTS` list + `need` / `amenityPos` / `isSupported` / `supportedAt` /
+  `isProducer` helpers. Shared by the behavior + the developer.
+- **`Npc/Brain/Behaviors/Production/MonkProductionBehavior.java`** — refactored to
+  source `MonasticCrafts.CRAFTS` and pick the **most-needed** qualifying craft
+  (R6c need-priority) instead of the first.
+- **`Npc/Religion/MonasteryDeveloper.java`** (new) — the daily per-village pass:
+  for each MONASTERY/ABBEY, steer each **idle initiate** (a monk not yet producing
+  any supported craft) toward a needed + supported craft — preferring an
+  **uncovered** one so initiates diversify (beekeepers AND scribes) — via a small
+  directed seed (`SEED_XP_PER_DAY = 4`, ×1.5 with a co-located senior monk at
+  skill ≥ 30) + hobby steering where a hobby exists. Bounded + gradual (a viable
+  producer at skill ≥ 1 in ~1–2 weeks, then production XP takes over and the seed
+  stops).
+- **`Npc/Religion/RiteScheduler.java`** — step 7 of `dailyTick` runs
+  `MonasteryDeveloper.tickVillage` per village (guarded).
+- **`Village/AmenityType.java`** — added `firstPresent(level, building, types/type)`
+  static helpers (the single home for the building amenity scan).
+- **`Npc/Brain/Behaviors/Homestead/ContextProductionBehavior.java`** — its
+  `firstAmenityPos` now delegates to `AmenityType.firstPresent` (the private copy
+  retired; behavior-identical).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The needs derivation (`MonasticCrafts.need` =
+   store-vs-quota), the monastery amenities (`MonasticCrafts.supportedAt` via the
+   consolidated `AmenityType.firstPresent`), the monks' skills
+   (`SkillComponent.getLevel`). All read-only.
+2. **Downstream callers.** `MonkProductionBehavior.selectPlan` (need-priority);
+   `SkillXp.award` (the directed seed — applies its own auto-mentorship/ambition);
+   `NpcHobbyPreference.setTopHobbies` (hobby steering → the existing hobby-drift
+   XP); the monastery shared store. `RiteScheduler.dailyTick` gains a guarded
+   step 7. The R6b `MonkProductionBehavior` table moved into `MonasticCrafts` (its
+   only consumer + the new developer).
+3. **Sibling systems.** HOME production untouched (the `ContextProductionBehavior`
+   change is an internal delegation of the amenity scan — behavior-identical; HOME
+   selectPlan is the verbatim M2 logic). Profession production behaviors untouched.
+   The apprentice/mentor system is REUSED read-only — the monastic mentor applies
+   the `MentorshipBonus` CONSTANT (1.5×) directly; it creates NO apprenticeship
+   contract, so it can't clash with R1d's clergy apprenticeship use. The hobby
+   system is reused via its public `setTopHobbies`. R6d (distribution/economy)
+   flagged.
+4. **Exhaustive switches.** None added; no enum touched. Confirmed.
+
+### Simplification Sweep
+
+Need-priority is a `selectPlan` ordering (no new selection framework); development
+reuses the seed (`SkillXp.award`) + hobby drift (`setTopHobbies`) + mentor
+(`MentorshipBonus`) mechanisms; needs reuse a tiny store-vs-quota computation (no
+parallel needs system). Consolidations: the monastic-craft table now lives once in
+`MonasticCrafts` (was behavior-private); the building amenity scan now lives once
+in `AmenityType.firstPresent` (the R6b `ContextProductionBehavior` copy retired).
+Classes in scope + inbound callers: `MonasticCrafts` (new; 2 — the behavior + the
+developer), `MonkProductionBehavior` (1 — ProfessionBrainFactory MONK WORK),
+`MonasteryDeveloper` (1 — RiteScheduler.dailyTick), `AmenityType.firstPresent` (2 —
+ContextProductionBehavior + MonasticCrafts), `RiteScheduler.dailyTick` (the
+TickSystems driver). No forked needs/production/mentor framework.
+
+### Deviations from prompt
+
+- **Needs are a small per-monastery store-vs-quota computation, not
+  `VillageNeedsCalculator`** — the latter is village-scale (stockpile + all NPCs,
+  food/materials/seeds) and doesn't express a monastery's role-goods need; the
+  prompt's fallback ("a small store stock vs target computation") is the fit. Food
+  need (monks eating) is R6d's distribution concern, noted not built.
+- **The mentor accelerator is applied by scaling the seed by the `MentorshipBonus`
+  constant**, not by creating an apprenticeship contract. `SkillXp.award`'s
+  built-in mentorship only fires for an apprenticeship/elderly relationship; a
+  generic "senior monk in the cloister" wouldn't trigger it, so the seed is scaled
+  directly (still reusing `MentorshipBonus.NPC_MENTORSHIP_MULTIPLIER`). A formal
+  monastic apprenticeship is a flagged richer option.
+- **Hobby steering only where a hobby exists** (candlemaking → `home_chandlery`);
+  beekeeping/literacy/medicine have no matching hobby today, so they develop via
+  the directed seed alone (the "and/or" the prompt allows). Adding monastic
+  hobbies is a flagged enhancement.
+- **Diversity is "uncovered needs first" within a daily pass**, not a persisted
+  assignment — emergent and bounded, no new brain memory.
+
+### Out-of-scope but flagged
+
+- **R6d** — mealtime distribution / consumption from the monastery shared store +
+  the monastery money economy/wages (the existing `EatMealBehavior` covers
+  individual eating; the monastery is still OUT of `TempleProsperity`). A derived
+  FOOD need for the monastery (target = monk-count nutrition) lands with R6d.
+- **The Abbot office** issuing assignments (needs are DERIVED this phase, not
+  abbot-issued) — offices pass.
+- **Mead + a BREWING skill**; monastic hobbies for beekeeping/literacy/medicine;
+  a formal monastic apprenticeship contract; re-steering an over-covered producer
+  toward an uncovered gap (only idle initiates develop this phase).
+- **Standalone-district worldgen** — later.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: signatures confirmed (`MentorshipBonus.NPC_MENTORSHIP_MULTIPLIER`
+1.5f, `NpcHobbyPreference.setTopHobbies(List<String>)`, `SkillXp.award` float
+overload, `AmenityType.firstPresent`); the developer is hooked into `dailyTick`
+(guarded, same-package, no import); `MonkProductionBehavior` sources
+`MonasticCrafts.CRAFTS` and picks the most-needed qualifying craft (need-priority);
+`MonasteryDeveloper` only targets supported crafts (never develops an unsupportable
+craft), only seeds idle initiates (self-limiting once skill ≥ 1), and is bounded
+(small daily seed); HOME is untouched (the `ContextProductionBehavior` amenity-scan
+delegation is behavior-identical; HOME selectPlan unchanged); the monastic-craft
+table + amenity scan are each single-sourced now.
+
+### Smoke test (user-runnable)
+
+1. **Needs derived + need-priority.** Build a monastery with an APIARY + a LECTERN;
+   draw its candle/book/honey store below target. A monk skilled in two of those
+   makes the MOST-needed one first (lowest store relative to its quota); stock one
+   good up to quota and confirm the monk switches to the next-most-needed.
+2. **Initiates develop toward needed + supported crafts.** Drop several skill-less
+   monks into the apiary+scriptorium monastery. Over in-game days confirm idle
+   initiates gain skill (check the profile) steered toward the needed crafts —
+   some toward BEEKEEPING, some toward LITERACY (diversify) — and, once each
+   crosses skill 1, they start producing honey / books into the store.
+3. **Mentor acceleration.** With a senior monk (skill ≥ 30 in a craft) in the
+   cloister, confirm an initiate developing THAT craft levels noticeably faster
+   (×1.5 seed) than without a mentor.
+4. **Only supported crafts.** Remove the LECTERN; confirm initiates no longer
+   develop LITERACY (the monastery can't support scribing) — they steer to the
+   remaining supported needs (honey / candles).
+5. **Gradual + bounded.** Confirm development is slow (no instant mastery — a
+   fresh initiate takes ~1–2 weeks to become a viable producer) and stops seeding
+   a monk once it's a producer.
+6. **No regressions.** HOME family production + the profession behaviors are
+   unchanged; nothing crashes (the daily pass is guarded).
