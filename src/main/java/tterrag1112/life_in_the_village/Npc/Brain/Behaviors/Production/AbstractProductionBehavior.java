@@ -30,6 +30,7 @@ import tterrag1112.life_in_the_village.Entities.ActivityState;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.GreetPlayerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
@@ -395,6 +396,10 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             entity.setActivityState(BLOCKED_WORK_BLOCK);
             return false;
         }
+        // Committing-preempts-ambient — a customer to greet preempts manning the
+        // post: defer production so GreetPlayerBehavior (WORK @0) takes the nav
+        // channel and walks to the player; production resumes when greet clears.
+        if (GreetPlayerBehavior.isGreetPending(entity)) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) {
             if (!warnedNoNav) {
                 LOGGER.warn("[{}] {} blocked: BrainNavGuard denies steering — {}",
@@ -428,6 +433,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
         if (phase == Phase.IDLE) return false;
         if (phase == Phase.AWAITING_SELL) return false; // hand off to SellToMarketBehavior
+        // Committing-preempts-ambient — release the post (and the nav channel) the
+        // moment a customer is seated to greet; production re-enters after greet.
+        if (GreetPlayerBehavior.isGreetPending(entity)) return false;
         return entity.isWorkTime();
     }
 

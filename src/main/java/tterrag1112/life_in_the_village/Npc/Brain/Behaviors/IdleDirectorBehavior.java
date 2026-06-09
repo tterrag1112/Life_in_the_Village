@@ -88,9 +88,35 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
         // Don't pull a sleeping NPC out of bed (ReturnHome holds no WALK_TARGET
         // while sleeping, so the memory gate alone wouldn't stop us).
         if (entity.isSleeping()) return false;
+        // Committing-preempts-ambient — never start a stroll while a committing
+        // trip is pending; let the committer (greet / ReturnHome) take the channel.
+        if (yieldToCommitting(level, entity)) return false;
         // Memory requirements (above) are checked by the superclass; here we
         // only assert nav is ours to steer.
         return BrainNavGuard.canSteerNavigation(entity);
+    }
+
+    /**
+     * Committing-preempts-ambient — true when a committing need is pending that
+     * this ambient director must yield to (stop running / not start), freeing the
+     * single nav channel:
+     * <ul>
+     *   <li>a customer to greet ({@code GREET_TARGET}) — any instance;</li>
+     *   <li>the WORK instance: work has become available again (the
+     *       {@code NO_ACTIONABLE_WORK} signal cleared) — production reclaims it;</li>
+     *   <li>the REST/IDLE instance: the NPC owes a home trip
+     *       ({@link ReturnHomeBehavior#isCommitting}).</li>
+     * </ul>
+     * Cheap predicate reads — no nav, no per-tick scan.
+     */
+    private boolean yieldToCommitting(ServerLevel level, TownspersonMob entity) {
+        if (GreetPlayerBehavior.isGreetPending(entity)) return true;
+        if (requireWorkSatisfied) {
+            // WORK instance: stop the moment production has a task again.
+            return !entity.getBrain().hasMemoryValue(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+        }
+        // REST / IDLE instance: yield to a pending home trip.
+        return ReturnHomeBehavior.isCommitting(level, entity);
     }
 
     @Override
@@ -109,6 +135,10 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
 
     @Override
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        // A running stroll actively yields the moment a committing need pends, so
+        // the committer can take the nav channel (vanilla won't preempt a RUNNING
+        // behavior — the ambient must stop itself).
+        if (yieldToCommitting(level, entity)) return false;
         return entity.getNavigation().isInProgress();
     }
 
@@ -116,6 +146,12 @@ public class IdleDirectorBehavior extends Behavior<TownspersonMob> {
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         // Drop the cosmetic carry overlay when the action ends.
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
+        // Free the nav channel for the committing behavior: erase the stroll's
+        // WALK_TARGET (so ReturnHome's WALK_TARGET-absent gate opens) and stop the
+        // in-flight path (so canSteerNavigation clears) immediately, not after the
+        // 200-tick stale-nav escape.
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getNavigation().stop();
     }
 
     private DirectorAction pickAction(TownspersonMob entity) {

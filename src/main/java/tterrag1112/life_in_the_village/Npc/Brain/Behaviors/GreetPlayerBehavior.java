@@ -159,6 +159,17 @@ public class GreetPlayerBehavior extends Behavior<TownspersonMob> {
         hasBarked = false;
     }
 
+    /**
+     * Liveliness committing-preempts-ambient — true when a customer is seated for
+     * this NPC to greet ({@code GREET_TARGET} present). The ambient behaviors and
+     * the production behavior consult this to yield the nav channel so greet can
+     * actually approach the player (a greet preempts strolling AND manning the
+     * post). Cheap memory-presence read.
+     */
+    public static boolean isGreetPending(TownspersonMob entity) {
+        return entity.getBrain().hasMemoryValue(NpcMemoryTypes.GREET_TARGET.get());
+    }
+
     private static ServerPlayer targetOrNull(TownspersonMob entity) {
         LivingEntity le = entity.getBrain()
                 .getMemory(NpcMemoryTypes.GREET_TARGET.get()).orElse(null);

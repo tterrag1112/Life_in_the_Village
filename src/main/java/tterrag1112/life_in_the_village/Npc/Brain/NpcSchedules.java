@@ -96,12 +96,14 @@ public final class NpcSchedules {
      *  Cheap — only flips the active activity when the derived
      *  activity changes. */
     public static void tick(TownspersonMob npc, long dayTime) {
-        // Liveliness L3 — same per-NPC jitter as ScheduleResolver so the brain
-        // Activity transitions (WORK/SOCIAL/REST/IDLE) stagger across the
-        // village instead of flipping at the same tick for everyone.
-        long jittered = dayTime + tterrag1112.life_in_the_village.Npc.Schedule
-                .ScheduleResolver.phaseJitter(npc);
-        Activity expected = activityAt(npc, jittered);
+        // Liveliness L3 — the per-NPC phase jitter (staggering WORK/SOCIAL/REST/IDLE
+        // transitions across the village) is applied EXACTLY ONCE, inside
+        // ScheduleResolver.phaseAt. Pass the RAW dayTime here: phaseAt jitters it.
+        // (Previously this pre-added phaseJitter and phaseAt added it again — the
+        // brain Activity ran on 2× jitter while isWorkTime()/shouldBeHome() use 1×,
+        // so the active Activity and the schedule predicates disagreed by up to one
+        // jitter span, and committing behaviors fired against the wrong Activity.)
+        Activity expected = activityAt(npc, dayTime);
         Brain<TownspersonMob> brain = npc.getBrain();
         if (!brain.isActive(expected)) {
             brain.setActiveActivityIfPossible(expected);

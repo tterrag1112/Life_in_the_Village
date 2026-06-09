@@ -3103,3 +3103,121 @@ phase change only); flavour switches use `default`; no new memory.
 3. Strollers/gatherers show varied text; `/liv npc brain` reflects it.
 4. No nameplate flicker (text changes per action/phase, not per tick).
 5. Idle "why" debug unchanged; no perf regression.
+
+## Liveliness L5 — committing behaviors preempt ambient (home/work/greet) + jitter fix
+
+### Regression diagnosed
+
+NPCs never went home to sleep and most never went to work — they strolled
+near the inn/square all day; greet didn't walk to the player. Root cause:
+the ambient behaviors (`IdleDirectorBehavior`, `GatherAtSquareBehavior`,
+`HobbyBehavior`) and the WORK `GreetPlayerBehavior` share the single
+`WALK_TARGET`/navigation channel with the *committing* behaviors
+(`ReturnHomeBehavior`, production, greet-approach). Vanilla `Brain` never
+preempts a RUNNING behavior — a running ambient stroll held the channel via
+`canStillUse` = `navigation.isInProgress()`, and because it kept `WALK_TARGET`
+set + nav in progress, the committer's gates (`WALK_TARGET` ABSENT +
+`BrainNavGuard.canSteerNavigation`) stayed closed. Priority alone couldn't
+help: vanilla starts higher-priority behaviors only when they're eligible,
+and the ambient's lingering memory/nav kept them ineligible. Plus the L3
+phase jitter was applied twice (brain Activity on 2× jitter, the
+`isWorkTime()`/`shouldBeHome()` predicates on 1×), so the active Activity and
+the schedule predicates disagreed by up to one jitter span.
+
+### Principle
+
+A *committing* behavior (go home, go to work, greet a customer) must be able
+to **preempt** an *ambient* one, and the ambient must **actively yield**
+(`canStillUse` → false) and **free the channel** (erase `WALK_TARGET` + stop
+nav) the moment a committing need pends — priority is necessary but not
+sufficient because vanilla won't stop a running behavior.
+
+### What shipped
+
+- **`ReturnHomeBehavior.isCommitting(level, entity)`** (new public static) —
+  the single "this NPC owes a home trip now" predicate (shouldBeHome &&
+  !ADVENTURER && (not-already-home || night), or homeless-and-not-at-town-hall).
+  `checkExtraStartConditions` refactored to gate on it (behavior identical),
+  so the ambient behaviors share one source of truth.
+- **`GreetPlayerBehavior.isGreetPending(entity)`** (new public static) —
+  `GREET_TARGET` present (a customer to greet).
+- **`IdleDirectorBehavior`** — new `yieldToCommitting(level, entity)` consulted
+  in BOTH `checkExtraStartConditions` and `canStillUse`: yields on a pending
+  greet (any instance); the WORK instance (`requireWorkSatisfied`) yields the
+  moment work is available again (`NO_ACTIONABLE_WORK` cleared) so production
+  reclaims the slot; the REST/IDLE instance yields to `ReturnHomeBehavior
+  .isCommitting`. `stop()` now erases `WALK_TARGET` + `navigation.stop()` so the
+  committer's gates open immediately (not after the 200-tick stale-nav escape).
+- **`GatherAtSquareBehavior`** — `yieldToCommitting(entity)` (greet pending OR
+  `!isSocialTime()`) in `checkExtraStartConditions` + `canStillUse`; `stop()`
+  frees the channel (erase `WALK_TARGET` + nav stop). NPCs leave the square the
+  moment SOCIAL ends (no leak past the transition).
+- **`HobbyBehavior`** — yields on a pending greet in `checkExtraStartConditions`
+  + `canStillUse` (work-resume was already handled via `hobbyEligible` →
+  LEAVING); `stop()` adds `navigation.stop()` to free the channel now.
+- **`AbstractProductionBehavior`** — defers/yields while `GREET_TARGET` is
+  present (in `checkExtraStartConditions` + `canStillUse`), releasing the post +
+  nav so `GreetPlayerBehavior` (WORK @0, inserted before production) actually
+  walks to the player; production re-enters when greet clears. This is the
+  "make greet not wait on the 200-tick escape" mechanism.
+- **`NpcSchedules.tick`** — jitter fix: pass the RAW `dayTime` to `activityAt`
+  (which routes through `ScheduleResolver.phaseAt`, the single place jitter is
+  applied). Removes the double-application so the brain Activity and
+  `isWorkTime()`/`shouldBeHome()` agree on the same jittered time.
+
+### Priority backstop (confirmed, no change needed)
+
+`Brain.addActivity(act, start, list)` assigns `start + index` per element, so
+the committer already sits strictly above the ambient director in each
+activity: REST `ReturnHome`=P0 above `IdleDirector(false)`=P1; WORK production
+=P0 (and `GreetPlayer`=P0 inserted first) above `IdleDirector(true)`=P2. The
+yield checks are the actual fix; the ordering was already correct.
+
+### Tie-In Audit
+
+- The `NO_ACTIONABLE_WORK` signal lifecycle is unchanged — the WORK director
+  now also *reads* it in `canStillUse` (stop when cleared); nothing writes it
+  differently.
+- No new brain memory (no `brainMemories()` change — freeze trap avoided); the
+  yield checks are cheap predicate reads (memory-presence / schedule predicate /
+  the existing home lookup), no new per-tick scan.
+- Greet preemption is one direction only: production yields to `GREET_TARGET`;
+  greet does not depend on the stale-nav escape anymore. Other workers in the
+  same building keep producing (only the seated greeter holds `GREET_TARGET`).
+- Confirmed behaviors that already self-handle transitions are untouched in
+  spirit: hobby's work-resume LEAVING path stays; AttendGathering / religion
+  behaviors unaffected (they don't share the ambient role).
+
+### Deviations from prompt
+
+- The priority backstop (#2) required no code change — it was already correct
+  (vanilla per-index priority). Documented rather than edited.
+- Home-pending yield is applied to the `IdleDirectorBehavior(false)` (REST/IDLE)
+  instances generally, not only the REST registration — harmless (during WORK
+  `shouldBeHome` is false) and simpler than per-registration wiring.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Runtime-sensitive — wants an in-game check. Static review: every ambient
+behavior (director, gather, hobby) yields in `canStillUse` AND
+`checkExtraStartConditions` when a committing need pends and frees the channel
+in `stop()`; committing behaviors are strictly above ambient in priority;
+production releases nav on `GREET_TARGET`; jitter applied exactly once; no new
+memory.
+
+### Smoke test (user-runnable)
+
+1. At night, NPCs walk home and sleep (not strolling near the inn).
+2. During work hours, workers go to their post and work (not strolling);
+   idle-only gaps still get the director.
+3. A player entering an NPC's shop: the NPC walks to the player, greets, then
+   returns to work.
+4. SOCIAL-time gathering still works, but NPCs leave the square when REST/WORK
+   begins (no leak past the transition).
+5. `/liv npc brain` shows the right behavior winning per phase (ReturnHome at
+   night, production at work, greet on a customer).
+6. NPCs transition at slightly staggered times (jitter once, not desynced; the
+   brain Activity flips in step with isWorkTime/shouldBeHome).
+7. No movement freeze / per-tick regression (no unregistered memory).
