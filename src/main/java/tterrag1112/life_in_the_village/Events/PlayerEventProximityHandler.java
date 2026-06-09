@@ -37,6 +37,11 @@ public class PlayerEventProximityHandler {
         // per-tick scan added here.
         tterrag1112.life_in_the_village.Village.VillageChunkLoader.onPlayerTick(player);
 
+        // Divine Layer V5 — at the favour extremes the deity MANIFESTS (rare,
+        // milestone-bounded). Runs first so a wrath theophany suppresses the normal
+        // curse tick below (it IS the amplified peak, not an addition).
+        tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany.tick(player);
+
         // Divine Layer V3 — a high-favour player's deity may speak (bounded by a
         // cooldown + chance inside; the per-player tick is the existing cadence).
         tterrag1112.life_in_the_village.Npc.Religion.DivineVision.tick(player);

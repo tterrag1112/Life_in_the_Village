@@ -8288,3 +8288,144 @@ memory, no codec change.
 6. **Positive side intact.** Confirm V1 favour earning, V2 miracles (on positive
    favour), and V3 visions all still work, and that piety is never moved by any of
    the above.
+
+## V5 — Theophany (the manifestation) (2026-06-09)
+
+(Divine Layer, Pillar 3 — the capstone, and the close of the religion rework's
+three pillars.)
+
+### Disposition (findings)
+
+At the extremes of the favour relationship the deity MANIFESTS — a glorious
+blessing made visible at peak favour, its anger incarnate at the depth of wrath.
+Rare, dramatic, overtly fantastical, utterly per-deity.
+
+1. **The extremes.** V1 `DivineFavour.current`/`tierIn` give the positive peak
+   (PIOUS + favour ≈ the 100 cap → `FAVOUR_PEAK = 90`); V4's signed scale gives the
+   depth (near the −100 floor → `WRATH_DEPTH = −90`). The trigger is *reaching* an
+   extreme, milestone-bounded — not a repeatable cast.
+2. **Effect basis + voice.** Theophany is the amplified peak of the V2 miracle / V4
+   curse, and the deity *speaks* via V3 `DivineVision.speak` (added in V4). D1
+   `ReligionIdentity.deity().domain()` → the manifestation's form.
+3. **Visual/audio toolkit (vanilla).** `ServerLevel.sendParticles` (domain particles),
+   visual-only `LightningBolt` (`setVisualOnly(true)` — drama, no damage/fire),
+   `setWeatherParameters` (radiant clear / dread storm), `playSound`
+   (BEACON_ACTIVATE/PLAYER_LEVELUP vs LIGHTNING_BOLT_THUNDER/WITHER_SPAWN). No custom
+   rendering.
+4. **Trigger site + bounding.** The existing per-player tick (host to
+   `DivineWrath`/`DivineVision`), gated to the extremes + a **persisted per-(deity,
+   pole) milestone** with a long `COOLDOWN` (7 in-game days) so it's rare.
+
+### What shipped
+
+- **`Npc/Religion/DivineTheophany.java`** (new) — the one manifestation path:
+  `tick(player)` (per-player tick; fires a favour theophany at PIOUS + favour ≥ 90,
+  a wrath theophany at favour ≤ −90, each behind the persisted milestone + 7-day
+  cooldown); `fireFavour` / `fireWrath` (public — also the debug force-fire):
+  the domain-flavoured `manifest(...)` visual/audio + `DivineVision.speak` revelation
+  + the amplified effect. **Favour boon** — full heal + REGEN III / RESISTANCE II /
+  ABSORPTION IV / FIRE_RES (long) + the **lasting mark** (favour pinned to the cap
+  via `addCapped`). **Wrath calamity** — visual-only lightning + storm + strong long
+  WEAKNESS/SLOWNESS/HUNGER + BLINDNESS/NAUSEA + a short POISON (**non-fatal**), favour
+  driven to its depth via `offend` (still repentable). `particlesFor(domain, wrath)`
+  is the exhaustive `DeityDomain` switch (SUN light/scorch, SEA surge/drown, FORGE
+  fire, FATE woven-light/tangle).
+- **`RiteSavedData`** — +1 codec field `playerTheophany` (`Map<UUID, Map<"faith|pole",
+  tick>>`, `optionalFieldOf`, now 6 fields, under the cap) + `getTheophanyTick`/
+  `setTheophanyTick`/`theophanies`.
+- **`DivineWrath.armConsequenceCooldown`** (new public) — a wrath theophany arms it
+  so the normal curse tick doesn't ALSO fire the same moment (theophany is the
+  amplified peak, not an addition).
+- **Trigger wire** — `PlayerEventProximityHandler` runs `DivineTheophany.tick` FIRST
+  (so a wrath theophany suppresses the normal curse below).
+- **Surfacing** — `OpenPlayerReligionPacket` +`theophany`; the snapshot derives the
+  most-recent theophany ("✦ Sun-Mother's glory" / "…'s wrath") from the milestone
+  ledger; `PlayerReligionScreen` marks it on the title row.
+- **Debug** — `/religion theophany favour|wrath` force-fires the manifestation.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `DivineFavour` (the peak/depth + `MAX_FAVOUR`/`addCapped`/
+   `offend`/`tierIn`/`current`), `DivineFavour.DispleasureTier` (depth via the signed
+   scale), D1 deity domain (form), the per-player tick. Read-only except the
+   intended favour writes (the mark / the depth).
+2. **Downstream callers.** `DivineTheophany.tick` (trigger) + `fireFavour`/`fireWrath`
+   (debug); `DivineVision.speak` (voice); `RiteSavedData` (milestone persistence);
+   the R9c packet/snapshot/screen (the record).
+3. **Sibling systems — no double-fire.** A wrath theophany arms the V4 curse
+   cooldown so a normal curse won't also land that moment; theophany runs first in
+   the tick. Miracles (V2) are player-invoked (no auto-fire to collide with). V3
+   visions are independent positive-side flavour (theophany's 7-day cooldown makes a
+   same-tick overlap negligible). The signed favour scale is unchanged (theophany
+   only writes through the existing `addCapped`/`offend`). Piety never written.
+4. **Exhaustive switches.** One new `DeityDomain` switch (`particlesFor`) — all four
+   arms, no `default`. No new enum.
+
+### Simplification sweep
+
+- One manifestation path (`DivineTheophany`) with a favour pole + a wrath pole, per
+  deity — reusing the favour extremes (V1/V4), the miracle/curse effect basis
+  (amplified inline), `DivineVision` voice (V3), and the vanilla visual toolkit. No
+  parallel system, no new rendering. Classes in scope: `DivineTheophany` (new;
+  callers = the per-player tick + the debug command), `RiteSavedData` (+1 field/3
+  accessors), `DivineWrath` (+1 public arm), the R9c packet/snapshot/screen (+1
+  field/line), `ReligionDebugCommand` (+1 subcommand). No orphan; the milestone is
+  the only new persisted state.
+
+### Deviations from prompt
+
+- **Effects authored inline** in `fireFavour`/`fireWrath` (amplified miracle/curse)
+  rather than via the `Miracles`/`Curses` registries — a theophany is a one-off
+  manifestation, not a registry entry; it reuses the same vanilla effect vocabulary.
+- **Surfacing is a title-row mark** (the COMPACT screen is full); the manifestation
+  itself (visual + the deity's words) IS the experience. A richer "theophany log" is
+  deferred.
+- **Wrath lightning is visual-only** + POISON (non-fatal) to honour V4's
+  never-permanent rule — the calamity is the sharpest warning, not death.
+
+### Out-of-scope but flagged
+
+- **NPC theophany** — player-primary this phase.
+- This **COMPLETES the divine layer (Pillar 3)** and the religion rework's three
+  pillars (deepening D1–D3c; the divine layer V1–V5; with Pillar 2 interreligious
+  relations as the remaining major body). **Parked religion tails:** D4 aesthetics /
+  standalone religious district (layout rework), the Abbot office (offices system),
+  mead/BREWING, and the NPC-side divine (NPC favour/miracles/visions/curses).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review: the visual toolkit is vanilla (`sendParticles`, visual-only
+`LightningBolt`, `setWeatherParameters`, `playSound` with standard SoundEvents/
+ParticleTypes); the trigger is extreme-gated + persisted-milestone + 7-day cooldown
+(rare); a wrath theophany arms the V4 curse cooldown (no double-fire) and runs first
+in the tick; favour writes go only through `addCapped`/`offend` (signed scale intact);
+wrath is non-fatal (visual-only lightning + POISON) and repentable (favour climbs
+back via the V1 acts); the `DeityDomain` switch is exhaustive; `RiteSavedData` codec
+now 6 fields (under 16), the new field `optionalFieldOf` (old saves load empty); no
+new brain memory.
+
+### Smoke test (user-runnable)
+
+1. **Theophany of favour.** Make a player PIOUS in Sunstead (`/religion set <you>
+   sunstead 0.9`) and reach peak favour (`/religion favour grant sunstead 100`) — or
+   force it (`/religion theophany favour`): confirm a dramatic light manifestation
+   (END_ROD/flame, radiant sky, beacon hum), the Sun-Mother speaks, and a potent
+   lasting boon lands (full heal + long regen/resistance/absorption + favour pinned
+   to the cap). Confirm it does NOT re-fire casually (milestone + cooldown).
+2. **Per-deity distinctness.** Repeat for Tidecall / Forge / Loom (`/religion
+   theophany favour` after setting each as primary) — confirm each manifestation is
+   visually + thematically distinct (sea surge vs forge fire vs woven-light).
+3. **Theophany of wrath.** Drive deep displeasure (`/religion sacrilege sunstead
+   200`) or force it (`/religion theophany wrath`): confirm a dread manifestation
+   (visual-only lightning + storm + dread sound), the deity's wrath spoken, and a
+   severe but NON-FATAL calamity (strong debuffs + brief poison — you survive).
+4. **Road back intact.** After a wrath theophany, repent via offerings/rites and
+   confirm favour climbs back out of the depth (never permanently damned).
+5. **No double-fire.** Confirm a wrath theophany does not also drop a normal curse
+   the same moment, and that miracles/visions are otherwise unaffected.
+6. **Rare.** Confirm theophany doesn't re-trigger on every eligible tick (the 7-day
+   per-pole cooldown holds); confirm `/religion me` marks "✦ <deity>'s glory/wrath".
+7. **V1–V4 intact.** Confirm favour earning, miracles, visions, and curses all still
+   work, and piety is never moved by any theophany.

@@ -141,11 +141,26 @@ public final class PlayerReligionSnapshotBuilder {
                 })
                 .orElse("");
 
+        // ── Last theophany witnessed (Divine Layer V5) ───────────────────────
+        String theophany = "";
+        long bestTick = -1L;
+        String bestKey = null;
+        for (var e : rites.theophanies(playerId).entrySet()) {
+            if (e.getValue() > bestTick) { bestTick = e.getValue(); bestKey = e.getKey(); }
+        }
+        if (bestKey != null) {
+            String[] parts = bestKey.split("\\|");
+            String deity = ReligionRegistry.find(parts[0])
+                    .map(r -> r.deity().orElse(r.displayName())).orElse(parts[0]);
+            boolean wrath = parts.length > 1 && parts[1].equals("wrath");
+            theophany = "✦ " + deity + (wrath ? "'s wrath" : "'s glory");
+        }
+
         return new OpenPlayerReligionPacket(
                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                 hasPledge, pledgeTempleName, pledgeFaithName,
                 ritesThisMonth, meetsMonthly,
-                today, calendar, favourSummary, miracleSummary, activeCalling);
+                today, calendar, favourSummary, miracleSummary, activeCalling, theophany);
     }
 
     /** The village owning {@code buildingId}, if any. */

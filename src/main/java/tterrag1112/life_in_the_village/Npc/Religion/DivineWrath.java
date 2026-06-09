@@ -85,6 +85,12 @@ public final class DivineWrath {
         LAST_CONSEQUENCE.put(pid, now);
     }
 
+    /** Divine Layer V5 — a wrath theophany arms this so the normal curse tick won't
+     *  also fire the same moment (theophany IS the amplified peak, not an addition). */
+    public static void armConsequenceCooldown(UUID playerId, long now) {
+        LAST_CONSEQUENCE.put(playerId, now);
+    }
+
     private static long cooldownFor(DispleasureTier tier) {
         return switch (tier) {
             case WRATH -> WRATH_CD;

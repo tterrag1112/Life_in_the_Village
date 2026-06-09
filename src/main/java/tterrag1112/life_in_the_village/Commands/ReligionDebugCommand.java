@@ -132,7 +132,36 @@ public final class ReligionDebugCommand {
                         .then(Commands.argument("religionId", StringArgumentType.word())
                                 .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 200f))
                                         .executes(ReligionDebugCommand::handleSacrilege))))
+
+                // Divine Layer V5 — /religion theophany favour|wrath  (force-fire the
+                // manifestation for the executing player's primary faith, for testing).
+                .then(Commands.literal("theophany")
+                        .then(Commands.literal("favour")
+                                .executes(ctx -> handleTheophany(ctx, false)))
+                        .then(Commands.literal("wrath")
+                                .executes(ctx -> handleTheophany(ctx, true))))
         );
+    }
+
+    private static int handleTheophany(CommandContext<CommandSourceStack> ctx, boolean wrath) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String faith = tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData.get(level)
+                .getPlayerPiety(player.getUUID())
+                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.PietyComponent::primaryReligion)
+                .orElse(null);
+        if (faith == null) { src.sendFailure(Component.literal("You have no faith.")); return 0; }
+        long now = level.getGameTime();
+        if (wrath) {
+            tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany
+                    .fireWrath(level, player, faith, now);
+        } else {
+            tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany
+                    .fireFavour(level, player, faith, now);
+        }
+        return 1;
     }
 
     private static int handleSacrilege(CommandContext<CommandSourceStack> ctx) {
