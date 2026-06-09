@@ -69,16 +69,16 @@ public final class Curses {
                 "Storm's Rebuke", "The Sea-Mother sends her storm against the heedless.",
                 (level, p) -> {
                     level.setWeatherParameters(0, CURSE_DUR, true, true);
-                    p.addEffect(fx(MobEffects.MOVEMENT_SLOWDOWN, CURSE_DUR, 0));
-                    p.addEffect(fx(MobEffects.DIG_SLOWDOWN, CURSE_DUR, 0));
+                    p.addEffect(fx(MobEffects.SLOWNESS, CURSE_DUR, 0));
+                    p.addEffect(fx(MobEffects.MINING_FATIGUE, CURSE_DUR, 0));
                 }));
         m.add(new Curse(ReligionRegistry.TIDECALL, DeityDomain.SEA, DispleasureTier.WRATH,
                 "The Drowning Deep", "The deep reaches for you — the world reels and drags.",
                 (level, p) -> {
                     level.setWeatherParameters(0, WRATH_DUR, true, true);
-                    p.addEffect(fx(MobEffects.MOVEMENT_SLOWDOWN, WRATH_DUR, 1));
+                    p.addEffect(fx(MobEffects.SLOWNESS, WRATH_DUR, 1));
                     p.addEffect(fx(MobEffects.WEAKNESS, WRATH_DUR, 1));
-                    p.addEffect(fx(MobEffects.CONFUSION, 600, 0));
+                    p.addEffect(fx(MobEffects.NAUSEA, 600, 0));
                     p.addEffect(fx(MobEffects.POISON, 200, 0));
                 }));
 
@@ -87,13 +87,13 @@ public final class Curses {
                 "Frailty", "The iron at your back rusts; your arm and craft fail you.",
                 (level, p) -> {
                     p.addEffect(fx(MobEffects.WEAKNESS, CURSE_DUR, 0));
-                    p.addEffect(fx(MobEffects.DIG_SLOWDOWN, CURSE_DUR, 0));
+                    p.addEffect(fx(MobEffects.MINING_FATIGUE, CURSE_DUR, 0));
                 }));
         m.add(new Curse(ReligionRegistry.FORGE_CREED, DeityDomain.FORGE, DispleasureTier.WRATH,
                 "Dishonour", "The line that held before you turns its back — you are unmade.",
                 (level, p) -> {
                     p.addEffect(fx(MobEffects.WEAKNESS, WRATH_DUR, 2));
-                    p.addEffect(fx(MobEffects.MOVEMENT_SLOWDOWN, WRATH_DUR, 1));
+                    p.addEffect(fx(MobEffects.SLOWNESS, WRATH_DUR, 1));
                     p.addEffect(fx(MobEffects.POISON, 200, 0));
                 }));
 
@@ -102,15 +102,15 @@ public final class Curses {
                 "Misfortune", "Your thread snags — the Pattern leans against you.",
                 (level, p) -> {
                     p.addEffect(fx(MobEffects.UNLUCK, CURSE_DUR, 0));
-                    p.addEffect(fx(MobEffects.CONFUSION, 600, 0));
+                    p.addEffect(fx(MobEffects.NAUSEA, 600, 0));
                 }));
         m.add(new Curse(ReligionRegistry.THE_LOOM, DeityDomain.FATE, DispleasureTier.WRATH,
                 "Tangled Fate", "Knot upon knot — the weave closes dark around you.",
                 (level, p) -> {
                     p.addEffect(fx(MobEffects.UNLUCK, WRATH_DUR, 1));
                     p.addEffect(fx(MobEffects.BLINDNESS, 400, 0));
-                    p.addEffect(fx(MobEffects.MOVEMENT_SLOWDOWN, WRATH_DUR, 1));
-                    p.addEffect(fx(MobEffects.CONFUSION, 600, 0));
+                    p.addEffect(fx(MobEffects.SLOWNESS, WRATH_DUR, 1));
+                    p.addEffect(fx(MobEffects.NAUSEA, 600, 0));
                 }));
 
         return m;

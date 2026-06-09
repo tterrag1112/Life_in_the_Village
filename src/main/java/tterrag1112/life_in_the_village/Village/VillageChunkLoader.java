@@ -86,7 +86,7 @@ public final class VillageChunkLoader {
     /** Driven from the existing per-player tick; self-throttled to one reconcile
      *  per {@link #RECONCILE_INTERVAL} ticks. */
     public static void onPlayerTick(ServerPlayer player) {
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.level().getServer();
         if (server == null) return;
         long now = server.overworld().getGameTime();
         if (now - lastReconcileTick < RECONCILE_INTERVAL) return;
@@ -99,7 +99,7 @@ public final class VillageChunkLoader {
      *  "last player logs out" case the periodic reconcile would otherwise never
      *  reach (no more player ticks fire). */
     public static void onPlayerLogout(ServerPlayer player) {
-        MinecraftServer server = player.getServer();
+        MinecraftServer server = player.level().getServer();
         if (server == null) return;
         reconcile(server, player.getUUID());
     }

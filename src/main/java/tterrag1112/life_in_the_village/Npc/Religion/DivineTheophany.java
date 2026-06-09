@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
+import net.minecraft.core.Vec3i;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
@@ -10,6 +11,8 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.MoverType;
+import net.minecraft.world.phys.Vec3;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 
 import java.util.UUID;
@@ -100,10 +103,10 @@ public final class DivineTheophany {
         // lightning is visual-only). The calamity drives favour to its depth, which
         // the V1 earning can still climb back out of (never permanent damnation).
         player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 6000, 2));
-        player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 6000, 2));
+        player.addEffect(new MobEffectInstance(MobEffects.SLOWNESS, 6000, 2));
         player.addEffect(new MobEffectInstance(MobEffects.HUNGER, 6000, 2));
         player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 600, 0));
-        player.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 600, 0));
+        player.addEffect(new MobEffectInstance(MobEffects.NAUSEA, 600, 0));
         player.addEffect(new MobEffectInstance(MobEffects.POISON, 300, 1));
         DivineFavour.offend(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
         DivineWrath.armConsequenceCooldown(player.getUUID(), now);   // no double curse
@@ -123,7 +126,7 @@ public final class DivineTheophany {
                 double lx = x + (level.getRandom().nextDouble() * 8 - 4);
                 double lz = z + (level.getRandom().nextDouble() * 8 - 4);
                 LightningBolt bolt = new LightningBolt(EntityType.LIGHTNING_BOLT, level);
-                bolt.moveTo(lx, y, lz);
+                bolt.move(MoverType.SELF, new Vec3(lx,y,lz));
                 bolt.setVisualOnly(true);
                 level.addFreshEntity(bolt);
             }
