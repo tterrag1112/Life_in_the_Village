@@ -71,6 +71,18 @@ public record ReligionIdentity(
 
     public static Collection<ReligionIdentity> all() { return REGISTRY.values(); }
 
+    /** The sacred-history event with the given title for {@code religionId}, or
+     *  empty when the faith (or the title) is unknown. Used by D3c commemoration to
+     *  resolve a calendar festival to the event it remembers. */
+    public static java.util.Optional<HistoryEvent> eventByTitle(String religionId, String title) {
+        ReligionIdentity id = get(religionId);
+        if (id == null || title == null) return java.util.Optional.empty();
+        for (HistoryEvent e : id.history().events()) {
+            if (e.title().equalsIgnoreCase(title)) return java.util.Optional.of(e);
+        }
+        return java.util.Optional.empty();
+    }
+
     // ── Authored content (the four starter faiths — a refinable first pass) ──
 
     private static Map<String, ReligionIdentity> build() {

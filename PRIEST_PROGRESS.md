@@ -7556,3 +7556,160 @@ contract holds).
 7. **No regressions.** Confirm normal profession/trait/season/event/need/reputation
    dialogue still works (faith voice is additive — it only sometimes wins), and the
    dialogue-tree path is unchanged.
+
+## D3c — sacred history in the world (records + commemoration) (2026-06-09)
+
+(Religion Deepening, the final doable deepening phase — D4 aesthetics is
+layout-parked.)
+
+### Disposition (findings)
+
+D1 authored each faith's `SacredHistory` (founding myth + ordered key events); it
+has been inert lore. D3c gives it presence: the faith's origins enter the world's
+chronicle, and its calendar festivals announce *what* they commemorate.
+
+1. **History systems.** `Village/History/`: `VillageHistoryLog` (per-world
+   SavedData, `Map<villageId, List<HistoryEntry>>`, `add`/`record`/`byType`/
+   eviction). `HistoryEntry` renders its one-line `summary` from
+   `HistorySummaryTemplates` (a `{token}` substituting map, `getOrDefault` FALLBACK).
+   `HistoryEventType` (typed slots; the three Religion slots —
+   `TEMPLE_CONSECRATED`/`HIGH_PRIEST_ANOINTED`/`FEAST_DAY_CELEBRATED` — have **no
+   producer yet**, so there is no existing faith→history hook to piggyback). The
+   `/history` command reads `renderedSummary`. Eviction: MAJOR/LEGENDARY never
+   pruned. The `Lore/` system (`KingdomHistoryData`/`ChronicleGenerator`) is the
+   separate AI-prompt kingdom chronicle.
+2. **Dedupe gotcha.** `VillageHistoryLog.add` dedupes against the **tail** only,
+   keyed on `type + tick + relatedNpcIds`. Seeding several same-type entries at one
+   tick with empty NPC lists would collapse to one — so seeded entries must stagger
+   their tick.
+3. **Festivals.** R3b/R3d faith festivals are `VillageEvent`s scheduled in
+   `VillageEventScheduler`; every faith festival passes through one chokepoint —
+   `scheduleEvent(…, faithId, venueLocation)` — which also emits the player-facing
+   "A {TYPE} will begin soon in {village}!" announcement. The faith festival
+   `EventType`s (`FIRST_FURROW`, `HARVEST_HOME`, `THREAD_BINDING`, `GREAT_WEAVING`,
+   `VOYAGE_BLESSING`, `TIDES_RETURN`, `ANCESTOR_OATH`, `FOUNDING_DAY`) map cleanly
+   onto the authored `SacredHistory` event titles. `faithId` is set on every
+   per-faith gathering (signature/grand/vigil); generic/secular events pass null.
+
+**Design.** (1) **Records** — seed a faith's founding myth + key events into the
+village log **once**, at the `scheduleEvent` chokepoint when a faith-stamped
+gathering first fires (the village demonstrably observes that faith), idempotency-
+guarded by a `byType(SACRED_HISTORY)` check, staggered ticks to beat the tail-
+dedupe. One new MAJOR `HistoryEventType.SACRED_HISTORY` (never pruned, bounded).
+(2) **Commemoration** — enrich the existing announcement with the commemorated
+event resolved from `ReligionIdentity`; festival types with no mapped event keep
+the plain announcement. No persistence change to festivals, no new festivals.
+
+### What shipped
+
+- **`HistoryEventType.SACRED_HISTORY`** (new value, MAJOR) + its
+  `HistorySummaryTemplates` template `"{summary}"` (the producer composes the lore
+  text and passes it in the `summary` detail). MAJOR → never pruned;
+  `propagatesToKingdom()`'s `default -> false` arm keeps it village-level (no churn).
+- **`ReligionIdentity.eventByTitle(religionId, title)`** (new static) — resolves a
+  `SacredHistory` event by title (case-insensitive), the commemoration lookup.
+- **`Npc/Religion/FaithHistory.java`** (new) — `seedSacredHistory(level, village,
+  religionId, now)`: idempotent (no-op if the village already has SACRED_HISTORY,
+  or the faith has no identity), seeds the founding myth then the key events (≤
+  `MAX_EVENTS`=4) as MAJOR `SACRED_HISTORY` entries with staggered ticks, summary =
+  `"<faith> — <myth>"` / `"<title> — <text>"`. Reuses `VillageHistoryLog.record`.
+- **`VillageEventScheduler.scheduleEvent`** (edit) — (a) after `addEvent`, when
+  `faithId != null`, calls `FaithHistory.seedSacredHistory(...)` (idempotent seed);
+  (b) the announcement now appends a `" — in memory of {title}: {text}"` suffix
+  via `commemorationSuffix(faithId, type)` → `commemoratedEventTitle(type)` (a
+  defaulted `switch` mapping the 8 faith festival types to their sacred-history
+  event title) → `ReligionIdentity.eventByTitle`. A null mapping → plain
+  announcement (unchanged).
+
+### Tie-in audit
+
+1. **Upstream feeders.** `ReligionIdentity.sacredHistory` (D1, lore source),
+   `BuildingFaith`/`ReligionContent.villageReligionId` (the festival's `faithId`,
+   already resolved upstream of `scheduleEvent`), the faith calendar (drives which
+   festival fires). None changed shape; all read-only.
+2. **Downstream callers.** `FaithHistory` has one caller (`scheduleEvent`).
+   `SACRED_HISTORY` is read by the generic `/history` readout + eviction (MAJOR →
+   retained) with no special-casing. `eventByTitle` has one caller
+   (`commemorationSuffix`). `scheduleEvent`'s contract is unchanged (same args, same
+   side effects plus the additive seed + a longer announcement string).
+3. **Sibling systems.** The live history producers (`HistoryProducer`, lifecycle/
+   crime/law) are untouched — sacred history is a distinct MAJOR type seeded once,
+   so it neither crowds nor is crowded out. R3d festival **scheduling** is unchanged
+   (commemoration only enriches the announcement text); the blessing-rite attach,
+   fronting, and crowd-bless paths are untouched. The kingdom `Lore/` chronicle is
+   not modified. R9 panels could later surface SACRED_HISTORY but aren't required.
+4. **Exhaustive switches.** No *exhaustive* switch broke: the only switch over
+   `HistoryEventType` (`propagatesToKingdom`) has `default -> false`; the new
+   `commemoratedEventTitle` switch over `VillageEvent.EventType` has `default ->
+   null` (not exhaustive by design — new festival types simply get no
+   commemoration). Confirmed by grepping every `HistoryEventType`/`EventType`
+   switch.
+
+### Simplification sweep
+
+- Records reuse the history system (one new typed slot + the existing
+  `VillageHistoryLog.record`/templates); commemoration reuses the existing festival
+  announcement path (one suffix); both source from `ReligionIdentity`. No parallel
+  store, no new festival, no duplicated lore (the text lives only in D1's identity).
+- Classes in scope: `FaithHistory` (new, 1 caller), `ReligionIdentity` (+1 static),
+  `HistoryEventType`/`HistorySummaryTemplates` (+1 value/template),
+  `VillageEventScheduler` (the seed call + 2 private announcement helpers). No
+  orphan, no overlapping pair — `FaithHistory` is the sole faith→chronicle bridge.
+
+### Deviations from prompt
+
+None. Both deliverables shipped: sacred history → village chronicle (seeded once,
+bounded, MAJOR), and commemorative festivals (the announcement names the
+sacred-history event it remembers; unmatched festivals keep their flavor). Reused
+`Village/History` + the festival announcement path; sourced from
+`ReligionIdentity.sacredHistory`; no `Religion` codec change; no new brain memory;
+one new enum value with a concrete consumer.
+
+### Out-of-scope but flagged
+
+- **D4 aesthetics** (`ReligionIdentity.Aesthetics`) — layout-parked; rides the
+  layout rework + authored NBTs. This closes the doable deepening (pillar 1).
+- **Next pillars** — pillar 2 (interreligious relations) and pillar 3 (the divine
+  layer) are the larger follow-on bodies of work.
+- **Kingdom-chronicle propagation** — SACRED_HISTORY stays village-level
+  (`propagatesToKingdom` false); surfacing faith origins in the `Lore/` AI kingdom
+  chronicle (`ChronicleGenerator`) is a possible later enrichment, not done here.
+- **Seeding trigger timing** — seeding fires on the first faith-stamped gathering
+  (signature/grand/vigil), i.e. the first time the village celebrates the faith.
+  An earlier hook (e.g. temple consecration) would need a new consecration→history
+  producer (none exists today); flagged, not built.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: `VillageHistoryLog.record(type,villageId,tick,details,npcs,
+importance)` + `byType(villageId,type)` exist; all 8 referenced `VillageEvent
+.EventType` constants exist; the 8 `commemoratedEventTitle` titles exactly match the
+authored `ReligionIdentity` event titles (First Furrow / Harvest Concord / First
+Threading / Great Weaving / First Catch / Tides' Return / Anvil Vigil / Founding
+Day); `SACRED_HISTORY` has a template and a never-pruned (MAJOR) importance;
+staggered ticks dodge the tail-dedupe; the idempotency guard prevents re-seeding.
+
+### Smoke test (user-runnable)
+
+1. **Faith origins in the chronicle.** In a Sunstead village, let a faith festival
+   fire (or wait for its signature day), then `/history list <village>` — confirm
+   SACRED_HISTORY entries appear: the founding myth ("Sunstead of the Reach — When
+   the first field went hungry…") + key events (The First Furrow, The Long Winter,
+   The Harvest Concord). Confirm a Tidecall or Forge village shows *different*
+   origins (Sea-Mother / First Forge-Father).
+2. **Seeded once.** Trigger several more faith festivals in that village and re-run
+   `/history list` — confirm the sacred-history entries are NOT duplicated (seeded
+   once), and that they survive a `/history prune` (MAJOR, never pruned).
+3. **Commemorative festival.** Advance to a faith's grand festival (e.g. Forge
+   Founding Day) near the village; confirm the on-screen announcement reads
+   "A FOUNDING DAY will begin soon in <village>! — in memory of Founding Day: The
+   oath that bound the living to the line of the dead." Confirm a Tidecall Tides'
+   Return / Sunstead signature names ITS event, distinctly.
+4. **Unmatched festivals keep flavor.** Confirm a generic seasonal festival
+   (Harvest Festival, Market Day) or a Vigil announces plainly with no "in memory
+   of" suffix.
+5. **No regressions.** Confirm normal history producers (births, crimes, offices)
+   and festival scheduling/fronting/crowd-bless are otherwise unchanged; the live
+   chronicle isn't flooded; per-faith content is distinct.

@@ -10,8 +10,10 @@ import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Health.HealthCondition;
 import tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith;
+import tterrag1112.life_in_the_village.Npc.Religion.FaithHistory;
 import tterrag1112.life_in_the_village.Npc.Religion.Religion;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
+import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligiousCalendar;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
@@ -584,6 +586,13 @@ public class VillageEventScheduler {
         // per-culture holy days map to a rite; festivals/markets/crises don't).
         CeremonyBlessings.attach(level, village, event);
 
+        // D3c — a faith-stamped gathering means this village observes that faith:
+        // seed its sacred history (founding myth + key events) into the chronicle
+        // the first time (idempotent — written once per village).
+        if (faithId != null) {
+            FaithHistory.seedSacredHistory(level, village, faithId, currentTick);
+        }
+
         // Record in kingdom history
         data.getKingdomForVillage(village.getId()).ifPresent(k -> {
             KingdomHistoryData.HistoryEventType histType = switch (type) {
@@ -607,19 +616,55 @@ public class VillageEventScheduler {
                 + type + " for village " + village.getName()
                 + " (season: " + SeasonTracker.currentSeason(currentTick).displayName + ")");
 
-        // Announce to nearby players
+        // Announce to nearby players. D3c — a faith festival that commemorates a
+        // sacred-history event names what it remembers ("…— in memory of …");
+        // festivals with no matching event keep the plain announcement.
+        String commemoration = faithId == null ? null
+                : commemorationSuffix(faithId, type);
+        final String announcement = "A " + type.name().replace("_", " ")
+                + " will begin soon in " + village.getName() + "!"
+                + (commemoration == null ? "" : commemoration);
         village.getBounds(data).ifPresent(bounds ->
                 level.players().stream()
                         .filter(p -> bounds.inflate(128).contains(
                                 p.getX(), p.getY(), p.getZ()))
                         .forEach(p -> p.displayClientMessage(
-                                net.minecraft.network.chat.Component.literal(
-                                                "A " + type.name().replace("_", " ")
-                                                        + " will begin soon in "
-                                                        + village.getName() + "!")
+                                net.minecraft.network.chat.Component.literal(announcement)
                                         .withStyle(net.minecraft.ChatFormatting.YELLOW),
                                 false))
         );
+    }
+
+    /**
+     * D3c — the " — in memory of {title}: {text}" suffix for a faith festival that
+     * commemorates a sacred-history event (sourced from {@link ReligionIdentity}),
+     * or null when this festival type maps to no event (then the announcement keeps
+     * its plain form).
+     */
+    private static String commemorationSuffix(String faithId, VillageEvent.EventType type) {
+        String title = commemoratedEventTitle(type);
+        if (title == null) return null;
+        return ReligionIdentity.eventByTitle(faithId, title)
+                .map(e -> " — in memory of " + e.title() + ": " + e.text())
+                .orElse(null);
+    }
+
+    /** Maps a faith festival/signature {@link VillageEvent.EventType} to the title
+     *  of the {@link ReligionIdentity} sacred-history event it commemorates. A type
+     *  with no foundational event (generic holy days, vigils, secular festivals)
+     *  returns null and keeps its existing flavor. */
+    private static String commemoratedEventTitle(VillageEvent.EventType type) {
+        return switch (type) {
+            case FIRST_FURROW    -> "The First Furrow";
+            case HARVEST_HOME    -> "The Harvest Concord";
+            case THREAD_BINDING  -> "The First Threading";
+            case GREAT_WEAVING   -> "The Great Weaving";
+            case VOYAGE_BLESSING -> "The First Catch";
+            case TIDES_RETURN    -> "The Tides' Return";
+            case ANCESTOR_OATH   -> "The Anvil Vigil";
+            case FOUNDING_DAY    -> "Founding Day";
+            default              -> null;
+        };
     }
 
     // =========================================================================
