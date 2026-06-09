@@ -185,6 +185,14 @@ public final class DivineVision {
                 + "truth: " + lore(id, rel));
     }
 
+    /** Divine Layer V4 — deliver a deity-voiced line to a player (the negative side
+     *  reuses the same styled message for omens / curse pronouncements). */
+    public static void speak(String faith, ServerPlayer player, String text) {
+        Religion rel = ReligionRegistry.get(faith);
+        if (rel == null) return;
+        send(player, rel.deity().orElse(rel.displayName()), ReligionIdentity.get(faith), text);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     private static String primaryFaith(ServerLevel level, UUID playerId) {

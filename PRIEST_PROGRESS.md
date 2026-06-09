@@ -8137,3 +8137,154 @@ cooldown+chance bounded; no new brain memory.
    the calling clears.
 6. **Isolation.** Confirm miracles (V2) and the piety bar are unaffected — visions
    read favour/piety but only ever grant favour (the calling reward).
+
+## V4 — Curses & wrath (the consequence side) (2026-06-09)
+
+(Divine Layer, Pillar 3 — the mirror of V1–V3: devotion earns favour/miracles/
+visions; sacrilege earns the opposite.)
+
+### Disposition (findings)
+
+1. **Displeasure model — signed favour (chosen).** V1's favour relaxes toward a
+   piety-tier equilibrium, clamped `[0, cap]`. V4 extends the SAME resource into the
+   negative: a `DISPLEASURE_FLOOR = −100`, lower-clamp every favour write to it, and
+   below-zero IS displeasure (one resource, not a parallel accumulator). The
+   relaxation toward the positive equilibrium means displeasure also heals gently
+   over time, while the floor lets it sit deep until repented. Backward-compatible:
+   a never-offended player's entries stay positive, so the floor never engages and
+   V1–V3 positive behaviour is unchanged. `PlayerFavour.set` now KEEPS negative
+   entries (drops only exact zero). No `RiteSavedData` codec change (reuses the
+   favour map).
+2. **Sacrilege hook — D2 via the crime system.** `FaithJudgment.conceptForCrime`
+   maps a `CrimeType` → `FaithConcept`; `CrimeReporter.applySideEffects` already runs
+   the D2 faith overlay for NPC perpetrators. The PLAYER branch was empty — V4 fills
+   it: a player crime whose concept is a taboo of the player's OWN faith
+   (faith-relative, mirroring D2) offends that deity. Temple **desecration** is
+   covered by the existing `VANDALISM → SACRILEGE` mapping (SACRILEGE is a Tidecall/
+   Forge taboo). **Apostasy** has no clean hook (piety-change detection) — flagged.
+3. **Curse registry — mirrors V2 `Miracles`.** A flat per-deity list + a
+   by-(faith, severity) pick, reusing vanilla negative `MobEffects` + weather.
+4. **Omens — reuse V3 `DivineVision`.** Added `DivineVision.speak(faith, player,
+   text)` (public) so the negative side delivers deity-voiced warnings in the same
+   styled message. Domain flavour from D1.
+
+### What shipped
+
+- **`DivineFavour`** (signed) — `DISPLEASURE_FLOOR` + the band thresholds
+  (`OMEN_AT −1`, `CURSE_AT −25`, `WRATH_AT −60`); `DispleasureTier{NONE,OMEN,CURSE,
+  WRATH}` + `displeasureOf(favour)`; `offend(...)` (sacrilege drives favour down,
+  clamped to the floor, no-op without standing); all clamps' lower bound moved from
+  `0f` to `DISPLEASURE_FLOOR` (so a repenting player's earning climbs GRADUALLY out
+  of the negative). `PlayerFavour.set` keeps negatives.
+- **`Npc/Religion/Curse.java`** (new) — the model (mirror of `Miracle`): `(religionId,
+  domain, severity, displayName, flavour, Effect)`.
+- **`Npc/Religion/Curses.java`** (new) — the per-deity registry: 8 curses (CURSE +
+  WRATH per faith). Sun Blight/Scorching, Sea Storm's Rebuke/The Drowning Deep, Forge
+  Frailty/Dishonour, Loom Misfortune/Tangled Fate. Negative `MobEffects` (WEAKNESS/
+  HUNGER/MOVEMENT_SLOWDOWN/DIG_SLOWDOWN/CONFUSION/BLINDNESS/UNLUCK + a short POISON)
+  + storm weather; **non-fatal by design** (POISON stops at half a heart; no WITHER/
+  fire).
+- **`Npc/Religion/DivineWrath.java`** (new) — the consequence service:
+  `onPlayerSacrilege(player, concept)` (faith-relative taboo → `offend` + immediate
+  warning), `tick(player)` (while displeased, apply the band consequence — omen
+  vision / curse / wrath — cooldown-bounded). In-memory cooldown (transient).
+- **`DivineVision.speak`** (new public) — deity-voiced delivery reused for omens/curse
+  pronouncements.
+- **Triggers wired** — `CrimeReporter` (player-perpetrator branch → `DivineWrath
+  .onPlayerSacrilege`), `PlayerEventProximityHandler` (→ `DivineWrath.tick`).
+- **Surfacing** — the R9c favour line now shows displeasure (e.g. "Sunstead −30
+  (cursed)") via `displeasureOf`.
+- **Debug** — `/religion sacrilege <faith> <amount>` drives displeasure for testing.
+
+### Repentance & "never damned"
+
+The V1 earning hooks (offerings/tithes/rites/commissions) call `DivineFavour.award`,
+now lower-clamped to the floor — so an act ADDS favour, climbing gradually out of
+the negative (harder the deeper, since each act is a fixed step). As favour crosses
+back above each threshold the band drops (wrath → curse → omen → none) and
+consequences stop; the gentle relaxation toward the positive equilibrium also heals
+displeasure over time. There is always a road back.
+
+### Tie-in audit
+
+1. **Upstream feeders.** D2 `FaithJudgment.conceptForCrime` (sacrilege),
+   `CrimeReporter` (the player branch), `DivineFavour` (the signed scale), D1 deity
+   (curse flavour). Read-only except `offend` (the intended down-write).
+2. **Downstream callers.** `offend`/`displeasureOf` (DivineWrath + command +
+   snapshot); `Curses` (DivineWrath); `DivineVision.speak` (omens); the per-player
+   tick; the R9c favour line.
+3. **Sibling systems — signed favour did NOT break the positive side.** V2
+   `MiracleInvoker.status` (`favour < minFavour` → negative favour fails →
+   miracles correctly UNAVAILABLE while displeased, for free); V3 `DivineVision.tick`
+   (`favour ≥ 40` gate → negative fails); `DivineFavour.spend` (`current < amount` →
+   negative fails). All positive gates still pass on positive favour (the floor only
+   engages once a value goes negative). Piety is read, never written (sacrilege
+   touches favour only).
+4. **Exhaustive switches.** New switches over `DispleasureTier` (`cooldownFor`,
+   `applyConsequence`, the snapshot tag) — all cover NONE/OMEN/CURSE/WRATH, no
+   `default`. No `DeityDomain` switch added (curses authored per-religion; domain is
+   a carried field). The reused `FavourAct` switches are unchanged.
+
+### Simplification sweep
+
+- Displeasure reuses the favour scale (signed — one resource); curses mirror the
+  `Miracles` registry; omens reuse `DivineVision`; repentance reuses the V1 earning.
+  No parallel system, no codec change. Classes in scope: `Curse`/`Curses`/
+  `DivineWrath` (new; callers = `CrimeReporter` + the per-player tick),
+  `DivineFavour` (signed: +floor/thresholds/`offend`/`displeasureOf`),
+  `PlayerFavour` (keep negatives), `DivineVision` (+`speak`), the R9c snapshot
+  (+displeasure tag), `ReligionDebugCommand` (+1 subcommand). No orphan.
+
+### Deviations from prompt
+
+- **Apostasy** is not auto-detected (no clean piety-renounce hook) — sacrilege is
+  driven by D2 crime-taboos + temple vandalism (VANDALISM→SACRILEGE). Apostasy
+  flagged for a future hook; the debug `/religion sacrilege` exercises displeasure
+  directly.
+- **Desecration** is the `VANDALISM → SACRILEGE` crime path (reuses the crime hook)
+  rather than a dedicated block-break temple listener — flagged as a refinement
+  (distinguishing malicious break from maintenance needs more than a block event).
+- **Curses cap at WRATH** (the severe band) — the wrath *theophany* manifestation is
+  V5 (out of scope); wrath here is debuffs + storm, non-fatal.
+
+### Out-of-scope but flagged
+
+- **V5 theophany** — including the wrath-theophany peak.
+- **NPC curses** — player-primary this phase.
+- **Auto apostasy detection** + a **dedicated desecration listener** — flagged hooks.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Note: this container also started on a stale R9c checkout; hard-reset to the pushed
+V3 tip (f05a2f9) before V4 — all V1–V3 files verified present.] Static review: favour
+is signed (`DISPLEASURE_FLOOR` lower-clamp everywhere; `PlayerFavour.set` keeps
+negatives); the positive gates (V2 status, V3 tick, spend) still fail on negative
+favour (miracles blocked while displeased, for free); piety never written; curses
+are non-fatal (POISON, no WITHER/fire); the negative `MobEffects` names are standard
+Mojmap (WEAKNESS/HUNGER confirmed in-repo); all `DispleasureTier` switches are
+exhaustive; repentance via the V1 award climbs out of the negative; no new brain
+memory, no codec change.
+
+### Smoke test (user-runnable)
+
+1. **Sacrilege → displeasure + omen.** As a devout Sunstead player (GREED is its
+   taboo), steal (a THEFT → GREED) — confirm a warning vision ("You profane what I
+   hold…") and that `/religion me` shows favour dropping toward/below zero.
+   (`/religion sacrilege sunstead 40` drives it directly.)
+2. **Escalation → curse, miracles blocked.** Persist in sacrilege to the CURSE band
+   (favour ≤ −25): confirm a per-deity curse lands (Sun Blight: weakness+hunger; vs
+   Sea storm, Forge frailty, Loom misfortune — domain-distinct) and that
+   `/religion miracle cast …` is refused (favour is negative).
+3. **Wrath (non-fatal).** Reach ≤ −60: confirm a severe but non-lethal wrath (strong
+   debuffs + storm + brief poison) — you are punished, not killed.
+4. **Repentance.** Make offerings / attend rites / commission rites: confirm favour
+   climbs back gradually, the band drops (wrath → curse → omen → none), curses stop,
+   and miracles return — never permanently damned.
+5. **Faith-relative.** Confirm a crime that is NOT your faith's taboo (e.g. a
+   Sunstead player committing ASSAULT → DISCORD, not a Sunstead taboo) does NOT anger
+   the Sun-Mother.
+6. **Positive side intact.** Confirm V1 favour earning, V2 miracles (on positive
+   favour), and V3 visions all still work, and that piety is never moved by any of
+   the above.

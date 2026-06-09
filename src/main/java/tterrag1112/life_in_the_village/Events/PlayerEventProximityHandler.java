@@ -41,6 +41,10 @@ public class PlayerEventProximityHandler {
         // cooldown + chance inside; the per-player tick is the existing cadence).
         tterrag1112.life_in_the_village.Npc.Religion.DivineVision.tick(player);
 
+        // Divine Layer V4 — a displeased deity visits escalating consequences
+        // (omen → curse → wrath); self-gated on negative favour + a cooldown.
+        tterrag1112.life_in_the_village.Npc.Religion.DivineWrath.tick(player);
+
         if (level.getGameTime() % 100 != 0) return; // check every 5s
 
         VillageSavedData data = VillageSavedData.get(level);

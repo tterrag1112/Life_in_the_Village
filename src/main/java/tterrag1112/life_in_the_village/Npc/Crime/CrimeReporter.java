@@ -254,6 +254,15 @@ public final class CrimeReporter {
                     }
                     tterrag1112.life_in_the_village.Npc.Religion.FaithJudgment
                             .judge(perp, sin, witnesses, now);
+                } else {
+                    // Divine Layer V4 — a PLAYER perpetrator: if the crime is a taboo
+                    // of their own faith, the deity is offended (sacrilege → displeasure).
+                    net.minecraft.server.level.ServerPlayer player =
+                            level.getServer().getPlayerList().getPlayer(perpetratorId);
+                    if (player != null) {
+                        tterrag1112.life_in_the_village.Npc.Religion.DivineWrath
+                                .onPlayerSacrilege(level, player, sin, now);
+                    }
                 }
             }
         }

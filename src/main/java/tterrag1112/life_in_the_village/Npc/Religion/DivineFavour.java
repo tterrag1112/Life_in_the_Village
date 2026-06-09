@@ -44,10 +44,29 @@ public final class DivineFavour {
 
     /** Absolute ceiling on any deity's favour (the PIOUS-tier cap). */
     public static final float MAX_FAVOUR = 100f;
+    /** Divine Layer V4 — the negative pole: favour is SIGNED. Below zero is
+     *  displeasure (sacrilege drives it down); this is the floor (deep wrath). The
+     *  positive side stays piety-tier-capped; only the floor is symmetric. */
+    public static final float DISPLEASURE_FLOOR = -100f;
+    /** Displeasure thresholds (favour ≤): omen (warning) → curse → wrath. */
+    public static final float OMEN_AT  = -1f;
+    public static final float CURSE_AT = -25f;
+    public static final float WRATH_AT = -60f;
     /** Relaxation time constant (ticks) — τ ≈ 3 in-game days; half-life ≈ 2 days. */
     private static final float TAU = 72000f;
     /** Multiplier when an act serves one of the faith's esteemed virtues. */
     private static final float ALIGNED_BONUS = 1.5f;
+
+    /** Divine Layer V4 — a deity's displeasure depth, by signed-favour band. */
+    public enum DispleasureTier { NONE, OMEN, CURSE, WRATH }
+
+    /** Classifies a (signed) favour value into a displeasure band. */
+    public static DispleasureTier displeasureOf(float favour) {
+        if (favour <= WRATH_AT) return DispleasureTier.WRATH;
+        if (favour <= CURSE_AT) return DispleasureTier.CURSE;
+        if (favour <= OMEN_AT)  return DispleasureTier.OMEN;
+        return DispleasureTier.NONE;
+    }
 
     /**
      * The existing religious acts favour hooks into, each with a base grant and the
@@ -95,7 +114,9 @@ public final class DivineFavour {
         if (cap <= 0f) return;                              // no standing → can't hold favour
         float weight = aligned(religionId, concept) ? ALIGNED_BONUS : 1f;
         float current = current(level, playerId, religionId, now);
-        float next = clamp(current + act.base * weight, 0f, cap);
+        // Lower bound is the displeasure floor (not 0): a repenting, displeased
+        // player's act climbs GRADUALLY out of the negative, not instantly to 0.
+        float next = clamp(current + act.base * weight, DISPLEASURE_FLOOR, cap);
         data.getOrCreatePlayerFavour(playerId).set(religionId, next, now);
         data.markDirty();
         // Divine Layer V3 — an act may fulfil a standing divine calling (bonus
@@ -113,7 +134,23 @@ public final class DivineFavour {
         RiteSavedData data = RiteSavedData.get(level);
         float cap = cap(tierFor(data, playerId, religionId));
         if (cap <= 0f) return;
-        float next = clamp(current(level, playerId, religionId, now) + amount, 0f, cap);
+        float next = clamp(current(level, playerId, religionId, now) + amount,
+                DISPLEASURE_FLOOR, cap);
+        data.getOrCreatePlayerFavour(playerId).set(religionId, next, now);
+        data.markDirty();
+    }
+
+    /** Divine Layer V4 — sacrilege drives favour DOWN into displeasure (signed).
+     *  Clamps to the displeasure floor. No-op for a player with no standing in the
+     *  faith (you can't anger a deity you have no relationship with). */
+    public static void offend(ServerLevel level, UUID playerId, String religionId,
+                              float amount, long now) {
+        if (religionId == null || amount <= 0f) return;
+        RiteSavedData data = RiteSavedData.get(level);
+        float cap = cap(tierFor(data, playerId, religionId));
+        if (cap <= 0f) return;
+        float next = clamp(current(level, playerId, religionId, now) - amount,
+                DISPLEASURE_FLOOR, cap);
         data.getOrCreatePlayerFavour(playerId).set(religionId, next, now);
         data.markDirty();
     }
@@ -124,7 +161,8 @@ public final class DivineFavour {
                                    float amount, long now) {
         if (religionId == null) return 0f;
         RiteSavedData data = RiteSavedData.get(level);
-        float next = clamp(current(level, playerId, religionId, now) + amount, 0f, MAX_FAVOUR);
+        float next = clamp(current(level, playerId, religionId, now) + amount,
+                DISPLEASURE_FLOOR, MAX_FAVOUR);
         data.getOrCreatePlayerFavour(playerId).set(religionId, next, now);
         data.markDirty();
         return next;
@@ -158,10 +196,12 @@ public final class DivineFavour {
         float cap = cap(tier);
         PlayerFavour fav = data.getPlayerFavour(playerId).orElse(null);
         PlayerFavour.Entry e = fav == null ? null : fav.raw(religionId);
-        if (e == null) return clamp(eq, 0f, cap);          // passive baseline for the tier
+        if (e == null) return clamp(eq, 0f, cap);          // no entry → positive baseline
         float dt = Math.max(0f, now - e.lastTick());
+        // Relaxes toward the (positive) equilibrium — so displeasure (negative)
+        // also heals gently over time, but the floor lets it sit deep until then.
         float relaxed = eq + (e.amount() - eq) * (float) Math.exp(-dt / TAU);
-        return clamp(relaxed, 0f, cap);
+        return clamp(relaxed, DISPLEASURE_FLOOR, cap);
     }
 
     // ── Piety coupling (cap + equilibrium per tier in THIS faith) ─────────────

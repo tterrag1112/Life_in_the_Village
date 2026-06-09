@@ -101,9 +101,19 @@ public final class PlayerReligionSnapshotBuilder {
         List<String> favourSummary = new ArrayList<>();
         for (String faithId : favourFaiths) {
             float fav = DivineFavour.current(level, playerId, faithId, now);
-            if (fav >= 1f) {
-                String fname = ReligionRegistry.find(faithId)
-                        .map(Religion::displayName).orElse(faithId);
+            String fname = ReligionRegistry.find(faithId)
+                    .map(Religion::displayName).orElse(faithId);
+            // V4 — the favour line is the favour/displeasure counter (signed).
+            DivineFavour.DispleasureTier dt = DivineFavour.displeasureOf(fav);
+            if (dt != DivineFavour.DispleasureTier.NONE) {
+                String tag = switch (dt) {
+                    case OMEN  -> "angered";
+                    case CURSE -> "cursed";
+                    case WRATH -> "WRATH";
+                    case NONE  -> "";
+                };
+                favourSummary.add(fname + " " + Math.round(fav) + " (" + tag + ")");
+            } else if (fav >= 1f) {
                 favourSummary.add(fname + " " + Math.round(fav));
             }
         }

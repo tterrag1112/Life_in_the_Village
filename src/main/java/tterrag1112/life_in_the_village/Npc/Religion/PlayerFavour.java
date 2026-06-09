@@ -38,10 +38,11 @@ public final class PlayerFavour {
     }
 
     /** Rebases the stored favour for {@code religionId} to {@code amount} at
-     *  {@code tick}. A non-positive amount drops the entry (no clutter). */
+     *  {@code tick}. Exactly zero drops the entry (no clutter); a NEGATIVE amount is
+     *  KEPT — it's displeasure (Divine Layer V4, signed favour). */
     public void set(String religionId, float amount, long tick) {
         if (religionId == null) return;
-        if (amount <= 0f) byReligion.remove(religionId);
+        if (amount == 0f) byReligion.remove(religionId);
         else byReligion.put(religionId, new Entry(amount, tick));
     }
 
