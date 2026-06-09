@@ -140,7 +140,30 @@ public final class ReligionDebugCommand {
                                 .executes(ctx -> handleTheophany(ctx, false)))
                         .then(Commands.literal("wrath")
                                 .executes(ctx -> handleTheophany(ctx, true))))
+
+                // F1a — list the canonical gods (the new God/GodRegistry scaffolding;
+                // the only consumer this stage). Read-only.
+                .then(Commands.literal("gods")
+                        .executes(ReligionDebugCommand::handleGods))
         );
+    }
+
+    // ── /religion gods (F1a) ─────────────────────────────────────────────────
+
+    private static int handleGods(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        StringBuilder sb = new StringBuilder("§e=== Gods ===");
+        for (var g : tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.all()) {
+            sb.append(String.format(Locale.ROOT,
+                    "%n§6%-14s§7 %s §8[%s]§7 — %d virtues, %d taboos",
+                    g.id(),
+                    g.isImpersonal() ? "(impersonal)" : g.name().orElse(g.displayName()),
+                    g.domain(), g.virtues().size(), g.taboos().size()));
+            sb.append("\n  §7demands: §f").append(g.demands());
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
     }
 
     private static int handleTheophany(CommandContext<CommandSourceStack> ctx, boolean wrath) {

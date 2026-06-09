@@ -8429,3 +8429,118 @@ new brain memory.
    per-pole cooldown holds); confirm `/religion me` marks "✦ <deity>'s glory/wrath".
 7. **V1–V4 intact.** Confirm favour earning, miracles, visions, and curses all still
    work, and piety is never moved by any theophany.
+
+## F1a — sub-stage 1: the God entity + GodRegistry (2026-06-09)
+
+(Foundation 1 — separating gods from religions. Pure additive scaffolding; wires
+nothing into existing behaviour.)
+
+### Disposition (findings)
+
+Today a religion fuses exactly one deity. `Religion.deity()` is just a name string
+("the Sun-Mother"; empty for the Loom), and `Religion` is hard-coded in
+`ReligionRegistry` (four faiths: sunstead/the_loom/tidecall/forge_creed). The rich
+deity layer lives in the parallel `ReligionIdentity` registry (keyed by religion
+id): `Deity(DeityDomain domain, String character, demands, rewards)` + `List<Virtue>`
+/ `List<Taboo>` (each `FaithConcept` + text) + cosmology/history/aesthetics.
+`DeityDomain` = `SUN/SEA/FORGE/FATE`. **The fusion is 1:1 today** — each religion →
+one identity → one `Deity` → one domain; the Loom is the impersonal case
+(`Religion.deity()` empty, but its identity gives it a `Deity(FATE, …)`).
+
+The four gods authored this stage (id ← source identity):
+- `sun_mother` — "the Sun-Mother", SUN ← `sunstead`
+- `the_pattern` — **impersonal** (name empty), FATE ← `the_loom`
+- `sea_mother` — "the Sea-Mother", SEA ← `tidecall`
+- `forge_father` — "the First Forge-Father", FORGE ← `forge_creed`
+
+**Type-reuse decision:** `God` lives in `Npc.Religion` and reuses the existing
+nested `ReligionIdentity.DeityDomain` / `Virtue` / `Taboo` AS-IS (no move/rename —
+that churns consumers; a later cleanup sub-stage relocates them). **Derivation
+decision:** the registry DERIVES each god from its existing authored source at init
+(single source of truth, no drift) rather than re-authoring the strings — transient
+until sub-stage 2 makes the god the sole source.
+
+### What shipped
+
+- **`Npc/Religion/God.java`** (new) — the record: `(id, Optional<String> name,
+  DeityDomain domain, character, demands, rewards, List<Virtue> virtues, List<Taboo>
+  taboos)`. Compact-ctor validates non-blank id + null-safety. `displayName()`
+  (name or a domain-sensible fallback — the Pattern), `isImpersonal()`. A `Codec`
+  (mirrors `Religion.CODEC`; sub-codecs for `DeityDomain`/`FaithConcept`/`Virtue`/
+  `Taboo` via name xmap + RecordCodecBuilder) for later content-pack gods. **8 codec
+  fields — well under the 16 ceiling** (headroom for the sacred-space rule / miracle
+  set / holy days / oaths gods will gain later).
+- **`Npc/Religion/GodRegistry.java`** (new) — mirrors `ReligionRegistry` exactly
+  (static, lazy `ensureInit`, idempotent `register`, `get`/`find`/`all`, a
+  `LOGGER.info` count). Authors the four canonical gods by `derive(godId,
+  religionId)` from `ReligionIdentity.get` + `ReligionRegistry.get().deity()`.
+- **`ReligionDebugCommand`** — one new subcommand `/religion gods` (the only consumer
+  this stage): lists each god's id, name or "(impersonal)", domain, virtue/taboo
+  counts, and demands line. Read-only.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `ReligionIdentity` (the authored content) + `ReligionRegistry`
+   (`deity()` name) — both READ-ONLY (the registry only reads them at init).
+2. **Downstream callers.** **None** besides the new `/religion gods` readout — the
+   point of this stage is that gods have no consumers until sub-stage 2/3.
+3. **Sibling systems.** The divine layer (`PlayerFavour`/`DivineFavour`/`Miracles`/
+   `Curses`/`DivineVision`/`DivineWrath`/`DivineTheophany`) is **untouched** and still
+   keyed as before (favour by `religionId`, miracles/curses by `DeityDomain`). No
+   re-keying.
+4. **Exhaustive switches.** No enum values added. The existing `DeityDomain`
+   switch (`DivineVision` domain→colour) is unaffected. One NEW exhaustive
+   `DeityDomain` switch added inside `God.displayName` (all four arms, no default) —
+   additive, self-contained.
+
+### Simplification sweep
+
+- New classes: `God`, `GodRegistry` — **inbound callers: 1** (the `/religion gods`
+  readout); zero elsewhere by design. No orphan to delete; no overlap to consolidate.
+- **Planned (not acted on):** once the religion references gods (sub-stage 2) and the
+  divine layer re-keys to godId (sub-stage 3), `ReligionIdentity`'s deity/virtue/taboo
+  duplication can be deleted and `Religion.deity()` becomes a thin delegate
+  (sub-stages 4/5). The derivation-at-init keeps a single source meanwhile, so that
+  deletion is clean later. Do NOT act yet.
+
+### Deviations from prompt
+
+None. Additive `God` + `GodRegistry` + a single `/religion gods` readout; gods derived
+from the existing authored source; nested types reused (not moved); divine layer and
+`Religion`/`ReligionIdentity` untouched beyond reading.
+
+### Out-of-scope but flagged
+
+- **Sub-stage 2** — `Religion` references `List<godId>`; `ReligionIdentity` /
+  `Religion.deity()` delegate to the god.
+- **Sub-stage 3** — re-key the divine layer (favour/miracles/curses/visions) to
+  `godId` (currently `religionId` / `DeityDomain`).
+- **Cleanup sub-stage** — relocate `DeityDomain`/`Virtue`/`Taboo`/`Deity` onto `God`;
+  delete the `ReligionIdentity` deity duplication.
+- **F1b** — per-world religions (separate arc).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Note: this container started on a stale R9c checkout; hard-reset to the pushed V5
+tip (b85d43d) before this work — all prior files verified present.] Static review:
+`God` reuses `ReligionIdentity.DeityDomain`/`Virtue`/`Taboo` (no move); its codec
+sub-codecs use name-xmap + RecordCodecBuilder (8 fields, under 16); `GodRegistry`
+mirrors `ReligionRegistry` (lazy/idempotent/`get`/`find`/`all`/log count) and derives
+from `ReligionIdentity` + `Religion.deity()` (single source, no drift); the divine
+layer and `Religion`/`ReligionIdentity` are unread-only-touched; `/religion gods` is
+the sole consumer; no new enum values; no codec/save change to existing data.
+
+### Smoke test (user-runnable)
+
+1. **Gods list.** Load a world; run `/religion gods` — confirm all four list with the
+   right id, name (and `the_pattern` showing "(impersonal)"), and domain
+   (SUN/FATE/SEA/FORGE).
+2. **Content matches the source.** For each god, confirm its domain / demands /
+   virtue-&-taboo counts match the corresponding faith's `/religion identity <faith>`
+   readout (e.g. `sun_mother` ↔ `/religion identity sunstead`).
+3. **Divine layer unchanged.** Confirm the divine layer behaves exactly as before:
+   `/religion favour grant sunstead 30`, `/religion miracle cast sun_healing_light`
+   still work; `/religion me` is unchanged. Gods are inert scaffolding — nothing
+   else should differ.
