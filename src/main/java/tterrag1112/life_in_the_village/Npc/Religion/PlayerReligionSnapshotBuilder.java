@@ -94,54 +94,8 @@ public final class PlayerReligionSnapshotBuilder {
                     e.dayOfYear(), e.daysAway(), own));
         }
 
-        // ── Divine Favour per GOD (Divine Layer V1; F1a sub-stage 3a — re-keyed) ──
-        long now = level.getGameTime();
-        java.util.Set<String> favourGods = new java.util.LinkedHashSet<>();
-        // Gods the player already has a favour entry with (keys are god ids now)…
-        rites.getPlayerFavour(playerId).ifPresent(f -> favourGods.addAll(f.all().keySet()));
-        // …plus the gods of every religion the player believes in (so a devout-but-
-        // unspent god still shows its baseline standing).
-        pietyOpt.ifPresent(p -> {
-            for (String rid : p.beliefs().keySet()) {
-                ReligionRegistry.find(rid).ifPresent(r ->
-                        GodRegistry.godsFor(r).forEach(g -> favourGods.add(g.id())));
-            }
-        });
-        List<String> favourSummary = new ArrayList<>();
-        for (String godId : favourGods) {
-            float fav = DivineFavour.current(level, playerId, godId, now);
-            God god = GodRegistry.get(godId);
-            String gname = god != null ? god.displayName() : godId;
-            // V4 — the favour line is the favour/displeasure counter (signed).
-            DivineFavour.DispleasureTier dt = DivineFavour.displeasureOf(fav);
-            if (dt != DivineFavour.DispleasureTier.NONE) {
-                String tag = switch (dt) {
-                    case OMEN  -> "angered";
-                    case CURSE -> "cursed";
-                    case WRATH -> "WRATH";
-                    case NONE  -> "";
-                };
-                favourSummary.add(gname + " " + Math.round(fav) + " (" + tag + ")");
-            } else if (fav >= 1f) {
-                favourSummary.add(gname + " " + Math.round(fav));
-            }
-        }
-
-        // ── Miracles for the player's primary faith (Divine Layer V2) ────────
-        List<String> miracleSummary = new ArrayList<>();
-        if (ownFaithId != null) {
-            for (Miracle m : Miracles.forReligion(ownFaithId)) {
-                MiracleInvoker.Status st = MiracleInvoker.status(level, player, m, now);
-                String glyph = switch (st) {
-                    case AVAILABLE   -> "✓";   // ✓
-                    case ON_COOLDOWN -> "⏳";   // ⏳
-                    case LOCKED_TIER, LOCKED_FAVOUR -> "🔒"; // 🔒
-                };
-                miracleSummary.add(m.displayName() + " " + glyph);
-            }
-        }
-
         // ── Active divine calling (Divine Layer V3) ──────────────────────────
+        long now = level.getGameTime();
         String activeCalling = rites.getPlayerCalling(playerId)
                 .map(c -> {
                     String fname = ReligionRegistry.find(c.religionId())
@@ -150,27 +104,56 @@ public final class PlayerReligionSnapshotBuilder {
                 })
                 .orElse("");
 
-        // ── Last theophany witnessed (Divine Layer V5) ───────────────────────
-        String theophany = "";
-        long bestTick = -1L;
-        String bestKey = null;
-        for (var e : rites.theophanies(playerId).entrySet()) {
-            if (e.getValue() > bestTick) { bestTick = e.getValue(); bestKey = e.getKey(); }
+        // ── Per-god divine standing (F1a 4b) — favour + band + miracles + theophany ──
+        // The standing set: gods with a favour entry + the gods of believed religions.
+        java.util.Set<String> standingGods = new java.util.LinkedHashSet<>();
+        if (ownFaithId != null) {
+            ReligionRegistry.find(ownFaithId).ifPresent(r ->
+                    GodRegistry.godsFor(r).forEach(g -> standingGods.add(g.id())));  // primary first
         }
-        if (bestKey != null) {
-            // F1a 3b/4a — theophany milestone keys are "godId|pole" now; resolve the
-            // GOD's display name for the banner (was reading Religion.deity()).
-            String[] parts = bestKey.split("\\|");
-            String deity = GodRegistry.find(parts[0]).map(God::displayName).orElse(parts[0]);
-            boolean wrath = parts.length > 1 && parts[1].equals("wrath");
-            theophany = "✦ " + deity + (wrath ? "'s wrath" : "'s glory");
+        rites.getPlayerFavour(playerId).ifPresent(f -> standingGods.addAll(f.all().keySet()));
+        pietyOpt.ifPresent(p -> {
+            for (String rid : p.beliefs().keySet()) {
+                ReligionRegistry.find(rid).ifPresent(r ->
+                        GodRegistry.godsFor(r).forEach(g -> standingGods.add(g.id())));
+            }
+        });
+        var theophanyStore = rites.theophanies(playerId);
+        List<OpenPlayerReligionPacket.GodStanding> gods = new ArrayList<>();
+        for (String godId : standingGods) {
+            God god = GodRegistry.get(godId);
+            if (god == null) continue;
+            int favour = Math.round(DivineFavour.current(level, playerId, godId, now));
+            String band = DivineFavour.displeasureOf(favour).name();   // NONE/OMEN/CURSE/WRATH
+
+            // This god's miracles (selected by its domain), gated by this god.
+            List<String> miracles = new ArrayList<>();
+            for (Miracle m : Miracles.forDomain(god.domain())) {
+                String glyph = switch (MiracleInvoker.status(level, player, m, now)) {
+                    case AVAILABLE   -> "✓";
+                    case ON_COOLDOWN -> "⏳";
+                    case LOCKED_TIER, LOCKED_FAVOUR -> "🔒";
+                };
+                miracles.add(m.displayName() + " " + glyph);
+            }
+
+            // This god's theophany history ("glory (Nd)" / "wrath (Nd)").
+            List<String> theophanies = new ArrayList<>();
+            for (var e : theophanyStore.entrySet()) {
+                String[] parts = e.getKey().split("\\|");
+                if (parts.length < 2 || !parts[0].equals(godId)) continue;
+                long days = Math.max(0, (now - e.getValue()) / 24000L);
+                theophanies.add((parts[1].equals("wrath") ? "wrath" : "glory") + " (" + days + "d)");
+            }
+            gods.add(new OpenPlayerReligionPacket.GodStanding(
+                    god.displayName(), favour, band, miracles, theophanies));
         }
 
         return new OpenPlayerReligionPacket(
                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                 hasPledge, pledgeTempleName, pledgeFaithName,
                 ritesThisMonth, meetsMonthly,
-                today, calendar, favourSummary, miracleSummary, activeCalling, theophany);
+                today, calendar, activeCalling, gods);
     }
 
     /** The village owning {@code buildingId}, if any. */
