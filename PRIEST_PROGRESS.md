@@ -8927,3 +8927,138 @@ identical); the three orphaned convenience helpers were deleted; no new enum val
    domain.
 6. **Sub-stage-4 unchanged.** Confirm rite invocation text, scripture, and faith
    judgment read identically (they still source `Religion.deity()`/`ReligionIdentity`).
+
+## F1a sub-stage 4a — finish the deity re-point + settle multi-god policy (2026-06-09)
+
+(Foundation 1 — the last re-point. After 4a the `God` is the universal RUNTIME
+source for every deity attribute; only the cleanup stage's deletion of the now-unread
+duplication remains. Behaviour-preserving for single-god.)
+
+### The rule (from 3b), applied to the rest
+
+Deity attribute (name/domain/character/demands/rewards/virtues/taboos) → from the
+`God`. Religion narrative (cosmology/sacred history/practices/calendar/tenets/
+aesthetics) → stays on the religion.
+
+### The multi-god policy (decided once, in `GodRegistry`)
+
+- **Virtues & taboos (religion-level judgments) → UNION** across the religion's gods
+  (`anyGodHoldsVirtue`/`anyGodHoldsTaboo`; `unionVirtues`/`unionTaboos`).
+- **Offense targeting → the SPECIFIC god(s) whose taboo was broken** (`godsTabooing`)
+  — not a blanket fan-out.
+- **Headline deity NAME → the PRIMARY god's name**, falling back to the religion
+  display name (`primaryDeityName(r, fallback)` — the old `deity().orElse(...)` shape;
+  uses `God.name()` so an impersonal primary god yields the fallback, NOT the
+  "the Pattern" voice form).
+- **Domain-flavour → the relevant god's domain.**
+
+### Disposition (findings) + re-point
+
+1. **`FaithJudgment`** (NPC virtue/taboo judgment) read `ReligionIdentity.get(faith)
+   .virtues()/taboos()`. → virtue/taboo recognition via the **union**
+   (`GodRegistry.anyGodHoldsVirtue/Taboo`) for actor + witnesses; deleted the two
+   private `ReligionIdentity`-based helpers.
+2. **`FaithVoice`** (NPC dialogue) read `religion.deity()` + `id.deity().domain/
+   rewards/demands` + `id.virtues()`. → name/domain/demands/rewards from the
+   **primary god**; the virtue pool from the **union**; "the Pattern" stays the
+   impersonal voice form (`god.name().orElse("the Pattern")`).
+3. **`ReligionContent.invocation`** `deity().orElse(displayName)` → `primaryDeityName`.
+4. **`ScriptureFactory`** title + body deity name/domain/character/demands/rewards →
+   the **primary god** (the deity block is skipped for a god-less faith); the
+   "We hold/forbid" lists → **union**; cosmology/sacred history stay the religion's.
+   Dropped the defensive `id.deity()` fallback (god-only).
+5. **`TempleSnapshotBuilder`** `deity().orElse("")` → `primaryDeityName(r, "")`.
+6. **`PlayerReligionSnapshotBuilder`** the deity-NAME field → `primaryDeityName`
+   (per-god rows are 4b — NOT added). Also fixed the theophany banner: its milestone
+   key is `godId|pole` (3b), so it now resolves the GOD's display name
+   (`GodRegistry.find(...)`) instead of `Religion.deity()` (a 3b straggler).
+7. **Offense targeting** — `DivineWrath.onPlayerSacrilege` now offends the SPECIFIC
+   god(s) whose taboo was broken (`godsTabooing`), via the core `offend(godId,…)`
+   (refines the 3b primary-god approach; single-god → identical). Removed the orphaned
+   `DivineWrath.primaryGod`.
+8. **`/religion identity` debug readout** — re-pointed its deity name/domain/
+   character/demands/rewards/virtues/taboos to the god (cosmology/history/aesthetics/
+   practices stay the identity), so the readout no longer reads the deity duplication.
+
+### THE CLEANUP-GATE CONFIRMATION (what the cleanup stage depends on)
+
+After 4a, the **only runtime reader** of `Religion.deity()` /
+`ReligionIdentity.deity()` / `ReligionIdentity.virtues()/taboos()` is
+**`GodRegistry.derive()`** (the god-derivation itself, lines ~227-231) — grep-verified.
+Every other `ReligionIdentity.get(...)` call reads only the NARRATIVE
+(cosmology/sacred history), which correctly stays on the religion. The cleanup stage
+may now invert authoring onto `God` and delete the `ReligionIdentity` deity layer +
+`Religion.deity()` with no remaining readers.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `God` (attributes), `GodRegistry.primaryGod/godsFor` + the
+   new policy helpers (`primaryDeityName`/`anyGodHolds*`/`godsTabooing`/`union*`), the
+   core `offend(godId,…)`. Confirmed.
+2. **Downstream callers.** The six scoped files + `DivineWrath.onPlayerSacrilege` +
+   the `/religion identity` readout — grep-confirmed none read a deity attribute from
+   `ReligionIdentity`/`Religion.deity()` after the change (only `derive()` does).
+3. **Sibling systems.** 3a/3b unaffected. `God` derives from `ReligionIdentity`, so
+   the two sources still agree — single-god behaviour (invocation text, scripture,
+   judgments, offense targets/amounts) is identical.
+4. **Exhaustive switches.** No enum change; the two `DeityDomain` switches
+   (`DivineVision` colour, `DivineTheophany`/`FaithVoice` greetings) and `God.displayName`
+   unaffected.
+
+### Simplification sweep
+
+- The multi-god policy lives in ONE place (`GodRegistry`'s six policy helpers). Deleted
+  three orphans: `FaithJudgment.holdsVirtue/holdsTaboo` (ReligionIdentity-based) and
+  `DivineWrath.primaryGod`. Touched: `GodRegistry` (+policy), `FaithJudgment`,
+  `FaithVoice`, `ReligionContent`, `ScriptureFactory`, `TempleSnapshotBuilder`,
+  `PlayerReligionSnapshotBuilder`, `DivineWrath`, `ReligionDebugCommand`. The only
+  remaining `deity()`/identity-virtue/taboo reader is `GodRegistry.derive` (the
+  cleanup target).
+
+### Deviations from prompt
+
+- Touched two files beyond the six-file list, justified by the policy + gate:
+  `DivineWrath.onPlayerSacrilege` (the offended-god(s) targeting the policy mandates
+  "at the judgment call site") and the `/religion identity` debug readout (so the
+  cleanup-gate is truly clean — no remaining deity-attribute reader outside `derive`).
+- `PlayerReligionSnapshotBuilder` also got its theophany-banner god-key resolution
+  fixed (a 3b straggler surfaced by removing the `deity()` read) — still only the
+  deity-NAME field changed semantically; no per-god rows (4b).
+
+### Out-of-scope but flagged
+
+- **4b** — the per-god player-religion SCREEN (favour/standing/theophany per god;
+  `PlayerReligionSnapshotBuilder` per-god rows + the screen layout).
+- **Cleanup** — invert authoring onto `God`, relocate `Miracles`/`Curses` + the nested
+  types onto `God`, and **delete the `ReligionIdentity` deity duplication +
+  `Religion.deity()`** (4a confirmed no readers remain except `derive`).
+- **F1b** — per-world religions.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Container current; no reset.] Static review: every scoped consumer now reads deity
+attributes from the `God` (grep-confirmed the only `.deity()`/identity-virtue/taboo
+reader is `GodRegistry.derive`); the headline-name helper uses `God.name()` with the
+old fallback shape (impersonal → religion display name, NOT "the Pattern");
+virtues/taboos for religion-level judgments use the union; offense targets the
+offended god(s); cosmology/history stay the religion's; `God` derives from
+`ReligionIdentity` so single-god output is byte-identical; three orphans deleted; no
+new enum values; no codec/save change.
+
+### Smoke test (user-runnable)
+
+1. **Unchanged headline text.** For each faith confirm a priest's rite invocation, a
+   generated scripture's title + body, and a temple's displayed deity read identically
+   (the Loom showing its religion name "The Loom" where its god `the_pattern` is
+   impersonal). `/religion identity <faith>` reads the same.
+2. **Offense targets one god.** As a Sunstead adherent commit a Sunstead taboo (steal
+   → GREED) — confirm ONLY `sun_mother`'s favour drops (`/religion favour view`); the
+   other gods are unaffected; the guilt/witness judgment still fires (right virtues).
+3. **NPC voice unchanged.** Confirm a priest's faith dialogue lines read as before
+   (Sun-Mother greeting/blessing/virtue; the Loom's Pattern phrasing).
+4. **Player screen.** `/religion me` opens and shows the (now god-sourced) deity name
+   unchanged; the theophany banner shows the god's display name. (Per-god rows = 4b.)
+5. **No regressions.** Favour/miracles/curses/visions/theophany (3a/3b) behave exactly
+   as before for all four single-god faiths.

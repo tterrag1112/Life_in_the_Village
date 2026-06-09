@@ -49,11 +49,12 @@ public final class FaithJudgment {
         if (actor == null || concept == null) return;
         String faith = actor.getPiety().primaryReligion().orElse(null);
         if (faith == null) return;                       // unaffiliated — no faith judges it
-        ReligionIdentity id = ReligionIdentity.get(faith);
-        if (id == null) return;
+        Religion religion = ReligionRegistry.get(faith);
+        if (religion == null) return;
 
-        boolean virtue = holdsVirtue(id, concept);
-        boolean taboo  = holdsTaboo(id, concept);
+        // F1a 4a — virtue/taboo recognition is the UNION across the religion's gods.
+        boolean virtue = GodRegistry.anyGodHoldsVirtue(religion, concept);
+        boolean taboo  = GodRegistry.anyGodHoldsTaboo(religion, concept);
         if (!virtue && !taboo) return;                   // neutral for THIS faith
 
         // Actor: reward (virtue) or guilt (taboo) on their own primary faith.
@@ -69,12 +70,12 @@ public final class FaithJudgment {
             if (w == null || w.getUUID().equals(actorId)) continue;
             String wFaith = w.getPiety().primaryReligion().orElse(null);
             if (wFaith == null) continue;                // atheist witness — indifferent
-            ReligionIdentity wid = ReligionIdentity.get(wFaith);
-            if (wid == null) continue;
-            if (virtue && holdsVirtue(wid, concept)) {
+            Religion wReligion = ReligionRegistry.get(wFaith);
+            if (wReligion == null) continue;
+            if (virtue && GodRegistry.anyGodHoldsVirtue(wReligion, concept)) {
                 w.getNpcRelationships().adjust(actorId, WITNESS_VIRTUE_REL, now,
                         RelationshipOrigin.MET_SOCIALLY);
-            } else if (taboo && holdsTaboo(wid, concept)) {
+            } else if (taboo && GodRegistry.anyGodHoldsTaboo(wReligion, concept)) {
                 w.getNpcRelationships().adjust(actorId, WITNESS_TABOO_REL, now,
                         RelationshipOrigin.MET_IN_CONFLICT);
             }
@@ -98,11 +99,4 @@ public final class FaithJudgment {
         };
     }
 
-    private static boolean holdsVirtue(ReligionIdentity id, FaithConcept c) {
-        return id.virtues().stream().anyMatch(v -> v.concept() == c);
-    }
-
-    private static boolean holdsTaboo(ReligionIdentity id, FaithConcept c) {
-        return id.taboos().stream().anyMatch(t -> t.concept() == c);
-    }
 }

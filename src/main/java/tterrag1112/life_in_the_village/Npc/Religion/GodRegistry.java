@@ -122,6 +122,70 @@ public final class GodRegistry {
         return new ArrayList<>(set);
     }
 
+    // ── Multi-god policy (F1a sub-stage 4a — the ONE home for these decisions) ──
+
+    /** Headline deity NAME → the PRIMARY god's name, else {@code fallback} (the
+     *  religion display name / "" — matching the old {@code deity().orElse(...)}
+     *  shape; an impersonal primary god has no name, so the fallback is used). */
+    public static String primaryDeityName(Religion r, String fallback) {
+        ensureInit();
+        return r == null ? fallback : primaryGod(r).flatMap(God::name).orElse(fallback);
+    }
+
+    /** Union policy — does ANY god the religion venerates esteem {@code c} as a
+     *  virtue? (A religion-level judgment recognises every virtue any of its gods
+     *  esteems.) */
+    public static boolean anyGodHoldsVirtue(Religion r, FaithConcept c) {
+        if (r == null || c == null) return false;
+        for (God g : godsFor(r)) {
+            if (g.virtues().stream().anyMatch(v -> v.concept() == c)) return true;
+        }
+        return false;
+    }
+
+    /** Union policy — any god the religion venerates forbids {@code c} as a taboo. */
+    public static boolean anyGodHoldsTaboo(Religion r, FaithConcept c) {
+        if (r == null || c == null) return false;
+        for (God g : godsFor(r)) {
+            if (g.taboos().stream().anyMatch(t -> t.concept() == c)) return true;
+        }
+        return false;
+    }
+
+    /** Offense targeting — the gods of the religion that forbid {@code c} (the
+     *  SPECIFIC offended god(s) on a taboo; single-god → the one god). */
+    public static List<God> godsTabooing(Religion r, FaithConcept c) {
+        ensureInit();
+        if (r == null || c == null) return List.of();
+        List<God> out = new ArrayList<>();
+        for (God g : godsFor(r)) {
+            if (g.taboos().stream().anyMatch(t -> t.concept() == c)) out.add(g);
+        }
+        return out;
+    }
+
+    /** Union of the religion's gods' virtues, deduped by concept (authoring order). */
+    public static List<ReligionIdentity.Virtue> unionVirtues(Religion r) {
+        ensureInit();
+        List<ReligionIdentity.Virtue> out = new ArrayList<>();
+        java.util.Set<FaithConcept> seen = new java.util.HashSet<>();
+        if (r != null) for (God g : godsFor(r)) {
+            for (ReligionIdentity.Virtue v : g.virtues()) if (seen.add(v.concept())) out.add(v);
+        }
+        return out;
+    }
+
+    /** Union of the religion's gods' taboos, deduped by concept (authoring order). */
+    public static List<ReligionIdentity.Taboo> unionTaboos(Religion r) {
+        ensureInit();
+        List<ReligionIdentity.Taboo> out = new ArrayList<>();
+        java.util.Set<FaithConcept> seen = new java.util.HashSet<>();
+        if (r != null) for (God g : godsFor(r)) {
+            for (ReligionIdentity.Taboo t : g.taboos()) if (seen.add(t.concept())) out.add(t);
+        }
+        return out;
+    }
+
     // ── Init ───────────────────────────────────────────────────────────────
 
     private static synchronized void ensureInit() {

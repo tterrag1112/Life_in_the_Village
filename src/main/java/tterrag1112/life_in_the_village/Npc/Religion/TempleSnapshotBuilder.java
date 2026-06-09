@@ -49,7 +49,9 @@ public final class TempleSnapshotBuilder {
         String faithId = BuildingFaith.resolveFaith(level, village, building);
         Religion religion = faithId == null ? null : ReligionRegistry.get(faithId);
         String faithName = religion != null ? religion.displayName() : "";
-        String deityName = religion != null ? religion.deity().orElse("") : "";
+        // F1a 4a — the displayed deity is the religion's PRIMARY god (name; "" for an
+        // impersonal/god-less faith, matching the old deity().orElse("") shape).
+        String deityName = religion != null ? GodRegistry.primaryDeityName(religion, "") : "";
 
         // ── Economy (R4) + derived health ────────────────────────────────────
         BuildingEconomy econ = data.getOrCreateBuildingEconomy(building.getId());

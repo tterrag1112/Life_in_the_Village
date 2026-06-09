@@ -65,7 +65,8 @@ public final class ScriptureFactory {
     public static String title(String religionId) {
         Religion r = ReligionRegistry.get(religionId);
         if (r == null) return "Scripture";
-        return "The Book of " + r.deity().orElse(r.displayName());
+        // F1a 4a — primary god's name (religion display name fallback).
+        return "The Book of " + GodRegistry.primaryDeityName(r, r.displayName());
     }
 
     private static String author(Religion r) {
@@ -90,32 +91,40 @@ public final class ScriptureFactory {
             return cap(sb.toString());
         }
 
-        String deityName = (religion != null ? religion.deity() : java.util.Optional.<String>empty())
-                .orElse(religion != null ? religion.displayName() : religionId);
+        // F1a 4a — deity attributes (name / domain / character / demands / rewards)
+        // from the PRIMARY god; the cosmology / sacred history below stay the
+        // RELIGION's. The virtue/taboo lists are the UNION across the religion's gods.
+        God god = religion == null ? null : GodRegistry.primaryGod(religion).orElse(null);
+        java.util.List<Virtue> virtues = GodRegistry.unionVirtues(religion);
+        java.util.List<Taboo> taboos = GodRegistry.unionTaboos(religion);
 
-        // Cosmology.
+        // Cosmology (religion narrative).
         sb.append(id.cosmology()).append("\n\n");
-        // The deity.
-        sb.append("Of ").append(deityName).append(" — ").append(id.deity().domain()).append(".\n");
-        sb.append(id.deity().character()).append("\n");
-        sb.append("It asks ").append(id.deity().demands()).append(".\n");
-        sb.append("It gives ").append(id.deity().rewards()).append(".\n\n");
-        // Sacred history.
+        // The deity (god attributes) — present unless the faith is god-less.
+        if (god != null) {
+            String deityName = god.name().orElse(
+                    religion != null ? religion.displayName() : religionId);
+            sb.append("Of ").append(deityName).append(" — ").append(god.domain()).append(".\n");
+            sb.append(god.character()).append("\n");
+            sb.append("It asks ").append(god.demands()).append(".\n");
+            sb.append("It gives ").append(god.rewards()).append(".\n\n");
+        }
+        // Sacred history (religion narrative).
         sb.append(id.history().foundingMyth()).append("\n\n");
         for (HistoryEvent e : id.history().events()) {
             sb.append(e.title()).append(": ").append(e.text()).append("\n");
         }
         sb.append("\n");
-        // Virtues (what the faith holds).
-        if (!id.virtues().isEmpty()) {
+        // Virtues (what the faith holds — union across its gods).
+        if (!virtues.isEmpty()) {
             sb.append("We hold:\n");
-            for (Virtue v : id.virtues()) sb.append("- ").append(v.text()).append("\n");
+            for (Virtue v : virtues) sb.append("- ").append(v.text()).append("\n");
             sb.append("\n");
         }
-        // Taboos (what it forbids).
-        if (!id.taboos().isEmpty()) {
+        // Taboos (what it forbids — union across its gods).
+        if (!taboos.isEmpty()) {
             sb.append("We forbid:\n");
-            for (Taboo t : id.taboos()) sb.append("- ").append(t.text()).append("\n");
+            for (Taboo t : taboos) sb.append("- ").append(t.text()).append("\n");
             sb.append("\n");
         }
         // Practices.

@@ -65,7 +65,9 @@ public final class ReligionContent {
     public static String invocation(String religionId) {
         Religion r = ReligionRegistry.get(religionId);
         if (r == null) return "the divine";
-        return r.deity().orElse(r.displayName());
+        // F1a 4a — the headline name is the PRIMARY god's name (religion display
+        // name fallback for an impersonal/god-less faith), the old shape preserved.
+        return GodRegistry.primaryDeityName(r, r.displayName());
     }
 
     /** A core tenet line for confession / sermon flavor, if the religion has
