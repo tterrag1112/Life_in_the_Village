@@ -14,6 +14,10 @@ import net.minecraft.world.level.block.LoomBlock;
 import net.minecraft.world.level.block.SmokerBlock;
 import net.minecraft.world.level.block.StonecutterBlock;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+
+import java.util.List;
 import java.util.function.Predicate;
 
 /**
@@ -70,5 +74,31 @@ public enum AmenityType {
 
     public boolean matches(Block block) {
         return block != null && match.test(block);
+    }
+
+    /**
+     * The first block position inside {@code b}'s bounds matching one of
+     * {@code types}, in preference order, or {@code null} if none (an empty
+     * list ⇒ null = "no workstation needed"). Single home for the building
+     * amenity scan — shared by the production primitive (R6b) + the monastery
+     * developer (R6c).
+     */
+    public static BlockPos firstPresent(ServerLevel level, Building b, List<AmenityType> types) {
+        for (AmenityType t : types) {
+            BlockPos p = firstPresent(level, b, t);
+            if (p != null) return p;
+        }
+        return null;
+    }
+
+    /** The first block position inside {@code b}'s bounds matching {@code type},
+     *  or {@code null} if none. */
+    public static BlockPos firstPresent(ServerLevel level, Building b, AmenityType type) {
+        BlockPos min = b.getShape().getMin();
+        BlockPos max = b.getShape().getMax();
+        for (BlockPos pos : BlockPos.betweenClosed(min, max)) {
+            if (type.matches(level.getBlockState(pos).getBlock())) return pos.immutable();
+        }
+        return null;
     }
 }

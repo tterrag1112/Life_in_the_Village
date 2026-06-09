@@ -95,6 +95,17 @@ public final class RiteScheduler {
         catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] ledger prune threw: {}", t.getMessage());
         }
+
+        // 7. R6c — the self-organizing monastery: steer idle initiates toward the
+        // crafts the monastery needs + can support (a daily per-village pass).
+        try {
+            long now = level.getGameTime();
+            for (Village v : vdata.getAllVillages()) {
+                MonasteryDeveloper.tickVillage(level, v, vdata, now);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] monastery-developer pass threw: {}", t.getMessage());
+        }
     }
 
     /** Groups loaded PRIEST NPCs by their village id (one entity pass). */
