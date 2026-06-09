@@ -14,17 +14,15 @@ import java.util.UUID;
 
 /**
  * Foundation 1 (F1a) — the canonical home of the four {@link God}s, mirroring
- * {@link ReligionRegistry}'s shape (static, lazy-init, idempotent). This sub-stage
- * has <b>no consumer</b> besides the {@code /religion gods} debug readout — gods are
- * not yet referenced by any religion or by the divine layer (sub-stages 2/3).
+ * {@link ReligionRegistry}'s shape (static, lazy-init, idempotent).
  *
- * <p><b>Derived, not re-authored.</b> Each god is built at init from its existing
- * authored source — {@link ReligionIdentity#get} (domain/character/demands/rewards/
- * virtues/taboos) + {@link ReligionRegistry#get}'s {@code deity()} (the name) — so
- * there is a single source of truth and no drift while gods and religions coexist.
- * This derivation is <b>transient</b>: sub-stage 2 makes the religion reference gods
- * and {@code ReligionIdentity}/{@code Religion.deity()} become thin delegates, at
- * which point the god is the sole source.</p>
+ * <p><b>The authored source (F1a cleanup).</b> The gods' deity content — name,
+ * {@link DeityDomain}, character, demands, rewards, {@link Virtue}s, {@link Taboo}s —
+ * is hand-authored here on the {@link God} (no longer derived from
+ * {@code ReligionIdentity}/{@code Religion.deity()}, which kept only religion
+ * NARRATIVE: cosmology / sacred history / aesthetics / practices). A religion
+ * references its gods by id ({@link Religion#godIds()}); the reverse index maps a
+ * god back to the religions that venerate it (for the piety tier + narrative).</p>
  */
 public final class GodRegistry {
 
@@ -165,23 +163,23 @@ public final class GodRegistry {
     }
 
     /** Union of the religion's gods' virtues, deduped by concept (authoring order). */
-    public static List<ReligionIdentity.Virtue> unionVirtues(Religion r) {
+    public static List<Virtue> unionVirtues(Religion r) {
         ensureInit();
-        List<ReligionIdentity.Virtue> out = new ArrayList<>();
+        List<Virtue> out = new ArrayList<>();
         java.util.Set<FaithConcept> seen = new java.util.HashSet<>();
         if (r != null) for (God g : godsFor(r)) {
-            for (ReligionIdentity.Virtue v : g.virtues()) if (seen.add(v.concept())) out.add(v);
+            for (Virtue v : g.virtues()) if (seen.add(v.concept())) out.add(v);
         }
         return out;
     }
 
     /** Union of the religion's gods' taboos, deduped by concept (authoring order). */
-    public static List<ReligionIdentity.Taboo> unionTaboos(Religion r) {
+    public static List<Taboo> unionTaboos(Religion r) {
         ensureInit();
-        List<ReligionIdentity.Taboo> out = new ArrayList<>();
+        List<Taboo> out = new ArrayList<>();
         java.util.Set<FaithConcept> seen = new java.util.HashSet<>();
         if (r != null) for (God g : godsFor(r)) {
-            for (ReligionIdentity.Taboo t : g.taboos()) if (seen.add(t.concept())) out.add(t);
+            for (Taboo t : g.taboos()) if (seen.add(t.concept())) out.add(t);
         }
         return out;
     }
@@ -190,14 +188,14 @@ public final class GodRegistry {
 
     private static synchronized void ensureInit() {
         if (initialised) return;
-        register(derive(SUN_MOTHER,   ReligionRegistry.SUNSTEAD));
-        register(derive(THE_PATTERN,  ReligionRegistry.THE_LOOM));
-        register(derive(SEA_MOTHER,   ReligionRegistry.TIDECALL));
-        register(derive(FORGE_FATHER, ReligionRegistry.FORGE_CREED));
+        register(sunMother());
+        register(thePattern());
+        register(seaMother());
+        register(forgeFather());
         // Build the reverse index from the authored religion → godIds links.
         for (Religion r : ReligionRegistry.all()) {
             for (String gid : r.godIds()) {
-                RELIGIONS_BY_GOD.computeIfAbsent(gid, k -> new java.util.ArrayList<>()).add(r.id());
+                RELIGIONS_BY_GOD.computeIfAbsent(gid, k -> new ArrayList<>()).add(r.id());
             }
         }
         initialised = true;
@@ -212,22 +210,79 @@ public final class GodRegistry {
         GODS.put(g.id(), g);
     }
 
-    /**
-     * Builds a god from its religion's authored content: the rich
-     * {@link ReligionIdentity.Deity} layer + virtues/taboos, and the personal name
-     * from {@link Religion#deity()} (empty → an impersonal god, the Pattern).
-     */
-    private static God derive(String godId, String religionId) {
-        ReligionIdentity identity = ReligionIdentity.get(religionId);
-        if (identity == null) {
-            LOGGER.warn("[GodRegistry] No identity for {} — skipping god {}", religionId, godId);
-            return null;
-        }
-        Religion religion = ReligionRegistry.get(religionId);
-        Optional<String> name = religion != null ? religion.deity() : Optional.empty();
-        ReligionIdentity.Deity deity = identity.deity();
-        return new God(godId, name, deity.domain(),
-                deity.character(), deity.demands(), deity.rewards(),
-                identity.virtues(), identity.taboos());
+    // ── Authored gods (F1a cleanup — the gods are now the authored source) ───
+
+    private static God sunMother() {
+        return new God(SUN_MOTHER, Optional.of("the Sun-Mother"), DeityDomain.SUN,
+                "A warm but exacting mother: generous to the diligent, cold to the "
+                        + "idle. She rises without fail and asks the same of her people.",
+                "early rising, honest work, and gratitude at the harvest",
+                "ripened fields, a warm hearth, and rebirth with the spring",
+                List.of(
+                        new Virtue(FaithConcept.HONEST_LABOUR,
+                                "Honest labour rewards the labourer; the Sun-Mother sees the diligent hand."),
+                        new Virtue(FaithConcept.GENEROSITY,
+                                "A full granary is shared, not hoarded — plenty is the village's, not one house's.")),
+                List.of(
+                        new Taboo(FaithConcept.IDLENESS,
+                                "To shirk the day's work is to spurn the light that gives it."),
+                        new Taboo(FaithConcept.GREED,
+                                "To hoard the harvest while a neighbour hungers is to insult the giver.")));
+    }
+
+    private static God thePattern() {
+        return new God(THE_PATTERN, Optional.empty(), DeityDomain.FATE,
+                "Impersonal and unbroken — the Pattern is not prayed to but kept faith "
+                        + "with. It neither rewards nor punishes; it only records.",
+                "truth in word and work, and a thread kept clean of knots",
+                "a life that lies true in the weave, and a clean return to the whole",
+                List.of(
+                        new Virtue(FaithConcept.TRUTHFULNESS,
+                                "Speak truly to the cloth; a false thread fouls every thread it crosses."),
+                        new Virtue(FaithConcept.HARMONY,
+                                "Keep the pattern whole — your thread is bound to every other.")),
+                List.of(
+                        new Taboo(FaithConcept.DECEIT,
+                                "A lie is a knot in the weave; it snares more than the one who tied it."),
+                        new Taboo(FaithConcept.DISCORD,
+                                "To set thread against thread is to tear the cloth that holds you too.")));
+    }
+
+    private static God seaMother() {
+        return new God(SEA_MOTHER, Optional.of("the Sea-Mother"), DeityDomain.SEA,
+                "Vast, generous, and perilous — not cruel but not safe. She honours those "
+                        + "who go out with respect and return what they do not need.",
+                "humility before the deep, and remembrance of those it has taken",
+                "full nets, fair passage, and a name the salt will keep",
+                List.of(
+                        new Virtue(FaithConcept.RESPECT_THE_SEA,
+                                "The sea gives and the sea takes; go out humble and take only your need."),
+                        new Virtue(FaithConcept.REMEMBRANCE,
+                                "Salt remembers — sing the names of the lost so the deep keeps them well.")),
+                List.of(
+                        new Taboo(FaithConcept.RECKLESSNESS,
+                                "To dare the deep heedlessly is to spit in the Sea-Mother's face."),
+                        new Taboo(FaithConcept.SACRILEGE,
+                                "To foul the shore or mock the drowned is to break faith with the deep.")));
+    }
+
+    private static God forgeFather() {
+        return new God(FORGE_FATHER, Optional.of("the First Forge-Father"), DeityDomain.FORGE,
+                "Stern, steadfast, and unbreaking — a father who measures a life by what "
+                        + "it held against and whom it stood for, not by what it gathered.",
+                "courage, loyalty to kin, and honour to the ancestors who held the line",
+                "a name remembered as iron, and a place in the line that endures",
+                List.of(
+                        new Virtue(FaithConcept.HONOUR_THE_ANCESTORS,
+                                "Honour the ancestors who held the line; iron remembers, so should we."),
+                        new Virtue(FaithConcept.LOYALTY,
+                                "Stand for those behind you — the line holds only while each link holds."),
+                        new Virtue(FaithConcept.VALOUR,
+                                "Meet trial standing; courage is the temper that keeps iron from breaking.")),
+                List.of(
+                        new Taboo(FaithConcept.COWARDICE,
+                                "To abandon kin in the breach is to break the line and one's own name with it."),
+                        new Taboo(FaithConcept.SACRILEGE,
+                                "To dishonour the ancestors' graves is to spurn the iron at your back.")));
     }
 }

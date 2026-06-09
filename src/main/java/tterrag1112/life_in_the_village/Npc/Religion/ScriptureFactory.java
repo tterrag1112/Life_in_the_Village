@@ -3,8 +3,6 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Npc.Letters.BookCategory;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.HistoryEvent;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Taboo;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Virtue;
 import tterrag1112.life_in_the_village.Npc.Scribal.BookRecord;
 import tterrag1112.life_in_the_village.Npc.Scribal.ScribalItems;
 
@@ -21,8 +19,9 @@ import java.util.UUID;
  * player who opens a Sunstead scripture reads the Sun-Mother's lore in its own
  * words. Per-faith distinct, straight from the authored identity; page-capped.
  *
- * <p>The deity NAME stays the single source in {@link Religion#deity()} (D1
- * reconciliation); the rich layer comes from the identity. A faith without an
+ * <p>The deity NAME and attributes come from the religion's primary {@link God}
+ * (F1a); the cosmology / sacred history / practices come from the identity, and the
+ * tenets/commandments from the union of the gods' virtues/taboos. A faith without an
  * authored identity falls back to a coherent (shorter) body from its name +
  * core tenets — graceful, never empty.</p>
  */

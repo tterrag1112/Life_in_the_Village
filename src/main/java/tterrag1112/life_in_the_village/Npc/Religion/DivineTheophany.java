@@ -10,7 +10,6 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LightningBolt;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 
 import java.util.UUID;
 

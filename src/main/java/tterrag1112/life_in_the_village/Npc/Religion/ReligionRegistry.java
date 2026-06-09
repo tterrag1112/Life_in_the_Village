@@ -99,7 +99,6 @@ public final class ReligionRegistry {
                         Map.entry("Spring Equinox", 80),   // ~ March 21
                         Map.entry("Harvest Equinox", 264), // ~ September 21
                         Map.entry("Midsummer", 172))),
-                Optional.of("the Sun-Mother"),
                 List.of(BookCategory.RELIGIOUS, BookCategory.HISTORY,
                         BookCategory.GUIDE),
                 List.of(GodRegistry.SUN_MOTHER));   // F1a — venerates the Sun-Mother
@@ -127,7 +126,6 @@ public final class ReligionRegistry {
                         Map.entry("Second Threading", 90),
                         Map.entry("Third Threading", 180),
                         Map.entry("Fourth Threading",270))),
-                Optional.empty(),
                 List.of(BookCategory.RELIGIOUS, BookCategory.LITERATURE),
                 List.of(GodRegistry.THE_PATTERN));  // F1a — venerates the (impersonal) Pattern
     }
@@ -154,7 +152,6 @@ public final class ReligionRegistry {
                         Map.entry("First Catch",   105),
                         Map.entry("Storm's Vigil", 200),
                         Map.entry("Last Catch",    300))),
-                Optional.of("the Sea-Mother"),
                 List.of(BookCategory.RELIGIOUS, BookCategory.TRAVELOGUE),
                 List.of(GodRegistry.SEA_MOTHER));   // F1a — venerates the Sea-Mother
     }
@@ -180,7 +177,6 @@ public final class ReligionRegistry {
                         Map.entry("Founding Day",     12),
                         Map.entry("Anvil Vigil",     150),
                         Map.entry("Ancestor Day",    330))),
-                Optional.of("the First Forge-Father"),
                 List.of(BookCategory.RELIGIOUS, BookCategory.HISTORY),
                 List.of(GodRegistry.FORGE_FATHER)); // F1a — venerates the First Forge-Father
     }

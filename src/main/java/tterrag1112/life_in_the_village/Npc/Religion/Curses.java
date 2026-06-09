@@ -7,7 +7,6 @@ import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.DispleasureTier;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 
 import java.util.ArrayList;
 import java.util.List;

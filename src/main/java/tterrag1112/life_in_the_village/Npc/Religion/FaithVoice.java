@@ -2,8 +2,6 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 
 import net.minecraft.util.RandomSource;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Virtue;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.ArrayList;
@@ -13,11 +11,11 @@ import java.util.Optional;
 /**
  * Religion Deepening D3b — the faith's <b>voice</b>: a single content-driven line
  * source that lets a clergy member or a devout adherent speak their religion. It
- * draws straight from the speaker's {@link ReligionIdentity} (D1) — the deity (name
- * from {@link Religion#deity()}, character/demands/rewards from the identity), the
- * cosmology's domain idiom, and the authored virtues — so a Sunstead priest invokes
- * the Sun-Mother and echoes honest labour, while a Tidecall priest blesses by the
- * tides and a Loom priest speaks of the Pattern with no deity name at all.
+ * draws straight from the speaker's {@link God} (F1a — its name, character, demands,
+ * rewards, and domain idiom) plus the religion's union of authored virtues — so a
+ * Sunstead priest invokes the Sun-Mother and echoes honest labour, while a Tidecall
+ * priest blesses by the tides and a Loom priest speaks of the Pattern with no deity
+ * name at all.
  *
  * <p><b>One weighted source, not an override.</b> {@link NpcDialogue} consults this
  * as one more pool alongside profession/trait/season lines; the frequency gating

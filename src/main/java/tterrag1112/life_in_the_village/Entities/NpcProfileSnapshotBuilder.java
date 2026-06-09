@@ -169,8 +169,12 @@ public final class NpcProfileSnapshotBuilder {
                 .flatMap(tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry::find);
         String religionName = religion
                 .map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName).orElse("");
+        // F1a — the headline deity name is the PRIMARY god's name (impersonal gods
+        // like the Loom's Pattern yield the empty fallback, matching the old
+        // Optional<deity> behaviour).
         String deityName = religion
-                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.Religion::deity).orElse("");
+                .map(r -> tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.primaryDeityName(r, ""))
+                .orElse("");
         float pietyStrength = piety.primaryStrength();
         String pietyTier = piety.primaryTier().displayName();
         java.util.List<String> beliefSummary = new java.util.ArrayList<>();

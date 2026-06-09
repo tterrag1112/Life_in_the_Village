@@ -8,7 +8,6 @@ import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.level.block.BonemealableBlock;
 import net.minecraft.world.level.block.state.BlockState;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -50,10 +49,8 @@ public final class Miracles {
     }
 
     /** F1a sub-stage 3b — a god's miracles, selected by the god's DOMAIN (miracles
-     *  stay {@link tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain}-keyed
-     *  data; the god is the subject), low-tier first. */
-    public static List<Miracle> forDomain(
-            tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain domain) {
+     *  stay {@link DeityDomain}-keyed data; the god is the subject), low-tier first. */
+    public static List<Miracle> forDomain(DeityDomain domain) {
         List<Miracle> out = new ArrayList<>();
         for (Miracle m : MIRACLES) if (m.domain() == domain) out.add(m);
         return out;

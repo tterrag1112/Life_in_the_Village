@@ -9187,3 +9187,132 @@ orphan); single-god data shows as one god row, identical values.
    calling, observance, and the calendar list read as before.
 6. **No desync.** Confirm the screen opens cleanly (StreamCodec round-trips — no
    client disconnect) and both lists scroll.
+
+## F1a sub-stage 5 — cleanup: invert authoring onto God, delete the duplication (2026-06-09)
+
+This **completes F1a**. Through 1→4b the `God` was real but *derived*: `GodRegistry`
+built each god from the religion's `ReligionIdentity` (deity name/domain/character/
+demands/rewards + virtues/taboos) and `Religion.deity()`, so two sources of truth
+were kept deliberately in agreement. 4a proved the gate — the ONLY remaining readers
+of `Religion.deity()` / the identity deity fields were `GodRegistry.derive()` itself.
+This stage inverts the authoring (the god is now hand-authored, the source of truth),
+relocates the deity TYPES out of `ReligionIdentity`, and deletes the duplication in
+the same change (convert-then-delete).
+
+### Disposition (investigation pass)
+
+- **Authoring inversion.** `GodRegistry.ensureInit` no longer calls a `derive(godId,
+  religionId)` that reads `ReligionIdentity`; it registers four hand-authored gods
+  (`sunMother`/`thePattern`/`seaMother`/`forgeFather`) whose content is the verbatim
+  deity material that used to live on the identity. The reverse index
+  (`RELIGIONS_BY_GOD`) is still built from `ReligionRegistry.all()` + `godIds()`.
+- **Type relocation.** `DeityDomain`, `Virtue`, `Taboo` were nested in
+  `ReligionIdentity`. They are god concepts, so they became standalone top-level
+  records/enum in `Npc.Religion` (`DeityDomain.java`, `Virtue.java`, `Taboo.java`).
+  Top-level (vs. nesting on `God`) minimises reference churn — every consumer already
+  in-package now names them bare; the 11 files the bulk rename touched
+  (`God`, `GodRegistry`, `Miracle(s)`, `Curse(s)`, `DivineVision/Wrath/Theophany`,
+  `FaithVoice`, `ScriptureFactory`) only had `ReligionIdentity.` prefixes stripped.
+- **Deletion.** `Religion.deity()` (component + compact-ctor guard + codec
+  `optionalFieldOf("deity")`) deleted → `Religion` goes **9→8 codec fields**; the four
+  `ReligionRegistry` factory calls drop the deity arg. `ReligionIdentity` loses its
+  `Deity` record, the `deity`/`virtues`/`taboos` fields, and the nested
+  `DeityDomain`/`Virtue`/`Taboo` types; it is now a pure narrative record
+  `(religionId, cosmology, SacredHistory, Aesthetics, practices)`.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `GodRegistry` authoring no longer feeds off `ReligionIdentity`
+   — it is the source. `ReligionRegistry.godIds()` still feeds the reverse index
+   (unchanged).
+2. **Downstream callers (grep of `Religion.deity()` / identity deity members).**
+   - `GodRegistry.derive()` — deleted (replaced by authored gods).
+   - **`NpcProfileSnapshotBuilder`** (line 173) — a STRAGGLER the 4a audit missed:
+     it still read `religion.flatMap(Religion::deity)` for the NPC profile's
+     `deityName`. The grep (not javac — the field still existed until this stage)
+     caught it, exactly as the cleanup-gate predicted. Re-pointed to
+     `GodRegistry.primaryDeityName(r, "")`, which uses `God.name()` so an impersonal
+     god (the Loom) yields the empty fallback — **behaviour-identical** to the old
+     `Optional<deity>.orElse("")`.
+   - `ReligionDebugCommand` (`/religion identity`) — already migrated in 4a to
+     `primaryGod` + `unionVirtues`/`unionTaboos`; reads only kept identity narrative.
+   - `FaithVoice`, `ScriptureFactory`, `FaithJudgment`, `DivineVision/Wrath/Theophany`,
+     `Miracle(s)`/`Curse(s)`, `PlayerReligionSnapshotBuilder` — all already god-keyed
+     from 3a–4b; only same-package imports cleaned here.
+3. **Sibling systems.** Persistence — `Religion.CODEC` drops a field; a pre-cleanup
+   save that stored a `"deity"` key simply ignores it on load (the other 8 fields are
+   all `optionalFieldOf`), and `Religion` is content, not saved per-world, so there is
+   no migration. `RiteSavedData` god-keyed favour/calling/theophany untouched.
+4. **Exhaustive switches.** No enum values added/removed (`DeityDomain` relocated
+   verbatim — same 4 constants); the `switch (domain)` in `God.displayName`,
+   `FaithVoice.domainGreeting`, `DivineTheophany.particlesFor`/`manifest`,
+   `Curses.forDomain` callers, etc. are unchanged and still exhaustive.
+
+### Simplification sweep
+
+- **Orphan deleted:** `GodRegistry.derive(godId, religionId)` (the last reader of the
+  identity deity duplication) — removed with the duplication it bridged.
+- **Duplication collapsed:** the deity content existed twice (authored on
+  `ReligionIdentity`, mirrored onto `God`). Now once, on `God`. `ReligionIdentity`
+  shrank from 8 record components-worth of deity+narrative to 5 narrative-only.
+- **Import noise:** the bulk `ReligionIdentity.{DeityDomain,Virtue,Taboo}`→bare rename
+  left redundant same-package imports across 9 files; all removed.
+- **Left intentionally (out of scope, flagged below):** `Religion.sacredLocations`
+  (dead field, not part of this stage); `Miracles`/`Curses` stay `DeityDomain`-keyed
+  data (`forDomain`) — the relocation of those tables onto `God` is a later stage.
+
+### Deviations from prompt
+
+- The prompt scoped the readers to "4a confirmed no readers remain except
+  `GodRegistry.derive()`." In fact **`NpcProfileSnapshotBuilder` was a second live
+  reader** of `Religion.deity()`. Fixed in scope (re-pointed to
+  `primaryDeityName`, behaviour-preserving). This is the grep-is-the-safety-net case
+  the cleanup-gate exists for; no scope expansion beyond the one-line re-point.
+- Stale javadoc that named the now-deleted `Religion.deity()` as a `{@link}` (in
+  `God`, `FaithVoice`, `ScriptureFactory`) was corrected to describe the inverted
+  authoring (dangling `{@link}` targets would warn under doclint). Historical
+  `{@code Religion.deity()}` mentions (code font, not links) left as accurate
+  past-tense notes.
+
+### Out-of-scope but flagged
+
+- **Relocating `Miracles`/`Curses` onto `God`** — they remain `DeityDomain`-keyed
+  data accessed via `forDomain`; the god is the subject but does not yet OWN the
+  table. A later stage (era-2 per-god miracle/curse sets) can move them.
+- **`Religion.sacredLocations`** — still a dead field; deliberately left (not this
+  stage's concern).
+- **F1b** — per-world religions / pantheons (multiple gods per faith). The
+  multi-god policy (union virtues/taboos, specific-god offense, primary-god headline)
+  is already centralised in `GodRegistry`, so F1b is data, not re-plumbing.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` cannot resolve `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current; no reset.] Static review: `Religion` is a clean
+8-field record/codec; `ReligionIdentity` is a 5-field narrative record with its
+`build()` arities matching; the three relocated types are valid top-level
+records/enum in-package; `GodRegistry` authors four gods with `FaithConcept` values
+that already existed (copied verbatim); no residual `Religion.deity()` /
+`ReligionIdentity.{Deity,DeityDomain,Virtue,Taboo}` references (grep-clean); the only
+`new Religion(` callers are the four updated factories; `.virtues()/.taboos()` reads
+are all on `God`.
+
+### Smoke test (user-runnable)
+
+1. **Gods author identically.** `/religion identity sunstead` — confirm the Deity
+   line still reads `the Sun-Mother` (domain SUN) with the same character/demands/
+   rewards, and the same two virtues + two taboos as before the cleanup.
+2. **Impersonal god intact.** `/religion identity the_loom` — confirm NO Deity line
+   value beyond the fallback (the Pattern is impersonal: `primaryDeityName` falls back
+   to the display name), cosmology/history/practices unchanged.
+3. **NPC profile deity name.** Open an NPC profile for a Sunstead adherent — confirm
+   the deity field reads `the Sun-Mother`; for a Loom adherent it reads blank (was
+   blank before — `Religion.deity()` was empty for the Loom).
+4. **Favour/miracles/visions unchanged.** Repeat any V1–V5 / 4b smoke step (e.g.
+   `/religion favour grant sun_mother 60`, open `/religion me`) — confirm identical
+   behaviour; the god content is authored from the same words, just sourced from
+   `GodRegistry` now.
+5. **Save compatibility.** Load a world saved before this stage — confirm religions
+   load cleanly (the dropped `"deity"` codec key is ignored) and faith behaviour is
+   unchanged.
