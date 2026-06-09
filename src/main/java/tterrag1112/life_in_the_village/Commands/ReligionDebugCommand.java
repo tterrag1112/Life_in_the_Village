@@ -99,8 +99,8 @@ public final class ReligionDebugCommand {
                                 })
                                 .executes(ReligionDebugCommand::handleIdentity)))
 
-                // Divine Layer V1 — /religion favour [view] | grant <faith> <amt> |
-                // spend <faith> <amt>  (operates on the executing player).
+                // F1a 3a/3b — /religion favour [view] | grant <god> <amt> | spend
+                // <god> <amt> | offend <god> <amt>  (grant/spend/offend target a GOD id).
                 .then(Commands.literal("favour")
                         .executes(ReligionDebugCommand::handleFavourView)
                         .then(Commands.literal("view").executes(ReligionDebugCommand::handleFavourView))
@@ -111,7 +111,11 @@ public final class ReligionDebugCommand {
                         .then(Commands.literal("spend")
                                 .then(Commands.argument("religionId", StringArgumentType.word())
                                         .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 100f))
-                                                .executes(ctx -> handleFavourGrantSpend(ctx, false))))))
+                                                .executes(ctx -> handleFavourGrantSpend(ctx, false)))))
+                        .then(Commands.literal("offend")
+                                .then(Commands.argument("religionId", StringArgumentType.word())
+                                        .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 200f))
+                                                .executes(ReligionDebugCommand::handleFavourOffend)))))
 
                 // Divine Layer V2 — /religion miracle list | cast <id>  (executing player).
                 .then(Commands.literal("miracle")
@@ -133,13 +137,15 @@ public final class ReligionDebugCommand {
                                 .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 200f))
                                         .executes(ReligionDebugCommand::handleSacrilege))))
 
-                // Divine Layer V5 — /religion theophany favour|wrath  (force-fire the
-                // manifestation for the executing player's primary faith, for testing).
+                // F1a 3b — /religion theophany favour|wrath <god>  (force-fire a named
+                // god's manifestation for the executing player, for testing).
                 .then(Commands.literal("theophany")
                         .then(Commands.literal("favour")
-                                .executes(ctx -> handleTheophany(ctx, false)))
+                                .then(Commands.argument("godId", StringArgumentType.word())
+                                        .executes(ctx -> handleTheophany(ctx, false))))
                         .then(Commands.literal("wrath")
-                                .executes(ctx -> handleTheophany(ctx, true))))
+                                .then(Commands.argument("godId", StringArgumentType.word())
+                                        .executes(ctx -> handleTheophany(ctx, true)))))
 
                 // F1a — list the canonical gods (the new God/GodRegistry scaffolding;
                 // the only consumer this stage). Read-only.
@@ -180,19 +186,44 @@ public final class ReligionDebugCommand {
         ServerLevel level = src.getLevel();
         var player = src.getPlayer();
         if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
-        String faith = tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData.get(level)
-                .getPlayerPiety(player.getUUID())
-                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.PietyComponent::primaryReligion)
-                .orElse(null);
-        if (faith == null) { src.sendFailure(Component.literal("You have no faith.")); return 0; }
+        // F1a 3b — theophany targets a named GOD now.
+        String gid = StringArgumentType.getString(ctx, "godId");
+        var god = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.get(gid);
+        if (god == null) {
+            src.sendFailure(Component.literal("Unknown god " + gid
+                    + " (try sun_mother / the_pattern / sea_mother / forge_father)"));
+            return 0;
+        }
         long now = level.getGameTime();
         if (wrath) {
             tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany
-                    .fireWrath(level, player, faith, now);
+                    .fireWrath(level, player, god, now);
         } else {
             tterrag1112.life_in_the_village.Npc.Religion.DivineTheophany
-                    .fireFavour(level, player, faith, now);
+                    .fireFavour(level, player, god, now);
         }
+        return 1;
+    }
+
+    private static int handleFavourOffend(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        // F1a 3b — drive a NAMED god's displeasure (for per-god curse/wrath testing).
+        String gid = StringArgumentType.getString(ctx, "religionId");
+        if (tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.get(gid) == null) {
+            src.sendFailure(Component.literal("Unknown god " + gid));
+            return 0;
+        }
+        float amount = FloatArgumentType.getFloat(ctx, "amount");
+        long now = level.getGameTime();
+        tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                .offend(level, player.getUUID(), gid, amount, now);
+        float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                .current(level, player.getUUID(), gid, now);
+        src.sendSuccess(() -> Component.literal(
+                "§cOffended§7 god " + gid + " — favour now §f" + Math.round(fav)), false);
         return 1;
     }
 
@@ -227,13 +258,19 @@ public final class ReligionDebugCommand {
         if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
         long now = level.getGameTime();
 
-        StringBuilder sb = new StringBuilder("§e=== Miracles ===");
-        for (Religion r : ReligionRegistry.all()) {
-            var set = tterrag1112.life_in_the_village.Npc.Religion.Miracles.forReligion(r.id());
+        // F1a 3b — miracles are per GOD now: the union over the player's gods (or all
+        // gods if unaffiliated), each god's miracles selected by its domain.
+        var gods = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                .playerGods(level, player.getUUID());
+        if (gods.isEmpty()) gods = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.all();
+        StringBuilder sb = new StringBuilder("§e=== Miracles (per god) ===");
+        for (var god : gods) {
+            var set = tterrag1112.life_in_the_village.Npc.Religion.Miracles.forDomain(god.domain());
             if (set.isEmpty()) continue;
             float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                    .currentForReligion(level, player.getUUID(), r.id(), now);
-            sb.append(String.format(Locale.ROOT, "%n§6%s§7 (favour %.0f):", r.displayName(), fav));
+                    .current(level, player.getUUID(), god.id(), now);
+            sb.append(String.format(Locale.ROOT, "%n§6%s§8(%s)§7 (favour %.0f):",
+                    god.displayName(), god.id(), fav));
             for (var m : set) {
                 var st = tterrag1112.life_in_the_village.Npc.Religion.MiracleInvoker
                         .status(level, player, m, now);

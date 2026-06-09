@@ -8786,3 +8786,144 @@ key may change freely (no save-safety needed).
 5. **Loom.** Confirm `the_pattern` (impersonal) favour works for the Loom's single god.
 6. **Independence.** Confirm standing with each of the four gods is independent and
    matches pre-change behaviour.
+
+## F1a sub-stage 3b — re-point the divine-EVENT layer to the god (2026-06-09)
+
+(Foundation 1 — separating gods from religions. 3a made favour per-god; 3b makes
+the event layer treat the GOD as the subject. Behaviour-preserving for single-god.)
+
+### The rule applied
+
+- **Deity attribute → from the `God`**: `domain`, `name`, `character`, `demands`,
+  `rewards`, `virtues`, `taboos`. The event layer reads these from the resolved god.
+- **Religion attribute → from the religion** (`ReligionIdentity`/`Religion`):
+  `cosmology`, sacred history, the holy-day calendar, core tenets. Event text that
+  references narrative still reads it from a religion that venerates the god.
+- **Iteration subject → the god.** The ticks loop the player's gods, not the primary
+  religion's one deity.
+
+### Disposition (findings)
+
+- `Miracles`/`Curses` are authored data carrying both a `religionId` AND a `domain`
+  (1:1 today); lookups were religion-keyed (`forReligion`). The visions/wrath/
+  theophany ticks all resolved the player's PRIMARY religion (`primaryFaith`) then
+  its one deity (`ReligionIdentity.get(faith).deity().domain()` / `Religion.deity()`
+  name) — none looped beliefs. Curse/colour/manifestation form all keyed on that
+  domain. Favour is already per-god (3a, via the convenience layer).
+- Plan: add `Curses.forDomain`/`Miracles.forDomain` (domain-keyed lookups — the
+  tables stay `DeityDomain`-keyed, NOT relocated); add ONE shared
+  `GodRegistry.playerGods(level, pid)` (the distinct gods of the player's belief
+  religions) + `primaryReligionOf(godId)` (for narrative); iterate gods in the ticks;
+  read deity attrs from the god; gate/spend god-keyed (3a core).
+
+### What shipped
+
+- **`GodRegistry`** — `playerGods(level, playerId)` (the one shared iteration subject)
+  + `primaryReligionOf(godId)` (the religion-narrative source for a god).
+- **`Curses.forDomain(domain, severity)`** + **`Miracles.forDomain(domain)`** —
+  domain-keyed lookups (data unchanged).
+- **`MiracleInvoker`** — `godFor(miracle)` (the miracle's religion's primary god);
+  `status`/`cast` gate by the GOD's tier (`tierForGod`) + favour (`current(godId)`)
+  and spend the GOD's favour (`spend(godId)`). The god is the subject of the gift.
+- **`DivineVision`** — fully god-centric: `tick` iterates `playerGods` (per-god
+  cooldown, ≤1 vision/tick); voice (`send`/`speak`) takes a `God` (name +
+  `domainColor(god.domain())`); deity-attribute content (lore `character`, guidance
+  `virtues`/`taboos`) from the god; narrative (cosmology/holy days) from the god's
+  religion via `primaryReligionOf`. `speak(faith,…)` → `speak(God,…)`. The V3 calling
+  hook stays religion-keyed (fires from `awardForReligion`), voiced by the religion's
+  god.
+- **`DivineWrath`** — per-god escalation: `tick` loops `playerGods`, reads each god's
+  favour, selects curse content by `god.domain()` (`Curses.forDomain`), voices via
+  the god; `onPlayerSacrilege` checks the GOD's taboos + offends the god;
+  `armConsequenceCooldown(pid, godId, now)` (per god).
+- **`DivineTheophany`** — per-god extremes: `tick` loops `playerGods`, reads each
+  god's favour, milestones per god (`godId|favour`/`godId|wrath`); `fireFavour`/
+  `fireWrath` take a `God`, form from `god.domain()`, voice via the god, write the
+  god's favour, arm that god's curse cooldown.
+- **Per-god test commands** — `/religion favour grant|spend|offend <god>` (god-keyed),
+  `/religion theophany favour|wrath <god>`, `/religion miracle list` (per-god, union
+  of the player's gods' miracles by domain). `/religion sacrilege <religion>` stays
+  religion-relative; `/religion gods` (3a) is the god-id discovery surface.
+- **Convenience-layer trim** — the event layer moving god-keyed orphaned
+  `tierForReligion`/`spendForReligion`/`awardVirtueForReligion`; deleted them (the
+  sweep). The remaining religion-facing API is exactly its callers:
+  `awardForReligion` (acts), `offendForReligion`/`currentForReligion` (sacrilege
+  debug), `addCappedForReligion` (calling bonus).
+
+### Tie-in audit
+
+1. **Upstream feeders.** `God` (domain/character/name/virtues/taboos),
+   `GodRegistry.playerGods`/`primaryGod`/`primaryReligionOf`, per-god favour (3a).
+   Confirmed.
+2. **Downstream callers.** The six event files + the miracle/theophany/favour debug
+   commands now resolve a god. **Grep-verified no event-layer path reads
+   `ReligionIdentity.deity()`/`Religion.deity()`** for a deity attribute (clean).
+3. **Sibling systems.** Sub-stage-4 files (`ReligionContent.invocation`,
+   `ScriptureFactory`, the two snapshot builders, `FaithJudgment`, `FaithVoice`) are
+   **untouched** (git-confirmed) — they still read deity attrs from `ReligionIdentity`
+   (re-pointed next stage); since `God` derives from `ReligionIdentity`, the two
+   sources agree, so behaviour is identical. The snapshot's miracle list still calls
+   `MiracleInvoker.status` (now god-resolving internally) — unchanged signature.
+4. **Exhaustive switches.** The `DivineVision` colour switch now switches on
+   `god.domain()` (still 4 arms, no default); `DivineTheophany.particlesFor` on
+   `god.domain()` (4 arms); `God.displayName` unchanged. No enum change.
+
+### Simplification sweep
+
+- One shared `playerGods` helper (single definition in `GodRegistry`) — all three
+  ticks use it, none re-derive. Content tables stay `DeityDomain`-keyed (selected via
+  `god.domain()`); the cleanup stage can later relocate them onto `God` + delete the
+  `ReligionIdentity` deity duplication (noted, not acted on). Deleted the three
+  orphaned religion-keyed favour helpers (no caller remained). Touched: `GodRegistry`,
+  `Curses`, `Miracles`, `MiracleInvoker`, `DivineVision`, `DivineWrath`,
+  `DivineTheophany`, `DivineFavour` (trim), `ReligionDebugCommand`. No orphan remains.
+
+### Deviations from prompt
+
+- The vision/wrath/theophany ticks previously used the PRIMARY religion (not a belief
+  loop); 3b makes them iterate the player's gods (the prompt's intent). For
+  single-faith players (the only ones today) that's the one god → identical; for a
+  future syncretic player each god is now evaluated (the correct forward direction).
+  Cooldowns/milestones became per-god to match (new world per test — no save concern).
+
+### Out-of-scope but flagged
+
+- **Sub-stage 4** — re-point virtues/taboos in `FaithJudgment`/`FaithVoice` + the four
+  `Religion.deity()`-name consumers (`ReligionContent.invocation`, `ScriptureFactory`,
+  the two snapshot builders); decide the multi-god union/primary policy.
+- **Cleanup** — invert authoring onto `God`, relocate the `Miracles`/`Curses` tables +
+  the nested types onto `God`, delete the `ReligionIdentity` deity duplication.
+- **F1b** — per-world religions.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Container current; no reset.] Static review: every event-layer deity-attribute read
+now comes from `God` (grep-confirmed zero `deity()` reads in the six files); the
+content tables stay `DeityDomain`-keyed (`forDomain` lookups, data unmoved); the ticks
+iterate the shared `playerGods`; miracle gate/spend + theophany/wrath favour are
+god-keyed (3a core); the debug commands target god ids; sub-stage-4 files are
+untouched (and `God` derives from `ReligionIdentity`, so single-god behaviour is
+identical); the three orphaned convenience helpers were deleted; no new enum values.
+
+### Smoke test (user-runnable)
+
+1. **Miracles per god.** `/religion set <you> sunstead 0.9`, `/religion favour grant
+   sun_mother 100`, `/religion miracle list` — confirm the Sun god's miracles list
+   under `the Sun-Mother (sun_mother)` and `/religion miracle cast sun_healing_light`
+   spends `sun_mother`'s favour, gated by its tier (same as before).
+2. **Per-god curse escalation.** `/religion favour offend sun_mother 200` → confirm
+   the omen→curse→wrath escalation fires the SUN-domain curses (Blight/Scorching),
+   voiced as the Sun-Mother in yellow.
+3. **Per-god theophany.** `/religion theophany favour sun_mother` and `… wrath
+   sun_mother` — confirm the Sun manifestation form (light vs scorch/lightning), the
+   right voice, and that it writes `sun_mother`'s favour.
+4. **Other gods.** Repeat for `sea_mother` (Tidecall, sea form/aqua) and `the_pattern`
+   (Loom, FATE/purple, **impersonal** — confirm the vision voice handles the empty
+   name via the god's display fallback "the Pattern").
+5. **Independence + colour/voice.** Confirm each god's events are driven by that
+   god's favour independently, and visions' colour + character match the god's
+   domain.
+6. **Sub-stage-4 unchanged.** Confirm rite invocation text, scripture, and faith
+   judgment read identically (they still source `Religion.deity()`/`ReligionIdentity`).
