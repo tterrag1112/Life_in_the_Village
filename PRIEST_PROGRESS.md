@@ -7268,3 +7268,151 @@ magnitudes are small + clamped (anti-spiral).
 5. **No regressions.** Confirm normal crime/grave/alms behaviour is otherwise
    unchanged (the faith effect is additive), a Forge venerator still gets the R5c
    `venerate()` reward (not double), and R3a/existing religion behaviour is intact.
+
+## D3 — scripture (the lore becomes readable) (2026-06-09)
+
+(Religion Deepening, Pillar 1 — the lore made tangible.)
+
+### Disposition (findings)
+
+D1 authored each faith's cosmology, founding myth + key events, deity character,
+and virtues/taboos (`ReligionIdentity`). D2 made the virtues/taboos *bite*. D3
+makes the lore *legible* — it turns that identity into readable in-world
+**scripture** and puts it where books already live: the temple/village library
+(R4d-2 stocking) and a monk's copying work (R6b `COPY_MANUSCRIPT`).
+
+1. **Book infra (reuse, no parallel system).** `ScribalItems.book(title, author,
+   body, BookCategory, topics, authorNpcId, skillBuff, tick)` already paginates a
+   plain body (256 chars/page) into a readable WRITTEN_BOOK (vanilla
+   `WrittenBookContent` + mod `ExtendedBookContent`). `BookRecord` is catalogue
+   metadata (no page text — the borrow→readable path is still a stub, so the
+   physical stack is the true readable artifact). `LibraryCatalogue.acquire` stocks
+   records. Mirror `ProceduralBookFactory`: compose a body → `ScribalItems.book`.
+2. **Faith resolution.** `BuildingFaith.resolveFaith(level, village, building)` —
+   the same resolver R4d-2/R6 already use; no new faith plumbing, no `Religion`
+   codec change.
+3. **Two wire sites.** R4d-2 `TempleProsperity.stockLibraryBook` previously authored
+   a *generic subject* book by rotating `preferredBookCategories`; R6b monks
+   deposited a plain `BOOK` for `COPY_MANUSCRIPT`. Both become the faith's own
+   scripture.
+4. **Production hook (no pipeline fork).** The monk runs the shared
+   `ContextProductionBehavior` phase machine; only the *deposited stack* needs to
+   differ for one recipe. Added a `producedStack(...)` seam (default = the recipe's
+   plain output) so HOME stays byte-exact and only the monk overrides it.
+
+### What shipped
+
+- **`Npc/Religion/ScriptureFactory.java`** (new) — the generator. Composes a body
+  from `ReligionIdentity` (cosmology → the deity, named from `Religion.deity()`
+  with character/demands/rewards → founding myth + key events → `We hold:` virtues
+  → `We forbid:` taboos → `We keep:` practices) and renders it three ways:
+  `scriptureStack(religionId, copierId, now)` → a readable WRITTEN_BOOK ItemStack
+  (via `ScribalItems.book`, `BookCategory.RELIGIOUS`); `scriptureRecord(...)` → a
+  catalogue `BookRecord` (page count derived from the capped body); `title(id)` =
+  "The Book of <deity>" (or the faith name for a deity-less faith like the Loom).
+  Page-capped at 14 pages (`MAX_CHARS = 14×256`, truncated). Graceful fallback to a
+  short name + core-tenets body when a faith has no authored identity — never empty.
+  Topics `religion.<id>` / `scripture` / `category.religious`.
+- **`ContextProductionBehavior.java`** (edit) — added the `producedStack(level,
+  entity, building, recipe)` seam (default returns `new ItemStack(recipe.output(),
+  recipe.outputCount())`); `tickDepositing` now deposits `producedStack(...)`
+  instead of the inline `new ItemStack`. Pure refactor; behaviour identical for
+  every context that doesn't override.
+- **`MonkProductionBehavior.java`** (edit) — overrides `producedStack`: for
+  `SkillRecipes.COPY_MANUSCRIPT`, resolves the monastery's faith
+  (`BuildingFaith.resolveFaith`) and deposits `ScriptureFactory.scriptureStack(faith,
+  copierId = the monk, now)`; any other recipe (or no resolvable faith) falls back to
+  `super` (plain output). Monks now copy their order's scripture.
+- **`TempleProsperity.stockLibraryBook`** (edit) — replaced the generic
+  category-rotation `BookRecord` with `ScriptureFactory.scriptureRecord(faith,
+  priest, now)`; a Sunstead temple's library now holds Sunstead scripture. Kept the
+  budget/solvency gate, the `RELIGIOUS_BOOK_CAP` count gate, and `BOOK_COST`. Removed
+  the now-dead `readable(BookCategory)` helper + the `BookCategory` import; the
+  `preferredBookCategories` field is now unused *by this path* (left on `Religion`
+  for any future consumer — no codec change).
+
+### Tie-in audit
+
+1. **Upstream feeders.** `ReligionIdentity` (D1) + `Religion` (deity name) feed the
+   body; `BuildingFaith.resolveFaith` feeds the faith id; `ScribalItems`/`BookRecord`/
+   `LibraryCatalogue` are the unchanged sinks. No feeder changed shape.
+2. **Downstream callers.** `producedStack` has exactly two impls (base default +
+   monk) and one call site (`tickDepositing`). `ScriptureFactory` has two callers
+   (monk stack, temple record). `stockLibraryBook` keeps its single caller
+   (`spendSurplus`) and its `long`-bronze contract. `HomeProductionBehavior` does
+   NOT override `producedStack` → HOME deposit byte-exact (verified by grep).
+3. **Sibling systems.** Library borrow/read (`LibraryCatalogue`) consumes the
+   record unchanged (still metadata; topics now carry `religion.<id>`/`scripture` so
+   the existing `startsWith(RELIGION_TOPIC)` cap filter still counts them). Monastery
+   store + `MonasticCrafts.need`/quota for `COPY_MANUSCRIPT` are unchanged — the
+   monk still produces one "manuscript" unit per cycle; only the stack's identity
+   differs.
+4. **Exhaustive switches.** None touched — no enum/sealed type added or changed
+   (`BookCategory.RELIGIOUS` already existed; no new `MoodTrigger`/`Profession`/
+   `BuildingType` values).
+
+### Simplification sweep
+
+- D3 *removes* a code path rather than adding one: `stockLibraryBook` lost the
+  category-rotation branch + the `readable` helper, collapsing to a single
+  scripture-record call. Net classes added: 1 (`ScriptureFactory`), with three
+  inbound callers across two subsystems — not an orphan.
+- The `producedStack` seam is the minimal generalization (one protected method, one
+  override) — it avoids a second copy of the deposit/XP/log machine for the monk,
+  consistent with the M2/R6b "one primitive, thin context routers" split.
+- No overlapping pair introduced: `ScriptureFactory` is the *only* scripture
+  generator; `ProceduralBookFactory` (generic subject books) is untouched and still
+  serves non-religious stocking elsewhere.
+
+### Deviations from prompt
+
+None. Scripture generator + both wire sites (temple stocking R4d-2, monk
+`COPY_MANUSCRIPT` R6b) delivered as specified; faith via `BuildingFaith`; book infra
+reused; page-capped; no `Religion` codec change.
+
+### Out-of-scope but flagged
+
+- **D3 follow-ups (deferred by the prompt):** deity/cosmology surfacing in NPC
+  *dialogue*/sermons (NPC speech layer), and sacred history flowing into the
+  village *history/records* systems + festival lore. Scripture is the readable
+  artifact; wiring it into spoken/recorded lore is the next pass.
+- **D4 (aesthetics):** `ReligionIdentity.Aesthetics` (styleId/palette/iconography)
+  is authored but not yet consumed (book cover styling, building dressing) — D4.
+- **Borrow→readable stub:** the library borrow path returns a stub, not the page
+  text, because `BookRecord` carries no body. The monk's physical scripture stack
+  IS readable today; making *borrowed* library copies readable means persisting the
+  body (or regenerating it from the `religion.<id>` topic on borrow) — flagged, not
+  in scope.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: `ScribalItems.book(String,String,String,BookCategory,List,
+Optional<UUID>,Optional<SkillBuff>,long)` and `BookRecord(UUID,String,String,
+Optional<UUID>,List<String>,Optional<Skill>,int,long,int)` signatures match the
+factory calls; `ReligionIdentity` accessors used (`cosmology`,`deity().{domain,
+character,demands,rewards}`,`history().{foundingMyth,events}`,`virtues().text`,
+`taboos().text`,`practices`) all exist; `producedStack` has one call site + the
+base default + the single monk override; `HomeProductionBehavior` does not override
+it (HOME byte-exact); removed `readable`/`BookCategory` import are not referenced
+elsewhere.
+
+### Smoke test (user-runnable)
+
+1. **Monk copies scripture.** Stock a monastery with `COPY_MANUSCRIPT` inputs and a
+   literate monk in a faith-bearing monastery; let it work, then open the deposited
+   book — confirm it is a readable WRITTEN_BOOK titled "The Book of <that faith's
+   deity>" whose pages are that faith's cosmology/myth/tenets (not a blank `BOOK`).
+2. **Per-faith distinctness.** Repeat in monasteries of two different faiths;
+   confirm the two scriptures read differently (Sunstead Sun-Mother vs. Forge
+   ancestors) and the deity-less Loom's book is titled by the faith name.
+3. **Temple library stocks scripture.** Let a solvent temple with surplus + a
+   village LIBRARY run its stocking; confirm the library catalogue gains the faith's
+   scripture record (topic `religion.<id>`/`scripture`), the `RELIGIOUS_BOOK_CAP`
+   still caps it, and `BOOK_COST` is withdrawn from the treasury.
+4. **Graceful + bounded.** Confirm a faith with no authored identity still produces a
+   non-empty (shorter) book, and a very long identity is page-capped at 14 pages.
+5. **No regressions.** Confirm HOME-context homestead production deposits its normal
+   item unchanged, non-`COPY_MANUSCRIPT` monk crafts deposit their normal outputs,
+   and existing (non-religious) library stocking elsewhere is unaffected.

@@ -4,7 +4,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Npc.Letters.BookCategory;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
 import tterrag1112.life_in_the_village.Npc.Scribal.BookRecord;
 import tterrag1112.life_in_the_village.Npc.Scribal.LibraryCatalogue;
@@ -304,9 +303,9 @@ public final class TempleProsperity {
         return spent;
     }
 
-    /** Authors one religious book of the faith's {@code preferredBookCategories}
-     *  (reviving the dead field) and stocks the village library, funded by surplus.
-     *  Bounded by {@link #RELIGIOUS_BOOK_CAP}. Returns bronze spent. */
+    /** Stocks one copy of the building faith's authored <b>scripture</b> (D3 — the
+     *  D1 identity rendered to readable pages) into the village library, funded by
+     *  surplus. Bounded by {@link #RELIGIOUS_BOOK_CAP}. Returns bronze spent. */
     private static long stockLibraryBook(ServerLevel level, Village village,
                                          VillageSavedData data, BuildingEconomy econ,
                                          Building building, TownspersonMob priest,
@@ -318,8 +317,6 @@ public final class TempleProsperity {
 
         String faith = BuildingFaith.resolveFaith(level, village, building);
         if (faith == null) return 0L;
-        Religion religion = ReligionRegistry.get(faith);
-        if (religion == null || religion.preferredBookCategories().isEmpty()) return 0L;
 
         LibraryCatalogue cat = data.getOrCreateLibraryCatalogue(libraryId);
         long stocked = cat.all().stream()
@@ -327,16 +324,13 @@ public final class TempleProsperity {
                 .count();
         if (stocked >= RELIGIOUS_BOOK_CAP) return 0L;              // library full of faith books
 
-        List<BookCategory> prefs = religion.preferredBookCategories();
-        BookCategory category = prefs.get((int) (stocked % prefs.size())); // rotate for variety
-        String title = religion.displayName() + " — " + readable(category);
-
-        BookRecord record = new BookRecord(
-                UUID.randomUUID(), title, priest.getNpcName(),
-                java.util.Optional.of(priest.getUUID()),
-                List.of(RELIGION_TOPIC + faith, "category." + category.name().toLowerCase()),
-                java.util.Optional.empty(), 3, now, 1);
-        cat.acquire(record);
+        // D3 — stock the faith's own SCRIPTURE (its authored cosmology/myth/tenets
+        // via the D1 identity), not a generic subject book: a Sunstead temple's
+        // library holds Sunstead scripture. Empty only for an unknown religion.
+        java.util.Optional<BookRecord> rec =
+                ScriptureFactory.scriptureRecord(faith, java.util.Optional.of(priest.getUUID()), now);
+        if (rec.isEmpty()) return 0L;
+        cat.acquire(rec.get());
         econ.withdraw(BOOK_COST);
         return BOOK_COST;
     }
@@ -347,11 +341,6 @@ public final class TempleProsperity {
             if (b != null && b.getType() == BuildingType.LIBRARY) return bid;
         }
         return null;
-    }
-
-    private static String readable(BookCategory c) {
-        String n = c.name().toLowerCase();
-        return Character.toUpperCase(n.charAt(0)) + n.substring(1);
     }
 
     /** A dormant, building-less PRIEST in the village (the R4c-abandoned ex-priest),
