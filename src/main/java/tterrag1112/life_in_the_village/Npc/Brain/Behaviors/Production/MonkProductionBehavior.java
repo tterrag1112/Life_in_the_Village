@@ -2,12 +2,18 @@ package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Homestead.ContextProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith;
 import tterrag1112.life_in_the_village.Npc.Religion.MonasticCrafts;
 import tterrag1112.life_in_the_village.Npc.Religion.MonasticCrafts.MonasticCraft;
+import tterrag1112.life_in_the_village.Npc.Religion.ScriptureFactory;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.Optional;
 
@@ -63,5 +69,28 @@ public class MonkProductionBehavior extends ContextProductionBehavior {
         if (best == null) return Optional.empty();
         return Optional.of(new Plan(monastery, bestPos, best.recipe(), best.skill(),
                 best.xpPerBatch(), best.activityLabel()));
+    }
+
+    /**
+     * D3 — a monk copying a manuscript (COPY_MANUSCRIPT) produces the monastery's
+     * faith <b>scripture</b> (a readable WRITTEN_BOOK) into the store, rather than
+     * a plain BOOK — monks copying scripture, on-theme. Every other craft (and a
+     * monastery with no resolvable faith) falls back to the default plain output.
+     */
+    @Override
+    protected ItemStack producedStack(ServerLevel level, TownspersonMob entity,
+                                      Building building, ProductionRecipe recipe) {
+        if (recipe == SkillRecipes.COPY_MANUSCRIPT) {
+            Village village = entity.getAssignedVillageName()
+                    .flatMap(VillageSavedData.get(level)::getVillageByName).orElse(null);
+            String faith = village == null ? null
+                    : BuildingFaith.resolveFaith(level, village, building);
+            if (faith != null) {
+                Optional<ItemStack> scripture = ScriptureFactory.scriptureStack(
+                        faith, Optional.of(entity.getUUID()), level.getGameTime());
+                if (scripture.isPresent()) return scripture.get();
+            }
+        }
+        return super.producedStack(level, entity, building, recipe);
     }
 }

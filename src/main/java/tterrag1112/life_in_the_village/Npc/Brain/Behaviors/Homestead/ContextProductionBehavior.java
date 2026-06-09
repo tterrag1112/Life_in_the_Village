@@ -163,7 +163,7 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
                 return;
             }
         }
-        ItemStack output = new ItemStack(recipe.output(), recipe.outputCount());
+        ItemStack output = producedStack(level, entity, building, recipe);
         BuildingStorageAccess.storeWithFallback(level, building, output,
                 entity.getPersonalInventory());
         SkillXp.award(entity, plan.skill(), plan.xpPerBatch(), gameTime);
@@ -185,6 +185,17 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
     }
 
     // ── Shared selection helpers (used by subclasses' selectPlan) ────────────
+
+    /**
+     * The ItemStack a completed cycle deposits — by default the recipe's plain
+     * output. A context may override to produce a special stack (D3: the monk's
+     * COPY_MANUSCRIPT deposits the monastery's faith scripture). HOME does not
+     * override, so it stays byte-exact.
+     */
+    protected ItemStack producedStack(ServerLevel level, TownspersonMob entity,
+                                      Building building, ProductionRecipe recipe) {
+        return new ItemStack(recipe.output(), recipe.outputCount());
+    }
 
     protected static boolean hasAllInputs(ServerLevel level, Building b, ProductionRecipe recipe) {
         for (Map.Entry<Item, Integer> e : recipe.inputs().entrySet()) {
