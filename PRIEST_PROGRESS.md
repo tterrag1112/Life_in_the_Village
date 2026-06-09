@@ -9316,3 +9316,128 @@ are all on `God`.
 5. **Save compatibility.** Load a world saved before this stage — confirm religions
    load cleanly (the dropped `"deity"` codec key is ignored) and faith behaviour is
    unchanged.
+
+## F1b sub-stage 1a — stand up the per-world religion store (additive scaffolding) (2026-06-09)
+
+Opening step of F1b ("religions become per-world instances"). Pure additive
+scaffolding, like F1a-1: a per-world `ReligionSavedData` (seeded from the static
+templates) + a thin `Religions` facade exist and are verifiable, but **no caller is
+migrated** — every existing lookup still routes through the static `ReligionRegistry`.
+Sub-stage 1b does the caller migration under compiler/grep coverage.
+
+### Disposition (investigation)
+
+1. **SavedData idiom to mirror.** `RiteSavedData` (the existing separate religion
+   SavedData) is the template: a `static final SavedDataType<T> TYPE = new
+   SavedDataType<>("life_in_the_village_rites", T::new, RecordCodecBuilder…apply(i,
+   T::fromCodec))`, `static T get(ServerLevel) { return
+   level.getDataStorage().computeIfAbsent(TYPE); }`, `setDirty()` on mutation (it
+   exposes `markDirty()`). `VillageSavedData` uses the same 3-arg `SavedDataType` +
+   `computeIfAbsent(TYPE)`. **Decision: `ReligionSavedData` is a SEPARATE SavedData
+   (own storage name `life_in_the_village_religions`), NOT folded into
+   `VillageSavedData`** — religions are a distinct concern with their own lifecycle
+   (later dynamism founds/schisms them), and a separate store keeps that isolated, as
+   `RiteSavedData` already does for rites/piety.
+2. **`Religion.CODEC`** — round-trips the 8 post-F1a fields (id, displayName,
+   coreTenets, rites, sacredLocations, calendar, preferredBookCategories, godIds);
+   all list/optional fields `optionalFieldOf`. The store serializes
+   `Religion.CODEC.listOf()` and rebuilds the id-keyed map in `fromCodec` (the rites
+   idiom — avoids the key/`id()` duplication an `unboundedMap` would carry).
+3. **Template source** — `ReligionRegistry.all()` (the four seeded faiths
+   sunstead / the_loom / tidecall / forge_creed). The store copies these on seed.
+4. **Seed timing** — chose **lazy seed-in-`get` when empty** (templates are static,
+   available any tick; no dependence on the `WorldgenKingdomSeeder` first-tick hook).
+   `get()` calls `seedIfEmpty()`, which copies the templates ONLY when the map is
+   empty (a fresh world) and `setDirty()`s; a loaded world's restored set is never
+   re-seeded/clobbered.
+
+### What shipped
+
+- **`Npc/Religion/ReligionSavedData.java`** (new) — `SavedData` holding
+  `LinkedHashMap<String, Religion>` (stable order). `TYPE` =
+  `SavedDataType<>("life_in_the_village_religions", ReligionSavedData::new,
+  Religion.CODEC.listOf() codec)`. `get(level)` → `computeIfAbsent(TYPE)` +
+  `seedIfEmpty()`. Read surface `find(id)` / `get(id)` / `all()`; mutation entry
+  `put(Religion)` (replace-in-map by `id()` + `setDirty()`, no caller in 1a) +
+  `markDirty()`.
+- **`Npc/Religion/Religions.java`** (new) — thin facade: `find(level,id)`,
+  `get(level,id)`, `all(level)` → `ReligionSavedData.get(level).…`. The one home 1b's
+  call sites move onto.
+- **`/religion world list`** (in `ReligionDebugCommand`) — the ONLY consumer this
+  stage: lists the per-world store (id + displayName + godIds + count), labelled
+  distinct from the static `/religion list`, so the seed + reload-persistence are
+  verifiable in-world.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionRegistry.all()` (seed source — read-only, copied
+   into the store) and `Religion.CODEC` (persistence — read-only). Neither mutated.
+2. **Downstream callers.** **None besides the `/religion world list` readout** — this
+   is the whole point of 1a: the store has zero consumers until 1b migrates them.
+   Every `ReligionRegistry.get/find/all`, `dominantReligionFor`, the `GodRegistry`
+   reverse index, and `CalendarView.upcomingAcross(...)` still read the STATIC
+   registry, unchanged.
+3. **Sibling systems.** `RiteSavedData` — sibling SavedData; the new store has a
+   distinct storage name (`…_religions` vs `…_rites`) so they coexist cleanly in
+   separate `.dat` files. `GodRegistry` / the divine layer — untouched, still
+   static-registry-driven (its per-world reverse index is 1b).
+4. **Exhaustive switches.** None touched (no enum/sealed change). Confirmed.
+
+### Simplification Sweep
+
+- New classes + inbound callers: `ReligionSavedData` — 1 caller (`Religions` facade)
+  + reflective `TYPE` use; `Religions` — 1 caller (`/religion world list`). The
+  mutation `put`/`markDirty` have **zero** callers in 1a (the deliberate seam for
+  later stages).
+- **Noted, not acted on:** the store will let 1b retire the static `ReligionRegistry`
+  to TEMPLATE-only (its `get/find/all` accessors restricted, compiler-enforcing the
+  caller migration). Not done here — 1a is additive only.
+
+### Deviations from prompt
+
+- None. Built exactly as specified: separate string-keyed SavedData mirroring
+  `RiteSavedData`, lazy seed-when-empty, `Religions` facade, single `/religion world
+  list` consumer, no caller migration.
+- Minor authoring choice within spec: serialized `Religion.CODEC.listOf()` (rebuilt
+  to the map in `fromCodec`) rather than `unboundedMap(STRING, Religion.CODEC)` — the
+  prompt offered either; the list form avoids duplicating each id as both the map key
+  and `Religion.id()`, matching the `RiteSavedData` rites idiom.
+
+### Out-of-scope but flagged
+
+- **F1b sub-stage 1b** — migrate the ~49 lookup sites + `dominantReligionFor` + the
+  `GodRegistry` per-world reverse-index build + the `CalendarView.upcomingAcross(...)`
+  calendar enumeration onto `Religions`, then restrict the static `ReligionRegistry`
+  accessors to template-only (compiler-enforced coverage of the migration).
+- **F1b-2** — interreligious relations.
+- **Dynamism** (founding / schism / conversion) — later; this store's `put` +
+  only-when-empty seed are the seams it will use.
+- `ReligionIdentity` narrative stays static/template, resolved by id (per design — no
+  change here).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` cannot resolve `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current; no reset.] Static review: `ReligionSavedData`
+mirrors `RiteSavedData` field-for-field (3-arg `SavedDataType`, `RecordCodecBuilder`
++ `fromCodec` static, `computeIfAbsent(TYPE)` in `get`, `setDirty` on seed/`put`); the
+codec has one `optionalFieldOf` collection field (well under the 16-field ceiling);
+`Religions` is pure delegation; the command handler reads `Religions.all(level)` only.
+No existing caller touched (grep: the only new inbound references to the store are the
+facade and the readout).
+
+### Smoke test (user-runnable)
+
+1. **Seed on a fresh world.** New world → `/religion world list` — confirm it shows
+   the four religions (`sunstead`, `the_loom`, `tidecall`, `forge_creed`) with their
+   displayNames + godIds, count 4, identical to the static `/religion list`.
+2. **Static path unchanged.** `/religion gods`, `/religion list`, `/religion identity
+   sunstead`, and any V1–V5 favour/miracle flow — confirm all behave exactly as
+   before (nothing migrated; the store has no readers but the new readout).
+3. **Persistence across reload.** Save + quit + reload the world → `/religion world
+   list` — confirm the four religions still listed (the store round-tripped via
+   `Religion.CODEC`).
+4. **No re-seed clobber.** After reload (store non-empty), confirm the list is still
+   exactly four (seed runs only-when-empty; it does not append duplicates or reset a
+   saved set). A later non-template set would likewise survive reload unre-seeded.

@@ -151,6 +151,13 @@ public final class ReligionDebugCommand {
                 // the only consumer this stage). Read-only.
                 .then(Commands.literal("gods")
                         .executes(ReligionDebugCommand::handleGods))
+
+                // F1b 1a — list the PER-WORLD religion store (the new
+                // ReligionSavedData scaffolding; the only consumer this stage).
+                // Distinguish it from the static template list above. Read-only.
+                .then(Commands.literal("world")
+                        .then(Commands.literal("list")
+                                .executes(ReligionDebugCommand::handleWorldList)))
         );
     }
 
@@ -176,6 +183,27 @@ public final class ReligionDebugCommand {
             sb.append(String.format(Locale.ROOT, "%n§6%-12s§7 venerates §f%s§7 (primary: §f%s§7)",
                     r.id(), String.join(", ", r.godIds()), primary));
         }
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // ── /religion world list (F1b 1a) ───────────────────────────────────────
+
+    /** Lists the PER-WORLD religion store (the seeded {@code ReligionSavedData}),
+     *  distinct from the static {@code /religion list}: id + displayName + godIds.
+     *  Verifies the store is seeded and persists across reload. Read-only. */
+    private static int handleWorldList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var store = tterrag1112.life_in_the_village.Npc.Religion.Religions.all(level);
+        StringBuilder sb = new StringBuilder("§e=== Per-world religions (" + store.size() + ") ===");
+        for (Religion r : store) {
+            sb.append(String.format(Locale.ROOT, "%n§6%-12s§7 \"%s\" §8venerates§7 [%s]",
+                    r.id(), r.displayName(), String.join(", ", r.godIds())));
+        }
+        sb.append("\n§8(per-world store — seeded from the static templates; ")
+                .append("F1b-1b migrates callers off the static registry)");
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
         return 1;
