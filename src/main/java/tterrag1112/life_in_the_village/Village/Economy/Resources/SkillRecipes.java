@@ -83,6 +83,23 @@ public final class SkillRecipes {
             Items.LANTERN, 1, 100)
             .withSkillRequirement(Skill.CANDLEMAKING, 50);
 
+    // ── Monastic crafts (R6b) — produced by a monk in the MONASTERY context ──
+    // (the MonkProductionBehavior); keyed by the owning skill like every other
+    // recipe. All use existing items + skills; mead/BREWING is deferred (no
+    // speculative Skill enum value this phase).
+    /** BEEKEEPING — bottle honey at the apiary (mirrors the beekeeper's
+     *  glass_bottle → honey_bottle harvest). */
+    public static final ProductionRecipe HARVEST_HONEY =
+            ProductionRecipe.of(Items.GLASS_BOTTLE, 1, Items.HONEY_BOTTLE, 1, 100);
+    /** LITERACY — copy a manuscript (codex) at the lectern. Output is a plain
+     *  BOOK (no NBT pitfalls; an illuminated/written variant is a later pass). */
+    public static final ProductionRecipe COPY_MANUSCRIPT =
+            ProductionRecipe.of(Items.PAPER, 3, Items.BOOK, 1, 200);
+    /** VILLAGE_MEDICINE — brew a herbal tonic at the brewing stand. */
+    public static final ProductionRecipe BREW_TONIC = ProductionRecipe.of(
+            Map.of(Items.GLOW_BERRIES, 1, Items.BROWN_MUSHROOM, 1),
+            Items.SUSPICIOUS_STEW, 1, 120);
+
     // ── WEAVING (WeaverProductionBehavior) ───────────────────────────────────
     public static final ProductionRecipe SPIN_STRING =
             ProductionRecipe.of(Items.STRING, 4, Items.WHITE_WOOL, 1, 60);
@@ -266,6 +283,10 @@ public final class SkillRecipes {
         m.put(Skill.BAKING,       List.of(MAKE_COOKIE, FLOUR_TO_BREAD, WHEAT_TO_BREAD));
         m.put(Skill.MILLING,      List.of(GRIND_WHEAT, GRIND_BONES, PROCESS_SUGAR_CANE));
         m.put(Skill.CANDLEMAKING, List.of(MAKE_CANDLE, MAKE_TORCH, MAKE_LANTERN));
+        // R6b monastic-craft buckets (existing skills).
+        m.put(Skill.BEEKEEPING,      List.of(HARVEST_HONEY));
+        m.put(Skill.LITERACY,        List.of(COPY_MANUSCRIPT));
+        m.put(Skill.VILLAGE_MEDICINE, List.of(BREW_TONIC));
         m.put(Skill.WEAVING,      buildWeavingRecipes());
         m.put(Skill.CARPENTRY,    buildCarpentryRecipes());
         m.put(Skill.MASONRY,      buildMasonryRecipes());

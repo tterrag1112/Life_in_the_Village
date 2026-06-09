@@ -6442,3 +6442,183 @@ consistent (resolveFaith = faith-bearing; the three venue loops + TempleProsperi
    behave exactly as before — schedules, rites, production, greetings, profiles —
    and that nothing crashes anywhere (the switch sweep is complete; MONK falls
    through correctly where unarmed).
+
+---
+
+## R6b — monastery production context + monastic crafts (2026-06-09)
+
+### Disposition (findings)
+
+The heart of the monk. R6a gave a MONK that spawns into a monastery with a locked
+spec + schedule + a placeholder WORK behavior. R6b gives it real work —
+skill-driven production in a **monastery context** — built on M1 (`SkillRecipes`)
++ M2 (the home-production primitive). It adds the **second context** to the
+production primitive, proving "skills = what you CAN do; context = what you DO
+with them" generalizes.
+
+- **M2 `HomeProductionBehavior`** drives a `HomeCraft` table (skill, amenities,
+  recipe, family-need + economic/hobby motive, deposit=household) through a phase
+  machine (walk→produce→deposit). The cleanest generalization: **extract the
+  phase machine into an abstract `ContextProductionBehavior` base**, and have each
+  context implement only `selectPlan` (which skills / motive / destination),
+  returning a `Plan(building, workstationPos, recipe, skill, xp, label)`. HOME's
+  `selectPlan` = the verbatim M2 selection; the base = the verbatim M2 tick logic
+  with the deposit target generalized from "the house" to "the plan's building"
+  (which IS the house for HOME) → HOME byte-exact.
+- **Skills (all exist):** BEEKEEPING (FARMING grandchild), LITERACY (top-level),
+  VILLAGE_MEDICINE (MEDICINE child), CANDLEMAKING (CRAFTING child). **No BREWING.**
+- **Amenities:** BREWING_STAND exists (reuse for herbal). Added APIARY
+  (`BeehiveBlock` — covers BEEHIVE + BEE_NEST) + LECTERN (`LecternBlock`).
+- **Items:** all vanilla — HONEY_BOTTLE/GLASS_BOTTLE (honey), BOOK/PAPER
+  (manuscript), SUSPICIOUS_STEW/GLOW_BERRIES/BROWN_MUSHROOM (herbal), CANDLE/
+  HONEYCOMB/STRING (candles). Remedies are records (not items), so the herbal
+  craft uses an item proxy (a tonic). WRITTEN_BOOK needs NBT, so the manuscript
+  output is a plain BOOK (no NBT pitfalls).
+- **Monastery store:** `BuildingStorageAccess.{countItem,takeItem,storeWithFallback}`
+  are generic on any `Building`; the monk's monastery = `getAssignedBuildingId()`.
+
+**BREWING / mead decision — DEFERRED.** A new `Skill` value needs its own
+exhaustive-switch sweep + cascade wiring (the same class of work as R6a's
+Profession sweep) for a single craft. The prompt explicitly permits deferral, so
+this phase ships the four crafts on EXISTING skills and flags mead+BREWING as a
+follow-up — no speculative skill.
+
+### What shipped
+
+- **`Npc/Brain/Behaviors/Homestead/ContextProductionBehavior.java`** (new
+  abstract base) — the context-parameterized primitive: gates (not-child, nav),
+  the phase machine (walk → produce for `recipe.ticks()` → consume inputs +
+  deposit `recipe.output()` to the plan's building → award the skill XP), and the
+  shared amenity/input helpers. Subclasses implement `selectPlan`.
+- **`Homestead/HomeProductionBehavior.java`** — refactored to extend the base;
+  `selectPlan` is the verbatim M2 HOME selection (family-need + economic/hobby
+  motive → household). Phase machine + helpers now inherited. HOME unchanged.
+- **`Production/MonkProductionBehavior.java`** (new) — the MONASTERY context.
+  Iterates a monastic-craft table (skill ≥ level + amenity present + inputs
+  available + the monastery wants the good — stock below a per-craft quota),
+  first qualifying → `Plan(monastery, …)`, depositing to the monastery store.
+- **`Village/AmenityType.java`** — added `APIARY`, `LECTERN`.
+- **`Village/Economy/Resources/SkillRecipes.java`** — added `HARVEST_HONEY`
+  (glass_bottle→honey_bottle, BEEKEEPING), `COPY_MANUSCRIPT` (paper×3→book,
+  LITERACY), `BREW_TONIC` (glow_berries+brown_mushroom→suspicious_stew,
+  VILLAGE_MEDICINE); registered the BEEKEEPING/LITERACY/VILLAGE_MEDICINE buckets.
+  Candles reuse the existing `MAKE_CANDLE` (CANDLEMAKING).
+- **`Npc/Brain/ProfessionBrainFactory.java`** — the MONK WORK registrar now adds
+  `MonkProductionBehavior` (replacing the R6a placeholder).
+
+**The four monastic crafts (skill × amenity × recipe):**
+| craft | skill | amenity | recipe | quota |
+|---|---|---|---|---|
+| Candles | CANDLEMAKING | *(none)* | MAKE_CANDLE (honeycomb+string→candle) | 16 |
+| Honey | BEEKEEPING | APIARY | HARVEST_HONEY (glass_bottle→honey_bottle) | 16 |
+| Manuscripts | LITERACY | LECTERN | COPY_MANUSCRIPT (paper×3→book) | 8 |
+| Herbal tonic | VILLAGE_MEDICINE | BREWING_STAND | BREW_TONIC (glow_berries+brown_mushroom→suspicious_stew) | 8 |
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `SkillRecipes` (3 new recipes + buckets), `AmenityType`
+   (APIARY/LECTERN added; BREWING_STAND reused), the monk's `SkillComponent`
+   (developed skills gate each craft), the monastery building store. All reused;
+   the monk produces by SKILL gated by AMENITY — never a fixed list.
+2. **Downstream callers.** HOME (`HomeProductionBehavior`) preserved (still
+   registered in the IDLE/0 slot; its selection logic byte-identical, phase
+   machine inherited). The MONK WORK registrar (R6a placeholder → MonkProductionBehavior).
+   `BuildingStorageAccess` (the monastery store, generic). The scribal/book +
+   beekeeping systems are not modified — the monastic recipes reuse their item
+   economy (honey_bottle / book) without touching those behaviors. R4 economy
+   (monastery wages/store value) is untouched — flagged for R6c.
+3. **Sibling systems.** The home production primitive stays behavior-exact (the
+   base is the M2 phase machine verbatim; HOME selectPlan is M2 verbatim). The
+   profession production behaviors are untouched (still source `SkillRecipes`).
+   Skill XP: the monk gains its produced craft's skill XP via the shared
+   `SkillXp.award` in the base (BEEKEEPING/LITERACY/VILLAGE_MEDICINE/CANDLEMAKING,
+   cascading up to FARMING/MEDICINE/CRAFTING).
+4. **Exhaustive switches.** No new `Skill` (BREWING deferred) → no `Skill` switch
+   touched. `AmenityType` is matched via `matches(Block)` (no exhaustive switch
+   over it — it's iterated, not switched). Confirmed.
+
+### Simplification Sweep
+
+The monastery context reuses the generalized primitive + `SkillRecipes` + existing
+amenities (BREWING_STAND) + 2 new amenities — NOT a new production system. One
+primitive (`ContextProductionBehavior`), two thin context subclasses
+(`HomeProductionBehavior`, `MonkProductionBehavior`). Classes in scope + inbound
+callers: `ContextProductionBehavior` (new; 2 subclasses), `HomeProductionBehavior`
+(1 — TownspersonMob IDLE registration, unchanged), `MonkProductionBehavior` (1 —
+ProfessionBrainFactory MONK WORK), `SkillRecipes` (+3 recipes/buckets; consumed by
+the monk by named constant), `AmenityType` (+2; matched generically). No
+duplicate/forked monastery behavior. **BREWING/mead deferred** (stated above).
+
+### Behavior-preservation proof (HOME)
+
+`HomeProductionBehavior.selectPlan` is the M2 `checkExtraStartConditions` body
+verbatim (same house/household resolution, same TABLE in the same order, same
+skill/amenity/inputs/family-need/economic+hobby-motive gates, first qualifying
+wins) — only its tail now returns a `Plan(house, …)` instead of setting fields.
+The base's phase machine is the M2 tick logic verbatim — walk to the workstation,
+produce for `recipe.ticks()`, consume `recipe.inputs()`, deposit
+`recipe.output()` via `storeWithFallback`, award `skill` XP — with the only
+generalization being the deposit/consume target = the plan's building, which is
+the house for HOME. Constants (ARRIVAL 4.0, WALK 0.7, 600-tick abort, MAX_RUN,
+WALK_TARGET VALUE_ABSENT requirement) unchanged. The four home crafts are
+indistinguishable from M2.
+
+### Deviations from prompt
+
+- **Mead/BREWING deferred** (decision above) — the four crafts use existing skills.
+- **Herbal output is an item proxy (`SUSPICIOUS_STEW`), not a `Remedy`** — remedies
+  are records held in `HealerInventory`, not items, so they can't be produced by
+  the item-based primitive / deposited to building storage. The tonic is the
+  tangible monastic herbal good; deeper integration with the healer remedy system
+  is a follow-up.
+- **Manuscript output is a plain `BOOK`, not `WRITTEN_BOOK`** — WRITTEN_BOOK
+  requires NBT (page/author components) to be a valid stack; a plain BOOK avoids
+  that. An illuminated/written-book variant is a later content pass.
+- **Candles need externally-stocked honeycomb** — the apiary produces honey_bottle
+  (the iconic good), not honeycomb, so the candle craft depends on honeycomb in
+  the monastery store (graceful: no honeycomb → no candles). A honeycomb-harvest
+  variant feeding candles is a flagged nicety.
+- **Extracted `ContextProductionBehavior`** rather than parameterizing
+  `HomeProductionBehavior` in place — cleaner (the base is the primitive; HOME and
+  MONASTERY are thin routers), and HOME stays byte-exact.
+
+### Out-of-scope but flagged
+
+- **R6c** — initiate→skill development + need-driven assignment; mealtime
+  distribution/consumption from the shared store; the monastery economy/wages
+  (R4 tie). The monastery is intentionally OUT of `TempleProsperity` (R6a).
+- **Mead + a BREWING skill** (with its exhaustive-switch + cascade sweep).
+- **Honey→honeycomb chain for candles; WRITTEN_BOOK/illuminated manuscripts;
+  remedy-system integration** for the herbal craft.
+- **Standalone-district worldgen + the Abbot office** — later.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: the base + two contexts compile-consistently (HOME selectPlan
+is M2 verbatim; the base phase machine is M2 verbatim with deposit→plan.building);
+the 3 new recipes use vanilla items + are declared before the `BY_SKILL` field
+(static-init order safe) + registered under their owning skills; APIARY/LECTERN
+added with the existing predicate shape (BeehiveBlock/LecternBlock imported);
+`MonkProductionBehavior` registered for MONK WORK (replacing the placeholder),
+`HomeProductionBehavior` still registered in IDLE; no new `Skill`/exhaustive-switch.
+
+### Smoke test (user-runnable)
+
+1. **Monastery crafts by skill × amenity.** Spawn a MONASTERY; build an APIARY
+   (beehive/bee-nest), a LECTERN, and a BREWING_STAND inside it, and stock the
+   inputs (glass bottles, paper, glow berries + brown mushrooms, honeycomb +
+   string). Give the monk BEEKEEPING + LITERACY + VILLAGE_MEDICINE + CANDLEMAKING
+   (`/…` skill debug). During its work schedule, confirm it produces honey
+   bottles, books, tonics, and candles INTO the monastery store, and gains the
+   matching skill XP.
+2. **Skill + amenity gating.** Remove the LECTERN → manuscript copying stops (the
+   monk still does the others). Strip a skill → that craft stops. An unskilled
+   monk (no developed crafts) produces nothing — no error, just idle/contemplation.
+3. **Quota gate.** Confirm a craft stops once the monastery's stock of that good
+   reaches its quota (16 honey/candles, 8 books/tonics), and resumes when drawn down.
+4. **HOME unchanged.** Confirm family baking/milling/weaving/candlemaking behave
+   exactly as M2 (same family-need trigger, same amenities, same household output,
+   same XP) — the refactor is invisible.
+5. **ABBEY too.** Repeat (1) for an ABBEY — the monk produces identically.

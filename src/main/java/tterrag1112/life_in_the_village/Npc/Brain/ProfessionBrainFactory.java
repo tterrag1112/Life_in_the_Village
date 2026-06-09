@@ -198,15 +198,16 @@ public final class ProfessionBrainFactory {
                                 new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                         .Production.PriestBehavior())));
 
-        // R6a — MONK placeholder. The monk holds a valid brain and follows its
-        // monastic schedule (sleep/meal/contemplation) + the universal IDLE
-        // behaviors (home production via M2 when skilled); its WORK activity is
-        // intentionally empty this phase — graceful idle at the monastery, NOT
-        // an error. R6b replaces this body with the skill-driven monastery
-        // production context.
-        REGISTRARS.put(Profession.MONK, (npc, brain) -> {
-            // intentional placeholder — no WORK behavior yet (R6b)
-        });
+        // R6b — MONK: the monastery production context. The monk produces from
+        // its developed skills that the monastery's amenities support, routed to
+        // the monastery shared store (a second context over the M1/M2 production
+        // primitive). A skill-less monk produces nothing gracefully (R6c develops
+        // skills + adds need-driven assignment / mealtime distribution / economy).
+        REGISTRARS.put(Profession.MONK, (npc, brain) ->
+                brain.addActivity(NpcActivities.WORK.get(), 0,
+                        ImmutableList.of(
+                                new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
+                                        .Production.MonkProductionBehavior())));
 
         // Phase 6.2.d.4 — civic + guard cluster.
         REGISTRARS.put(Profession.VILLAGE_LEADER, (npc, brain) ->
