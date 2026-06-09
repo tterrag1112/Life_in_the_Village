@@ -17,6 +17,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -72,7 +73,10 @@ public class EatMealBehavior extends Behavior<TownspersonMob> {
 
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
-        if (!entity.hasHome()) return false;
+        // R6d — a monk has no household; it eats from its monastery shared store
+        // (getHomeBuilding resolves to the monastery for a monk), so allow it
+        // through the no-home gate when a food-home building exists.
+        if (!entity.hasHome() && getHomeBuilding(level, entity).isEmpty()) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         return WorkSchedule.isMealTime(entity);
     }
@@ -356,6 +360,17 @@ public class EatMealBehavior extends Behavior<TownspersonMob> {
     }
 
     private static Optional<Building> getHomeBuilding(ServerLevel level, TownspersonMob entity) {
+        // R6d — a monk's "home" for eating is its monastery shared store (it has
+        // no household). All the food-source logic (homeHasFood, walk-home,
+        // tryEatFromHome) then sources from the monastery building, redirecting
+        // mealtime consumption to the shared store with no forked eating system.
+        if (entity.getProfession() == Profession.MONK) {
+            Optional<Building> monastery = entity.getAssignedBuildingId()
+                    .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
+                    .filter(b -> b.getType() == BuildingType.MONASTERY
+                            || b.getType() == BuildingType.ABBEY);
+            if (monastery.isPresent()) return monastery;
+        }
         return entity.getFamily().getHouseId()
                 .flatMap(id -> VillageSavedData.get(level).getBuildingById(id));
     }

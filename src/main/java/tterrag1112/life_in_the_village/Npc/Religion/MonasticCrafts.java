@@ -42,8 +42,16 @@ public final class MonasticCrafts {
 
     /** The monastic crafts — by SKILL × AMENITY (R6b), with their R6c targets.
      *  Candles need no workstation (always supported); the rest gate on an
-     *  amenity. Only candlemaking has a matching home hobby today. */
+     *  amenity. Only baking/candlemaking have a matching home hobby today.
+     *
+     *  <p>R6d — FOOD (bread) is now a monastic craft: a monk with BAKING + a
+     *  furnace/smoker bakes bread into the store, which the monks eat from
+     *  (mealtime distribution). Its target is a fixed buffer; consumption scales
+     *  the depletion rate with the monk count, and the economy buys bread/wheat
+     *  when production can't keep up.</p> */
     public static final List<MonasticCraft> CRAFTS = List.of(
+            new MonasticCraft(Skill.BAKING, 1, List.of(AmenityType.SMOKER, AmenityType.FURNACE),
+                    SkillRecipes.WHEAT_TO_BREAD, 32, 2, "Baking bread", "home_cooking"),
             new MonasticCraft(Skill.CANDLEMAKING, 1, List.of(),
                     SkillRecipes.MAKE_CANDLE, 16, 2, "Making candles", "home_chandlery"),
             new MonasticCraft(Skill.BEEKEEPING, 1, List.of(AmenityType.APIARY),

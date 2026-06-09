@@ -84,6 +84,14 @@ public final class GraveVisit {
             npc.getMemory().add(NpcMemory.create(
                     MemoryType.SHARED_HARDSHIP, List.of(g.deceasedId()), now, REMEMBRANCE_VAL,
                     "Visited " + g.name() + "'s grave and remembered them"));
+            // D2 — a faith that esteems REMEMBRANCE (Tidecall: "salt remembers the
+            // lost") is rewarded for honouring the dead — a DISTINCT faith-virtue
+            // channel from the universal grief-ease above. Forge venerators hold
+            // HONOUR_THE_ANCESTORS, not REMEMBRANCE, so they get only venerate()
+            // below (no double-dip).
+            tterrag1112.life_in_the_village.Npc.Religion.FaithJudgment.judge(npc,
+                    tterrag1112.life_in_the_village.Npc.Religion.FaithConcept.REMEMBRANCE,
+                    List.of(), now);
         } else if (!venerator) {
             // General contemplative visit (non-venerators without a loved one here).
             npc.getMood().applyWithRawMagnitude(MoodTrigger.WEATHER_PLEASANT, CONTEMPLATE, now);

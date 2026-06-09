@@ -236,6 +236,26 @@ public final class CrimeReporter {
                     v.modifyReputation(perpetratorId, delta);
                 }
             }
+
+            // D2 — faith judgment overlay (on TOP of the crime effects above, not
+            // replacing them). When the crime is a taboo of the NPC perpetrator's
+            // OWN faith, they feel guilt + co-religionist (or same-value) witnesses
+            // judge them. Player perpetrators / atheists / faith-neutral crimes:
+            // no faith effect (handled inside FaithJudgment.judge).
+            tterrag1112.life_in_the_village.Npc.Religion.FaithConcept sin =
+                    tterrag1112.life_in_the_village.Npc.Religion.FaithJudgment.conceptForCrime(type);
+            if (sin != null && perpetratorId != null) {
+                TownspersonMob perp = TownspersonMob.findByUUID(level, perpetratorId).orElse(null);
+                if (perp != null) {
+                    List<TownspersonMob> witnesses = new ArrayList<>();
+                    for (UUID wid : report.witnessIds()) {
+                        TownspersonMob w = TownspersonMob.findByUUID(level, wid).orElse(null);
+                        if (w != null) witnesses.add(w);
+                    }
+                    tterrag1112.life_in_the_village.Npc.Religion.FaithJudgment
+                            .judge(perp, sin, witnesses, now);
+                }
+            }
         }
 
         /**

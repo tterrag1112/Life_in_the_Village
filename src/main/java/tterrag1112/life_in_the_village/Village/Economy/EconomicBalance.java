@@ -102,6 +102,13 @@ public class EconomicBalance {
      *  (capped by the payer's wallet). */
     public static final long TITHE_AMOUNT = 8L;
 
+    /** R6d — modest daily upkeep debited from a MONASTERY/ABBEY BuildingEconomy
+     *  (the monastery's shared pool). A productive monastery (surplus monastic
+     *  goods sold to market) stays solvent; an idle one trends negative. NOT
+     *  coupled to decay — monasteries are not rite venues (R6a isRiteVenue split),
+     *  so they are outside TempleProsperity. */
+    public static final long MONASTERY_DAILY_UPKEEP = 4L;
+
     // =========================================================================
     // Business costs
     // =========================================================================

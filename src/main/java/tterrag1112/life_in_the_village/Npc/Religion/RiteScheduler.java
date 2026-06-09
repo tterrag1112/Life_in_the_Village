@@ -106,6 +106,18 @@ public final class RiteScheduler {
         } catch (Throwable t) {
             LOGGER.warn("[RiteScheduler] monastery-developer pass threw: {}", t.getMessage());
         }
+
+        // 8. R6d — the self-sustaining monastery economy: upkeep + sell surplus
+        // monastic goods to the shared pool + buy needed inputs (+ a food safety
+        // net), a daily per-village pass. NOT coupled to temple decay.
+        try {
+            long now = level.getGameTime();
+            for (Village v : vdata.getAllVillages()) {
+                MonasteryEconomy.tickVillage(level, v, vdata, now);
+            }
+        } catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] monastery-economy pass threw: {}", t.getMessage());
+        }
     }
 
     /** Groups loaded PRIEST NPCs by their village id (one entity pass). */

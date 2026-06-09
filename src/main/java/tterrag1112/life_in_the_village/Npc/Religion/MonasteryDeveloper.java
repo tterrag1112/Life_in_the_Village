@@ -133,9 +133,10 @@ public final class MonasteryDeveloper {
         return false;
     }
 
-    /** Loaded monks assigned to {@code monastery} (mirrors TempleProsperity's scan). */
-    private static List<TownspersonMob> monksOf(ServerLevel level, Village village,
-                                                VillageSavedData data, Building monastery) {
+    /** Loaded monks assigned to {@code monastery} (mirrors TempleProsperity's scan).
+     *  Package-visible so {@link MonasteryEconomy} reuses the same scan. */
+    static List<TownspersonMob> monksOf(ServerLevel level, Village village,
+                                        VillageSavedData data, Building monastery) {
         AABB bounds = village.getBounds(data).map(b -> b.inflate(SCAN_INFLATE)).orElse(null);
         if (bounds == null) return List.of();
         UUID bid = monastery.getId();

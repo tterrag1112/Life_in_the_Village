@@ -6793,3 +6793,478 @@ table + amenity scan are each single-sourced now.
    a monk once it's a producer.
 6. **No regressions.** HOME family production + the profession behaviors are
    unchanged; nothing crashes (the daily pass is guarded).
+
+---
+
+## R6d — mealtime distribution + monastery economy (2026-06-09)
+
+### Disposition (findings)
+
+Closes the monk production → consumption → economy loop. R6b/R6c made monks
+produce by skill into the monastery shared store and self-organize around needs.
+R6d makes the monastery a living, self-sustaining community: monks eat from the
+store, the monastery derives + fills a food need, and surplus monastic goods fund
+the inputs it can't make.
+
+1. **Eating.** `EatMealBehavior` is pure item-removal (no hunger stat) gated on
+   `entity.hasHome()`, sourcing food from `getHomeBuilding` = the family house
+   (then market/bakery). A monk has **no household**, so it never ate. The clean
+   redirect (no forked eating system): make `getHomeBuilding` return the **monastery**
+   (the monk's assigned MONASTERY/ABBEY) for a MONK — then every existing
+   food-source path (`homeHasFood`, walk-home, `tryEatFromHome` which consumes via
+   `FoodValueHelper.isFood` + `stack.shrink`) sources from the **shared store** —
+   and relax the `hasHome` gate to admit a monk whose food-home exists.
+2. **Food need.** Added a **BAKING → bread** monastic craft to `MonasticCrafts`
+   (`WHEAT_TO_BREAD` + a furnace/smoker amenity, target 32). A monk with BAKING +
+   the amenity bakes bread (R6c need-priority); the developer steers idle initiates
+   toward BAKING when the monastery has a furnace/smoker + is short on bread.
+   (Target is a fixed buffer; consumption scales the depletion rate with the monk
+   count; the economy buys bread/wheat when production can't keep up.)
+3. **Economy = the monastery's own `BuildingEconomy`** (the shared pool;
+   `getOrCreateBuildingEconomy(monasteryId)` — exactly the R4 temple pattern, but
+   monasteries are `isRiteVenue`-excluded (R6a) so they are OUTSIDE
+   `TempleProsperity`/decay). Surplus-sell reuses the workshop sell formula
+   (`VillageEconomy.getBasePrice × 0.8` + `postListing`) but credits the pool
+   (`depositRevenue`) rather than chest coins (so the buy path can spend it).
+   Input procurement reuses the `ChannelRouter` path (`TradeIntent.buy` →
+   `findBestChannel` → `channel.execute`), funded from the pool. A fresh monastery
+   is bootstrap-seeded via `BuildingStarterTable` so it can buy its first inputs.
+
+### What shipped
+
+- **`Npc/Brain/Behaviors/EatMealBehavior.java`** — a monk's `getHomeBuilding`
+  resolves to its monastery (so it eats from the shared store); the `hasHome` gate
+  admits a monk with a food-home. Non-monks unchanged (the redirect is
+  `Profession.MONK`-gated; the gate change is a no-op for them).
+- **`Npc/Religion/MonasticCrafts.java`** — added the BAKING → bread food craft
+  (first row; food is primary).
+- **`Npc/Religion/MonasteryEconomy.java`** (new) — the daily per-village economy
+  pass: per MONASTERY/ABBEY with monks, debit `MONASTERY_DAILY_UPKEEP` (+ a
+  non-decaying solvency signal), **sell surplus** monastic goods (above target,
+  capped) to market crediting the pool, **buy inputs** for producer-backed needed
+  crafts (wheat for bread, honeycomb/string for candles, paper for books, …) from
+  the pool via `ChannelRouter`, and a **food safety net** (buy bread directly when
+  the store dips below a survival floor and there's no baker). The agent monk's
+  wallet is a transient conduit, fully restored on failure/leftover (mirrors
+  `executeBuy`).
+- **`Npc/Religion/MonasteryDeveloper.java`** — `monksOf` made package-visible (the
+  economy reuses the same scan).
+- **`Npc/Religion/RiteScheduler.java`** — step 8 of `dailyTick` runs
+  `MonasteryEconomy.tickVillage` per village (guarded).
+- **`Village/Economy/EconomicBalance.java`** — `MONASTERY_DAILY_UPKEEP = 4`.
+- **`Village/Economy/BuildingStarterTable.java`** — MONASTERY (120) / ABBEY (160)
+  starter pool so a fresh house bootstraps.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The eating/hunger behavior (food source → the monastery
+   store via the `getHomeBuilding` redirect), R6c `MonasticCrafts`/needs (the new
+   food need + the supported/need/isProducer helpers reused by the economy), the
+   monastery store (R6b `BuildingStorageAccess`), the monastery `BuildingEconomy`
+   pool, the `ChannelRouter` + market sell formula, `BuildingStarterTable`.
+2. **Downstream callers.** `EatMealBehavior` (monks eat from the store — the only
+   change, gated to monks); `MonkProductionBehavior`/`MonasteryDeveloper` (bread is
+   now a need-priority craft + a development target); the surplus-sell + `ChannelRouter`
+   procurement; the monastery `BuildingEconomy`. `RiteScheduler.dailyTick` gains a
+   guarded step 8.
+3. **Sibling systems.** The R4 temple economy is SEPARATE — monasteries are not
+   rite venues (`isRiteVenue` split, R6a), so `TempleProsperity` never touches them;
+   `MonasteryEconomy` is a parallel, decoupled, non-decaying pass on the same
+   `BuildingEconomy` primitive. The market/trade channels are reused (sell + buy).
+   HOME production + the profession behaviors + the temple economy are untouched.
+4. **Exhaustive switches.** None added; no enum touched. Confirmed.
+
+### Simplification Sweep
+
+Eating reuses `EatMealBehavior` (a redirect of the food-home for monks, not a new
+eating system); the economy reuses the `BuildingEconomy` pool + the workshop sell
+formula + the `ChannelRouter` procurement + the `BuildingStarterTable`/`EconomicBalance`
+patterns; food is just another R6c `MonasticCrafts` craft/need. No new eating or
+economy framework. Classes in scope + inbound callers: `MonasteryEconomy` (new; 1 —
+RiteScheduler.dailyTick), `MonasticCrafts` (+1 craft; consumed by the behavior +
+developer + economy), `EatMealBehavior` (the universal eater — monk branch added),
+`EconomicBalance`/`BuildingStarterTable` (+constants), `MonasteryDeveloper.monksOf`
+(now shared). The monk-scan is single-sourced; the channel-buy mirrors `executeBuy`
+(a flagged future extraction of a shared building-level buy helper).
+
+### Deviations from prompt
+
+- **Surplus-sell credits the `BuildingEconomy` pool, not chest coins** — the
+  reusable static `executeSellForWorkshop` deposits revenue as coins into the
+  building's chest, which the buy path can't spend; the monastery pool IS the
+  `BuildingEconomy` (matching R4 + the buy funding), so I reuse the sell FORMULA +
+  market routing + `postListing` and credit the pool directly. Justified.
+- **The input-buy mirrors `executeBuy`'s core** rather than calling it (it's a
+  private instance method on `AbstractProductionBehavior`); the reusable pieces
+  (`ChannelRouter.findBestChannel`/`registeredChannels`, `channel.execute`, the
+  `BuildingEconomy` two-source funding) are reused. Extracting a shared
+  building-level buy helper is flagged.
+- **The food target is a fixed buffer (32), not literally monk-count-scaled** — the
+  per-tick production behavior stays scan-free; the consumption rate scales the
+  depletion with the monk count, and the economy's food safety net + input-buy keep
+  a larger house fed. A monk-count-scaled target is a flagged refinement.
+- **A monk uses the universal `EatMealBehavior`** (redirected), not a monastic
+  refectory behavior — reuse over a new behavior, per the constraint.
+
+### Out-of-scope but flagged
+
+- **This completes the monk's CORE loop** (spawn → produce-by-skill → self-organize
+  → eat + economy). Remaining R6: the **standalone-district worldgen** (layout
+  rework); the **Abbot office** + the abbot's authority over the pool (offices pass
+  — the pool is the `BuildingEconomy` this phase); **mead + a BREWING skill**; the
+  in-game **MONASTERY-vs-ABBEY distinction** (both behave identically today).
+- A shared building-level buy/sell helper (extract from `executeBuy`/the monastery
+  economy); a monk-count-scaled food target; a monastic refectory/communal-meal
+  behavior; routing surplus to alms/library like the temple's `spendSurplus`.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: all channel/economy signatures confirmed verbatim against
+source (`TradeIntent.buy` 8-arg, `ChannelRouter.findBestChannel`/`registeredChannels`,
+`ChannelQuote(channel,intent,pricePerUnit,availableQuantity,travelTimeTicks,quoteValidUntilTick,location)`,
+`EconomicChannel.type/execute`, `TradeResult(success,quantityTraded,totalBronze)`,
+`Urgency.NORMAL`, `MarketPriceHelper.getDynamicSellPrice(level,village,item)`,
+`VillageEconomy.postListing/getBasePrice`, `NpcWallet.receive/spend`,
+`ProductionHelpers.findMarketInVillage`, `getOrCreateBuildingEconomy` +
+`BuildingEconomy.withdraw/depositRevenue`); the agent-wallet conduit nets to zero
+(receive − channel-spend − leftover-refund); the buy is affordability-capped
+(qty ≤ 0.9·treasury/price) so funding never underflows; the eating redirect is
+monk-gated (non-monks byte-unchanged); the economy is `isRiteVenue`-decoupled from
+temple decay; the daily pass is guarded; a fresh monastery is starter-seeded.
+
+### Smoke test (user-runnable)
+
+1. **Monks eat from the shared store.** Stock bread in a monastery's store; at the
+   monks' meal window, confirm they eat from the MONASTERY store (the bread count
+   drops), not personal inventory, and that a monk with no personal food no longer
+   starves.
+2. **Self-feeding.** Give a monk BAKING + a furnace/smoker in the monastery + stock
+   wheat; confirm it bakes bread into the store (need-priority), the others eat it,
+   and an idle initiate is steered toward BAKING when bread is needed.
+3. **Surplus → pool.** Let the monastery overproduce honey/books (above target);
+   confirm the surplus is sold to market and the monastery's `BuildingEconomy`
+   treasury rises (cross-check `/religion temple` near the monastery if it reads the
+   pool, or observe inputs being bought next).
+4. **Buy inputs.** With a baker but no wheat, confirm the monastery BUYS wheat from
+   the pool (via the market/channels) so the baker can produce; with no baker and
+   low bread, confirm it buys BREAD directly (the food safety net) so monks don't
+   starve.
+5. **Self-contained run.** Leave a stocked, amenity-equipped monastery with a few
+   monks running for several in-game days; confirm it sustains — produces, eats,
+   sells surplus, buys inputs, pays upkeep — without starving or going broke, and a
+   productive house stays solvent.
+6. **No regressions.** Confirm non-monk eating, HOME production, the profession
+   behaviors, and the temple economy are unchanged; nothing crashes (the daily pass
+   is guarded).
+
+---
+
+## D1 — the ReligionIdentity model + first authoring pass (2026-06-09)
+
+(Religion Deepening, Pillar 1.)
+
+### Disposition (findings)
+
+The four faiths are mechanically distinct (R3) but thin on identity — no cosmology,
+no deity with character, no sacred history, no virtues/taboos. D1 builds the MODEL
+that holds a realized-culture identity per faith, seeds a first authored pass, and
+a debug readout. Per the dead-content rule, the content is authorable + inspectable
+NOW even though its behaviour consumer is later (D2).
+
+1. **Registry pattern.** `ReligionContent` (R3a) is the model to mirror: a `final`
+   class with a private static `Map<String, …>` keyed by `ReligionRegistry` ids
+   (SUNSTEAD/THE_LOOM/TIDECALL/FORGE_CREED), hand-authored `build()` entries, static
+   lookups — a parallel registry, NOT a `Religion` record/codec change. The four
+   faiths' tenets/deity/rites live in `ReligionRegistry`.
+2. **Reconciliation (don't duplicate/break the existing flavor fields).** The deity
+   NAME stays the single source in `Religion.deity()` (consumed by
+   `ReligionContent.invocation`); the identity adds the rich layer on top (a `Deity`
+   = domain + character + demands + rewards, NO name). `Religion.coreTenets()` stay
+   put (consumed by `ReligionContent.tenet`); the identity's `virtues` are the
+   structured, concept-tagged version (distinct from the raw tenet strings, informed
+   by them). The `/religion identity` readout pulls the name from `ReligionRegistry`
+   and the rich layer from the identity — one source per attribute.
+3. **D2 forward-consumer (the concept representation).** Virtues/taboos are stored
+   as `{FaithConcept concept, String text}` so D2 can key behaviour on the concept.
+   `FaithConcept` is a small, concrete, top-level enum — every value anchored to one
+   of the four faiths' actual values (no speculative concepts), each mappable to an
+   observable NPC act (working/idling, honest dealing/theft, sharing/hoarding,
+   defending kin/fleeing, ancestor veneration, desecration, …).
+
+### What shipped
+
+- **`Npc/Religion/FaithConcept.java`** (new top-level enum) — the controlled
+  vocabulary (16 values: HONEST_LABOUR/GENEROSITY/TRUTHFULNESS/HARMONY/
+  RESPECT_THE_SEA/REMEMBRANCE/HONOUR_THE_ANCESTORS/LOYALTY/VALOUR + IDLENESS/GREED/
+  DECEIT/DISCORD/RECKLESSNESS/COWARDICE/SACRILEGE), each with a `displayName()`.
+  Every value is used by ≥1 faith (D2 is the behaviour consumer).
+- **`Npc/Religion/ReligionIdentity.java`** (new) — the record schema (cosmology,
+  `Deity` {domain, character, demands, rewards}, `SacredHistory` {foundingMyth,
+  ordered `HistoryEvent`s}, `List<Virtue>`, `List<Taboo>`, `Aesthetics` {styleId,
+  palette, iconography}, `List<String>` practices), a nested `DeityDomain` enum
+  (SUN/SEA/FORGE/FATE — only the four faiths' domains), and the parallel registry
+  (`get`/`all`/`build`) with the **first authored pass** for all four faiths.
+- **`Commands/ReligionDebugCommand.java`** — `/religion identity <religion>` prints
+  the faith's cosmology, deity (name reconciled from `Religion.deity()` + domain +
+  character + demands + rewards), sacred history, virtues + taboos (with their
+  concept tags), aesthetics, and practices.
+
+**Authored first pass (consistent with each faith's existing tenets/deity/rites):**
+- **Sunstead** (Sun-Mother, SUN): cosmology of the turning agrarian wheel; virtues
+  HONEST_LABOUR + GENEROSITY; taboos IDLENESS + GREED.
+- **The Loom** (no deity, FATE): the impersonal Pattern; virtues TRUTHFULNESS +
+  HARMONY; taboos DECEIT + DISCORD.
+- **Tidecall** (Sea-Mother, SEA): the deep that gives and takes; virtues
+  RESPECT_THE_SEA + REMEMBRANCE; taboos RECKLESSNESS + SACRILEGE.
+- **The Forge Creed** (First Forge-Father, FORGE): the line of iron ancestors;
+  virtues HONOUR_THE_ANCESTORS + LOYALTY + VALOUR; taboos COWARDICE + SACRILEGE.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionRegistry` (the four faiths + their ids); the
+   existing `Religion.deity()` NAME + `coreTenets()` — folded in (the readout reads
+   the name from `ReligionRegistry`), NOT duplicated or broken. No `Religion` change.
+2. **Downstream callers.** The `/religion identity` readout (the only consumer this
+   phase). D2 (the forward consumer of `FaithConcept` virtues/taboos — the schema
+   carries the concept tag it needs). `ReligionContent` (R3a) is unaffected — it
+   still owns deity-NAME/tenet flavor + rite profiles; `ReligionIdentity` is a
+   separate, additive content layer. R9 panels could surface identity later (not
+   this phase).
+3. **Sibling systems.** `ReligionContent`/`MonasticCrafts` — same parallel-registry
+   pattern; the calendar/rites are untouched.
+4. **Exhaustive switches.** `DeityDomain` is a new enum but is never exhaustively
+   switched (rendered via `name()` in the readout); `FaithConcept` likewise
+   (rendered via `name()`/`displayName()`). No exhaustive switch over either.
+   Confirmed.
+
+### Simplification Sweep
+
+`ReligionIdentity` reuses the `ReligionContent` parallel-registry pattern; the deity
+NAME + core tenets fold into the rich identity with one source per attribute (name
+in `Religion`, domain/character/virtues in the identity — not duplicated). No new
+registry framework. Classes in scope + inbound callers: `ReligionIdentity` (new;
+1 — the `/religion identity` readout; D2 to come), `FaithConcept` (new; 1 — the
+identity's virtues/taboos; D2 to come), `ReligionDebugCommand` (+1 subcommand),
+`ReligionRegistry` (read-only, the name/id source). No duplicate identity copy.
+
+### Deviations from prompt
+
+- **`FaithConcept` is one shared vocabulary for BOTH virtues and taboos** (not two
+  enums) — D2 judges actions against a single concept set, and several taboos are the
+  inverse of a virtue; one controlled vocabulary is the cleaner key for D2.
+- **The deity NAME is not stored in the identity** — it stays in `Religion.deity()`
+  and the readout reconciles the two, so the name has exactly one source (the
+  alternative — copying the name into the identity — would duplicate it).
+- **`FaithConcept`/`DeityDomain` rendered via `name()` in the readout** (the concept
+  TAG) so the smoke test can see what D2 keys on; `displayName()` is available for a
+  prettier later surface.
+
+### Out-of-scope but flagged
+
+- **D2** — virtues/taboos → NPC behaviour/mood (map an observed act to a
+  `FaithConcept`, approve/disapprove per the officiating faith's lists). The schema
+  is structured for it (the concept tag is the hook); no behaviour wired here.
+- **D3** — consuming deity/sacred-history/cosmology in dialogue/sermons/history.
+- **D4** — consuming `Aesthetics` (style/palette/iconography) in the building NBT /
+  visual hook.
+- Surfacing identity in the R9 player/temple panels; promoting the first-pass
+  authored text as Garrett refines it.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: no `Religion` record/codec change (git diff clean on
+`Religion.java`); `ReligionIdentity` mirrors the `ReligionContent` registry shape +
+keys by `ReligionRegistry` ids; all four faiths authored; every `FaithConcept` (16)
+and `DeityDomain` (4) value is used by ≥1 faith (no speculative/unused); the readout
+resolves the deity name from `Religion.deity()` (reconciliation) and the rich layer
+from the identity; the new enums are not exhaustively switched.
+
+### Smoke test (user-runnable)
+
+1. **Readout per faith.** Run `/religion identity sunstead`, `the_loom`, `tidecall`,
+   `forge_creed`; confirm each prints a coherent cosmology, deity (name + domain +
+   character + demands + rewards), sacred history (founding myth + ordered events),
+   virtues, taboos, aesthetics, and practices, and that each reads as a distinct,
+   refinable first pass.
+2. **Concept tags visible.** Confirm each virtue/taboo line shows its `FaithConcept`
+   tag (e.g. `[HONEST_LABOUR]`, `[COWARDICE]`) so D2 has a controlled value to key on.
+3. **Reconciliation intact.** Confirm the deity NAME in the readout matches
+   `Religion.deity()` (the Sun-Mother / the Sea-Mother / the First Forge-Father / "The
+   Loom" for the deity-less Loom), and that R3a effects + the existing deity/tenet
+   usage (rite invocations, confession tenet lines) still work unchanged.
+4. **Unknown/unauthored.** `/religion identity <bad-id>` fails cleanly ("Unknown
+   religion"); an authored-but-future id would report "No authored identity".
+
+---
+
+## D2 — virtues & taboos → NPC behaviour + mood (2026-06-09)
+
+(Religion Deepening, Pillar 1 — the headline.)
+
+### Disposition (findings)
+
+D1 gave each faith authored virtues/taboos as `FaithConcept` tags. D2 makes them
+bite: an adherent who lives a virtue gains piety + contentment + standing; one who
+breaks a taboo feels guilt + is judged by co-religionist witnesses. Religion
+becomes an active force on NPC psychology.
+
+1. **Lookup + faith.** `ReligionIdentity.get(faith).virtues()/.taboos()` (D1, each a
+   `{FaithConcept, text}`); the actor's + witnesses' faith via
+   `PietyComponent.primaryReligion()`; `FaithReconciliation`'s co-religion notion —
+   but the cleaner witness rule is "the witness's faith HOLDS the concept" (a
+   co-religionist always does; a different faith sharing the value also does —
+   exactly "co-religionist or holds the same value").
+2. **Crime (primary taboo hook).** `CrimeReporter.commit → applySideEffects(report)`:
+   the perpetrator is a UUID (NPC or player), witnesses are TownspersonMob NPCs (a
+   16-block scan), and it already applies victim/witness mood (`CRIME_VICTIM`/
+   `CRIME_WITNESSED`) + an NPC↔NPC −60 victim→perp relationship + a player-perp
+   village-reputation drop. The faith overlay layers at the END of
+   `applySideEffects` (witnesses + perpetrator known), ADDITIVE.
+   `CrimeType` (13 values) → `FaithConcept` taboo map.
+3. **Virtue hooks (discrete).** R5 `GraveVisit.contemplate` (the remembrance moment,
+   when the visitor cares about the grave) → REMEMBRANCE; R4d-2
+   `TempleProsperity.spendSurplus` after `distributeAlms` (the priest is the giver)
+   → GENEROSITY.
+4. **Effect channels.** `PietyComponent.adjustBelief` (clamped [0,1]); mood via
+   `applyWithRawMagnitude` — `MoodTrigger` had no guilt/contentment, but its only
+   internal switch (`traitMultiplier`) has a `default` arm, so adding values is safe
+   → added `GUILT`/`CONTENTMENT`; NPC↔NPC judgment via
+   `NpcRelationshipLedger.adjust(otherId, delta, tick, origin)` (clamped [-100,100]).
+   `VillageReputation` is player↔village only, so it's NOT the witness-judgment
+   channel — NPC↔NPC relationship is.
+
+### What shipped
+
+- **`Npc/Religion/FaithJudgment.java`** (new) — the one canonical helper:
+  `judge(actor, FaithConcept, witnesses, now)` looks up the concept in the ACTOR's
+  own faith — virtue → reward (piety +0.02 + `CONTENTMENT` mood), taboo → guilt
+  (piety −0.02 + `GUILT` mood), neutral/atheist → nothing — then each witness whose
+  OWN faith holds the concept judges the actor via NPC↔NPC relationship (+3 for a
+  witnessed virtue, −4 for a witnessed taboo). Plus `conceptForCrime(CrimeType)`
+  (theft→GREED, assault/murder→DISCORD, fraud/bribery/contract-breach/perjury/
+  smuggling/tax-evasion/seal→DECEIT, vandalism→SACRILEGE; `default→null` for
+  trespassing + future types).
+- **`Npc/Mood/MoodTrigger.java`** — added `CONTENTMENT` (+6, cap 0.2) + `GUILT`
+  (−8, cap 0.2). Safe (the lone internal switch has a `default`); no external
+  exhaustive switch over `MoodTrigger`.
+- **`Npc/Crime/CrimeReporter.java`** — the faith overlay at the end of
+  `applySideEffects`: an NPC perpetrator whose crime is a taboo of THEIR faith feels
+  guilt + co-religionist (or same-value) witnesses judge them, ON TOP of the existing
+  crime effects.
+- **`Village/Graveyard/GraveVisit.java`** — when an adherent who cares about a grave
+  visits it, `judge(npc, REMEMBRANCE)` rewards a faith that esteems it (Tidecall) —
+  a distinct channel from the universal grief-ease.
+- **`Npc/Religion/TempleProsperity.java`** — after alms are distributed,
+  `judge(priest, GENEROSITY)` rewards the giving priest's faith if it esteems it
+  (Sunstead).
+
+### Bounds (anti-spiral)
+
+Per-act magnitudes are tiny and bounded by the existing clamps: piety ±0.02
+(`adjustBelief` clamps [0,1]); mood ±6/8 under `MoodTrigger`'s daily cap (0.2 ⇒ ±20
+mood/day max); witness relationship ±3/4 (`NpcRelationshipLedger` clamps [-100,100]).
+A single sin is a dip + a modest nudge from the faithful, not ruin; a single virtuous
+act is a nudge, not sanctification.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionIdentity`/`FaithConcept` (D1 — the virtue/taboo
+   lookup), the hooked events (`CrimeReporter`, R5 `GraveVisit`, R4d-2 alms via
+   `spendSurplus`), `PietyComponent` (the actor's/witnesses' faith).
+2. **Downstream callers.** `CrimeReporter.applySideEffects` (overlay), `GraveVisit.
+   contemplate`, `TempleProsperity.spendSurplus` — all call the ONE `FaithJudgment`
+   helper. Effects hit `PietyComponent.adjustBelief`, mood (`CONTENTMENT`/`GUILT`),
+   and `NpcRelationshipLedger`. No new event system.
+3. **Sibling systems.** The crime/justice system is unmodified except the additive
+   overlay (the existing reputation/mood/relationship effects are untouched — the
+   faith effect is on top). R5 grave-visiting: REMEMBRANCE is a DISTINCT faith-virtue
+   channel from the R5b grief-ease and the R5c Forge `venerate()` (Forge holds
+   HONOUR_THE_ANCESTORS not REMEMBRANCE → only `venerate()`; no double-dip). R4d-2
+   alms unchanged except the added priest reward. `FaithReconciliation` — the
+   "holds the concept" rule supersedes a bare sameFaith check (covers cross-faith
+   shared values).
+4. **Exhaustive switches.** `conceptForCrime` switches over `CrimeType` with a
+   `default` arm (safe as `CrimeType` grows); `MoodTrigger.traitMultiplier` has a
+   `default` (new values safe). No exhaustive switch over either was broken.
+   Confirmed.
+
+### Simplification Sweep
+
+One `FaithJudgment` helper; every hook just maps its event to a `FaithConcept` +
+context (witnesses) and calls `judge`. The crime overlay reuses `CrimeReporter`'s
+witness scan + reputation/mood; the grave/alms hooks reuse the existing call sites.
+No new judgment/mood/reputation framework. Classes in scope + inbound callers:
+`FaithJudgment` (new; 3 — CrimeReporter, GraveVisit, TempleProsperity), `MoodTrigger`
+(+2 values; consumed by FaithJudgment), `ReligionIdentity`/`FaithConcept` (D1, the
+lookup), `NpcRelationshipLedger`/`PietyComponent`/mood (effect channels, reused).
+
+### Deviations from prompt
+
+- **Witness rule is "the witness's faith holds the concept", not bare same-faith** —
+  this is exactly the prompt's "co-religionist (or hold the same value)" and is the
+  cleaner, faith-relative key (a Forge witness judges a Tidecall sacrilege because
+  both hold SACRILEGE).
+- **The GENEROSITY hook rewards the alms-distributing PRIEST** (the discrete NPC
+  generous act available) — there is no NPC→NPC personal gifting today (GiveGiftVerb
+  is player→NPC, so the giver is a player with no NPC mood). Only Sunstead priests
+  benefit (faith-relative). NPC personal gifting is a flagged future hook.
+- **Grave REMEMBRANCE only when the visitor cares about the grave** (a meaningful
+  remembrance act); Forge's HONOUR_THE_ANCESTORS stays the existing R5c `venerate()`
+  reward (complementary, no double-dip) — so D2 doesn't route HONOUR_THE_ANCESTORS
+  through a new hook this phase.
+- **Added `MoodTrigger.GUILT`/`CONTENTMENT`** (enum VALUES on an existing enum, not a
+  new enum) — semantically correct + consumer-justified (FaithJudgment), and safe
+  (the internal switch has a `default`; no external exhaustive switch).
+- **Player perpetrators get no faith guilt** (players have no NPC mood); the player's
+  own piety judgment is a flagged future extension.
+
+### Out-of-scope but flagged
+
+- **Continuous virtues/taboos** (HONEST_LABOUR / IDLENESS judged per work-cycle) — a
+  daily-cadence follow-up (rate-limited), deliberately NOT per-tick this phase.
+- **D3** — deity / sacred-history / cosmology consumption (dialogue, sermons).
+- **D4** — aesthetics → building NBT / visuals.
+- More action→concept hooks (NPC personal gifting → GENEROSITY; valour/loyalty/
+  cowardice from combat; truthfulness/deceit from trade); routing player-actor faith
+  judgment; HONOUR_THE_ANCESTORS via a dedicated D2 hook.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: one `FaithJudgment` helper hit by all three hooks; signatures
+confirmed (`adjustBelief` clamp [0,1], `applyWithRawMagnitude(trigger,mag,tick)`,
+`NpcRelationshipLedger.adjust(uuid,int,tick,origin)` clamp [-100,100],
+`RelationshipOrigin.MET_SOCIALLY/MET_IN_CONFLICT`, `primaryReligion()`); the crime
+overlay is additive (after the existing effects, inside `applySideEffects`, with
+`now`/`type`/`perpetratorId`/`report` in scope) and skips player/atheist/neutral
+cases inside `judge`; `conceptForCrime` + `MoodTrigger.traitMultiplier` both have a
+`default` arm (no exhaustive-switch break from the +2 MoodTrigger values); the grave
+REMEMBRANCE channel is distinct from grief-ease + `venerate()` (no double-dip);
+magnitudes are small + clamped (anti-spiral).
+
+### Smoke test (user-runnable)
+
+1. **Taboo guilt + witness judgment.** Make a devout Sunstead NPC (GREED is its
+   taboo) steal in view of co-religionist Sunstead NPCs; confirm — ON TOP of normal
+   crime handling — the thief gets a GUILT mood dip + a small piety loss, and the
+   Sunstead witnesses' opinion of the thief drops (check their NPC relationship).
+   Confirm a Sunstead NPC committing ASSAULT (DISCORD — NOT a Sunstead taboo) gets
+   NO faith guilt (faith-relative).
+2. **Cross-faith / atheist witnesses.** Confirm a witness of a different faith that
+   does NOT hold the violated taboo does not judge; an atheist witness never judges;
+   and a different-faith witness that DOES share the taboo (e.g. SACRILEGE held by
+   both Tidecall and Forge) does judge.
+3. **Virtue rewards.** Have a Tidecall adherent visit a loved one's grave → confirm a
+   REMEMBRANCE reward (CONTENTMENT mood + small piety) distinct from the grief-ease;
+   let a Sunstead priest distribute alms → confirm a GENEROSITY reward.
+4. **Bounded.** Confirm a single sin doesn't tank an NPC (piety/mood/relationship move
+   only a little) and a single virtue doesn't sanctify; repeated faith-mood within a
+   day is daily-capped.
+5. **No regressions.** Confirm normal crime/grave/alms behaviour is otherwise
+   unchanged (the faith effect is additive), a Forge venerator still gets the R5c
+   `venerate()` reward (not double), and R3a/existing religion behaviour is intact.
