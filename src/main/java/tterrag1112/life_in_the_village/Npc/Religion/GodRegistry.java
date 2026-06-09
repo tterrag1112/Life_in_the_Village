@@ -51,6 +51,36 @@ public final class GodRegistry {
         return List.copyOf(GODS.values());
     }
 
+    // ── Religion → god(s) resolver (F1a sub-stage 2) ─────────────────────────
+
+    /**
+     * The gods a religion venerates, in order (first = primary), resolved from
+     * {@link Religion#godIds()}. An unknown / not-yet-registered god id is skipped
+     * with a warn (graceful — a typo degrades, never NPEs). The link sub-stage 3
+     * rides on (which god owns a religion's favour/miracles).
+     */
+    public static List<God> godsFor(Religion religion) {
+        ensureInit();
+        if (religion == null) return List.of();
+        List<God> out = new java.util.ArrayList<>();
+        for (String gid : religion.godIds()) {
+            God g = GODS.get(gid);
+            if (g == null) {
+                LOGGER.warn("[GodRegistry] Religion '{}' references unknown god id '{}' — skipping",
+                        religion.id(), gid);
+                continue;
+            }
+            out.add(g);
+        }
+        return out;
+    }
+
+    /** The religion's primary (first venerated) god, or empty for a god-less one. */
+    public static Optional<God> primaryGod(Religion religion) {
+        List<God> gods = godsFor(religion);
+        return gods.isEmpty() ? Optional.empty() : Optional.of(gods.get(0));
+    }
+
     // ── Init ───────────────────────────────────────────────────────────────
 
     private static synchronized void ensureInit() {

@@ -8544,3 +8544,110 @@ the sole consumer; no new enum values; no codec/save change to existing data.
    `/religion favour grant sunstead 30`, `/religion miracle cast sun_healing_light`
    still work; `/religion me` is unchanged. Gods are inert scaffolding — nothing
    else should differ.
+
+## F1a sub-stage 2 — Religion references its god(s) (2026-06-09)
+
+(Foundation 1 — separating gods from religions. Additive + behaviour-preserving;
+the link sub-stages 3+ ride on.)
+
+### Disposition (findings)
+
+`Religion` was an 8-field record (id, displayName, coreTenets, rites,
+sacredLocations, calendar, `Optional<String> deity`, preferredBookCategories), codec
+all `optionalFieldOf`, with a null-guarding compact constructor. `ReligionRegistry`
+builds the four via factory methods (`sunstead`/`theLoom`/`tidecall`/`forgeCreed`),
+each ending its `new Religion(...)` with the preferred-book-categories list.
+Sub-stage 1's `GodRegistry` exposes the four god ids (`sun_mother`/`the_pattern`/
+`sea_mother`/`forge_father`) + `get`/`find`/`all`. **Nothing reads a religion→god
+link today** — it doesn't exist; the only consumer this stage is the debug readout.
+The four `new Religion(...)` call sites are the only constructor uses (no others to
+break by the arity change).
+
+### What shipped
+
+- **`Religion`** — +1 record component `List<String> godIds` (ordered, first =
+  primary), null-guarded/defensive-copied in the compact constructor like the other
+  lists; codec gains `optionalFieldOf("godIds", List.of())` → **9 fields, still under
+  the 16 ceiling** (commented; F1b's per-world fields will eat the headroom — nest
+  into a sub-record then). `Religion.deity()` kept **exactly as-is** (still the
+  invocation/scripture source).
+- **`ReligionRegistry`** — the four factory methods now pass the single-god list:
+  `sunstead → [SUN_MOTHER]`, `the_loom → [THE_PATTERN]`, `tidecall → [SEA_MOTHER]`,
+  `forge_creed → [FORGE_FATHER]` (matching sub-stage 1's derivation).
+- **`GodRegistry`** — the resolver (kept off the pure-data record): `godsFor(Religion)`
+  maps `godIds()` through `get`, **skipping unknown ids with a `LOGGER.warn`** (a typo
+  degrades, never NPEs); `primaryGod(Religion)` → the first resolved god or empty.
+- **`/religion gods`** — extended with a "Religion → god(s)" section: each religion's
+  god ids + its resolved primary god's display name (the Loom showing `the_pattern` /
+  "(impersonal)"). The only behaviour change.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `GodRegistry` (the god ids must exist for the resolver — they
+   do, sub-stage 1) + `ReligionRegistry` (authors the link). Confirmed.
+2. **Downstream callers.** `Religion.CODEC` — the new field is `optionalFieldOf`, so
+   it round-trips and pre-F1a data loads empty; and `Religion` objects aren't
+   persisted on entities anyway (v1 persists only the religion id on
+   `PietyComponent.beliefs`). The ONLY reader of `godIds`/the resolver is the debug
+   readout. The 9-arg constructor change touches only the 4 factory call sites (all
+   updated; grep-confirmed no others).
+3. **Sibling systems.** The divine layer (favour/miracles/curses/visions/wrath/
+   theophany) and every `Religion.deity()` consumer (`ReligionContent.invocation`,
+   `ScriptureFactory`, `DivineVision`, `PlayerReligionSnapshotBuilder`,
+   `TempleSnapshotBuilder`) are **untouched** — still reading the existing name field;
+   nothing re-keyed.
+4. **Exhaustive switches.** No enum values added. The two existing `DeityDomain`
+   switches (`DivineVision` domain→colour, `God.displayName`) are unaffected.
+
+### Simplification sweep
+
+- Touched: `Religion` (+1 field), `ReligionRegistry` (4 call sites), `GodRegistry`
+  (+`godsFor`/`primaryGod`), `ReligionDebugCommand` (the readout). Inbound callers of
+  the new resolver: **1** (the readout; `primaryGod` also calls `godsFor`). No orphan.
+- **Planned (not acted on):** `godIds` + the resolver are the scaffolding that lets
+  sub-stage 5 delete the `ReligionIdentity`/`Religion.deity()` deity duplication once
+  the divine layer (sub-stage 3) and the deity-name consumers (sub-stage 4) point at
+  the god. Do NOT act yet.
+
+### Deviations from prompt
+
+None. Added `godIds` (optional, 9th field), authored all four single-god, put the
+resolver in `GodRegistry` (record stays pure data), surfaced the link in the readout;
+`Religion.deity()` and the divine layer untouched; unknown ids warn-and-skip.
+
+### Out-of-scope but flagged
+
+- **Sub-stage 3** — re-key the divine layer (favour/miracles/curses/visions) to
+  `godId` via `GodRegistry.godsFor`/`primaryGod` (currently `religionId`/`DeityDomain`).
+- **Sub-stage 4** — re-point the virtues/taboos + the six `Religion.deity()`-name
+  consumers to the god.
+- **Cleanup sub-stage** — invert authoring onto `God`, relocate the nested types,
+  delete the `ReligionIdentity` deity duplication.
+- **No multi-god religions / pantheons** yet (all four single-god — list mechanism
+  only). **F1b** — per-world religions (will eat the codec headroom).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Note: container started current this time (HEAD at the F1a sub-stage-1 tip); no
+reset needed.] Static review: the only `new Religion(...)` sites are the 4 factory
+methods (all pass the new list; grep-confirmed no others); the codec field is
+`optionalFieldOf` (round-trips, old data loads empty), now 9 fields (under 16); the
+resolver warn-and-skips unknown ids (no NPE); `Religion.deity()` + every divine-layer
+/ deity-name consumer is untouched; the resolver's sole caller is the readout; no new
+enum values; no save/codec break for existing data.
+
+### Smoke test (user-runnable)
+
+1. **Religion → god link.** Load a world; run `/religion gods` — confirm the new
+   "Religion → god(s)" section lists each of the four with its god id and resolved
+   primary god display name (the Loom: `the_pattern` / "(impersonal)").
+2. **Graceful unknown id.** (Reason about / temporarily test:) a religion pointing at
+   a bogus god id would log "references unknown god id … — skipping" and resolve to
+   the remaining/none, NOT crash.
+3. **Divine layer unchanged.** Confirm `/religion favour grant sunstead 30` +
+   `/religion miracle cast sun_healing_light` still behave exactly as before, and
+   `/religion me` is unchanged.
+4. **Invocation/scripture text unchanged.** Confirm `Religion.deity()`-driven text
+   (rite invocation, scripture title) reads identically — the name field is untouched.

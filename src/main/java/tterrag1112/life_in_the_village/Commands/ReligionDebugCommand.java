@@ -161,6 +161,15 @@ public final class ReligionDebugCommand {
                     g.domain(), g.virtues().size(), g.taboos().size()));
             sb.append("\n  §7demands: §f").append(g.demands());
         }
+        // F1a sub-stage 2 — the religion → god(s) link (verifiable in-world).
+        sb.append("\n§e--- Religion → god(s) ---");
+        for (Religion r : ReligionRegistry.all()) {
+            String primary = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                    .primaryGod(r).map(g -> g.isImpersonal() ? "(impersonal)" : g.displayName())
+                    .orElse("(none)");
+            sb.append(String.format(Locale.ROOT, "%n§6%-12s§7 venerates §f%s§7 (primary: §f%s§7)",
+                    r.id(), String.join(", ", r.godIds()), primary));
+        }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
         return 1;

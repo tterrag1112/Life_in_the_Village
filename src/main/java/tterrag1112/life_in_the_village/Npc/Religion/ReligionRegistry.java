@@ -101,7 +101,8 @@ public final class ReligionRegistry {
                         Map.entry("Midsummer", 172))),
                 Optional.of("the Sun-Mother"),
                 List.of(BookCategory.RELIGIOUS, BookCategory.HISTORY,
-                        BookCategory.GUIDE));
+                        BookCategory.GUIDE),
+                List.of(GodRegistry.SUN_MOTHER));   // F1a — venerates the Sun-Mother
     }
 
     private static Religion theLoom() {
@@ -127,7 +128,8 @@ public final class ReligionRegistry {
                         Map.entry("Third Threading", 180),
                         Map.entry("Fourth Threading",270))),
                 Optional.empty(),
-                List.of(BookCategory.RELIGIOUS, BookCategory.LITERATURE));
+                List.of(BookCategory.RELIGIOUS, BookCategory.LITERATURE),
+                List.of(GodRegistry.THE_PATTERN));  // F1a — venerates the (impersonal) Pattern
     }
 
     private static Religion tidecall() {
@@ -153,7 +155,8 @@ public final class ReligionRegistry {
                         Map.entry("Storm's Vigil", 200),
                         Map.entry("Last Catch",    300))),
                 Optional.of("the Sea-Mother"),
-                List.of(BookCategory.RELIGIOUS, BookCategory.TRAVELOGUE));
+                List.of(BookCategory.RELIGIOUS, BookCategory.TRAVELOGUE),
+                List.of(GodRegistry.SEA_MOTHER));   // F1a — venerates the Sea-Mother
     }
 
     private static Religion forgeCreed() {
@@ -178,7 +181,8 @@ public final class ReligionRegistry {
                         Map.entry("Anvil Vigil",     150),
                         Map.entry("Ancestor Day",    330))),
                 Optional.of("the First Forge-Father"),
-                List.of(BookCategory.RELIGIOUS, BookCategory.HISTORY));
+                List.of(BookCategory.RELIGIOUS, BookCategory.HISTORY),
+                List.of(GodRegistry.FORGE_FATHER)); // F1a — venerates the First Forge-Father
     }
 
     /** Suppresses unused-import on Collections — reserved for future helpers. */
