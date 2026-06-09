@@ -108,11 +108,25 @@ public final class PlayerReligionSnapshotBuilder {
             }
         }
 
+        // ── Miracles for the player's primary faith (Divine Layer V2) ────────
+        List<String> miracleSummary = new ArrayList<>();
+        if (ownFaithId != null) {
+            for (Miracle m : Miracles.forReligion(ownFaithId)) {
+                MiracleInvoker.Status st = MiracleInvoker.status(level, player, m, now);
+                String glyph = switch (st) {
+                    case AVAILABLE   -> "✓";   // ✓
+                    case ON_COOLDOWN -> "⏳";   // ⏳
+                    case LOCKED_TIER, LOCKED_FAVOUR -> "🔒"; // 🔒
+                };
+                miracleSummary.add(m.displayName() + " " + glyph);
+            }
+        }
+
         return new OpenPlayerReligionPacket(
                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                 hasPledge, pledgeTempleName, pledgeFaithName,
                 ritesThisMonth, meetsMonthly,
-                today, calendar, favourSummary);
+                today, calendar, favourSummary, miracleSummary);
     }
 
     /** The village owning {@code buildingId}, if any. */

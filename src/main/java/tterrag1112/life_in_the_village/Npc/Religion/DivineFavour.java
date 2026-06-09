@@ -150,7 +150,11 @@ public final class DivineFavour {
 
     /** The piety tier of the player's belief in {@code religionId} (per-faith, not
      *  just their primary), so favour is capped/baselined by standing in that faith
-     *  — and fades when they lapse in it. */
+     *  — and fades when they lapse in it. Public for the V2 miracle tier-gate. */
+    public static PietyTier tierIn(ServerLevel level, UUID playerId, String religionId) {
+        return tierFor(RiteSavedData.get(level), playerId, religionId);
+    }
+
     private static PietyTier tierFor(RiteSavedData data, UUID playerId, String religionId) {
         PietyComponent piety = data.getPlayerPiety(playerId).orElse(null);
         float strength = piety == null ? 0f : piety.beliefIn(religionId);

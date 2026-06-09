@@ -7863,3 +7863,137 @@ alignment uses a stream (no enum switch); favour clamps to `[0, cap]` everywhere
    confirm spending more than held fails.
 6. **Piety unchanged.** Confirm none of the favour operations move the piety bar —
    they are distinct resources.
+
+## V2 — Miracles (the boon) (2026-06-09)
+
+(Divine Layer, Pillar 3 — the headline: Divine Favour becomes power.)
+
+### Disposition (findings)
+
+V1 built the favour ledger; V2 lets a devout player spend it on **miracles** —
+per-deity, domain-flavoured boons that scale from grounded (potion-tier) at low
+favour to fantastical at the peaks.
+
+1. **Cost path** — `DivineFavour.current`/`spend` (V1) is the gate + sink; the
+   favour scale (per-tier eq 0/5/15/30, cap 0/30/60/100) sets sensible miracle
+   costs (8 low → 50 high) and tier gates. Added a public `DivineFavour.tierIn`
+   for the per-faith tier gate.
+2. **Theming** — `ReligionIdentity.deity().domain()` (SUN/SEA/FORGE/FATE) + rewards
+   (D1) drive each faith's set: Sun-Mother heals/grows, Sea-Mother fishing/water/
+   storm, Forge-Father strength/ward, Loom luck/foresight/fate-turn.
+3. **Effect toolkit** — vanilla `MobEffects` (`new MobEffectInstance(holder, dur,
+   amp)` + `player.addEffect`, the `EventEffects.applyPlayerBuff` precedent),
+   `player.heal`, `BonemealableBlock.performBonemeal` (area crop growth),
+   `ServerLevel.setWeatherParameters` (clear the storm), `GLOWING` reveal — no
+   custom effect framework.
+4. **Invocation** — chose a command (`/religion miracle list | cast <id>`) + R9c
+   surfacing as the testable path (a verb requires an NPC; a miracle is the player
+   calling on their deity directly). A dedicated miracle GUI is flagged as deferred
+   polish. `RequestBlessingVerb` is the free, NPC-priest *blessing* (mood/rite) —
+   miracles are the favour-powered tier above it (distinct, not replaced).
+
+### What shipped
+
+- **`Npc/Religion/Miracle.java`** (new) — the model: `record Miracle(id, religionId,
+  displayName, domain, cost, minTier, minFavour, cooldownTicks, flavour, Effect)`
+  with a functional `Effect.apply(level, player, favour)` (favour-scaled).
+- **`Npc/Religion/Miracles.java`** (new) — the per-deity registry (mirrors
+  `ReligionContent`/`MonasticCrafts`): a flat authored list + `byId`/`forReligion`/
+  `all`, plus the environment effect helpers (`growCropsAround` via bonemeal,
+  `revealNearbyMobs` via GLOWING, `clearHarmfulEffects`). Twelve miracles, three per
+  faith, low→high: **Sun** Healing Light → Warmth → Bountiful Harvest; **Sea** The
+  Catch → Tide's Grace → Calm the Waters; **Forge** Ancestral Might → Forge-Ward →
+  Unbreaking Resolve; **Loom** Fortune's Thread → Foresight → Reweave. A
+  `magnitude(favour)` (0/1/2 at <45/45/80) scales amplifier/duration/area within a
+  miracle.
+- **`Npc/Religion/MiracleInvoker.java`** (new) — the single invocation path:
+  `status` (AVAILABLE/LOCKED_TIER/LOCKED_FAVOUR/ON_COOLDOWN) + `cast` (gate → tier →
+  favour ≥ max(minFavour,cost) → `DivineFavour.spend` → `Effect.apply` → arm
+  cooldown). Per-player, per-miracle cooldown in a small in-memory map (no brain
+  memory, no persistence — a short anti-spam timer). Clear denial messages.
+- **`DivineFavour.tierIn`** (new public) — the per-faith piety tier for the gate.
+- **Command** — `/religion miracle list` (per-deity, with favour, cost, tier, and a
+  ✓/🔒/⏳ status glyph + id) and `/religion miracle cast <id>` (invokes; surfaces the
+  `Result` message).
+- **Surfacing** — `OpenPlayerReligionPacket` +`miracleSummary`; the snapshot builds
+  the player's primary-faith miracles with status glyphs; `PlayerReligionScreen`
+  renders favour on the piety line and a "Miracles: …" line (✓/🔒/⏳).
+
+### Tie-in audit
+
+1. **Upstream feeders.** `DivineFavour` (V1 — `current`/`spend`/`tierIn`, the cost +
+   gate), `ReligionIdentity.deity().domain()` (D1 — theming), vanilla
+   `MobEffects`/environment. All read-only except the favour `spend` (the intended
+   sink).
+2. **Downstream callers.** The command (`MiracleInvoker.cast`/`status`,
+   `Miracles.*`); `DivineFavour.spend` (miracles are its first real sink);
+   `MobEffect`/weather/bonemeal application; the R9c packet/snapshot/screen.
+3. **Sibling systems.** **Piety untouched** — miracles cost favour only (verified:
+   the invoker calls `DivineFavour.spend`, never `adjustBelief`). V1 favour is the
+   economy; `RequestBlessingVerb` (free NPC blessing) is the lesser, NPC-mediated
+   boon below miracles. R9 packet stays backward-shaped (field appended).
+4. **Exhaustive switches.** Two new switches over `MiracleInvoker.Status` (command +
+   snapshot) — both cover all four arms (LOCKED_TIER/LOCKED_FAVOUR grouped), no
+   `default`. No `DeityDomain` switch was needed (sets are authored per-religion;
+   the domain is a carried display field), so none added.
+
+### Simplification sweep
+
+- One `Miracle` model + one per-deity registry (`Miracles`) + one invocation path
+  (`MiracleInvoker`) that spends favour and applies a vanilla effect — no parallel
+  effect framework, no per-faith invoker duplication (the effect is a lambda on the
+  record). Classes in scope: `Miracle`/`Miracles`/`MiracleInvoker` (new; callers =
+  the command + the snapshot), `DivineFavour` (+1 public accessor), the R9c
+  packet/snapshot/screen (+1 field/line), `ReligionDebugCommand` (+1 subcommand). No
+  orphan; cooldown state is one small in-memory map.
+
+### Deviations from prompt
+
+- **Invocation is a command + R9c surfacing**, not a player verb — a verb is
+  NPC-targeted; a miracle is the player→deity call. A dedicated miracle GUI is
+  flagged deferred polish (the R9c line + command cover view + cast).
+- **No deity-triggered (automatic) miracle** shipped (the prompt allowed at most one
+  light example) — kept this phase to requestable boons; automatic miracles flagged
+  for later.
+- Effects are starter sets tuned here; balance is a refine pass.
+
+### Out-of-scope but flagged
+
+- **V3 visions**, **V4 curses/wrath**, **V5 theophany**, **NPC miracles**.
+- **Deity-triggered (automatic) miracles** — none this phase; flagged.
+- **Dedicated miracle GUI** (cast buttons via `litv-gui-screen`) — the R9c line +
+  `/religion miracle` command are the surfacing; a rich screen is deferred polish.
+- **Cooldown persistence** — in-memory (resets on restart); fine for a short
+  anti-spam timer, flagged if a durable cooldown is ever wanted.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review: effects use the `EventEffects.applyPlayerBuff` `MobEffectInstance`
+idiom (`Holder<MobEffect>` ctor) + `BonemealableBlock`/`setWeatherParameters`;
+invoker gates tier+favour+cooldown then `spend`s then applies (piety never written);
+costs/tiers scale (8/FAITHFUL → 50/PIOUS); the two `Status` switches are exhaustive;
+packet StreamCodec write/read balanced for `miracleSummary`; no new brain memory; no
+`RiteSavedData` codec change.
+
+### Smoke test (user-runnable)
+
+1. **Grounded heal + cooldown.** `/religion favour grant sunstead 30`, then
+   `/religion miracle cast sun_healing_light` — confirm favour drops by 8, you heal +
+   gain Regeneration, and an immediate re-cast is refused (cooldown).
+2. **High-tier gate + fantastical.** With low favour, `cast sun_bountiful_harvest` is
+   refused (needs PIOUS + 70 favour); raise belief to PIOUS (`/religion set …`) and
+   favour (`/religion favour grant sunstead 80`), then cast — confirm the crops
+   around you leap to ripeness.
+3. **Per-deity distinctness.** Grant favour and cast a Sea (`sea_calm_the_waters` —
+   clears a storm), Forge (`forge_ward` — resistance/absorption), and Loom
+   (`loom_reweave` — heal + strip debuffs) miracle; confirm each is domain-distinct
+   and grounded at low favour vs fantastical at high.
+4. **Clear denial.** With little favour, `cast forge_unbreaking_resolve` — confirm a
+   clear "not enough favour / deeper devotion" message, no effect, no spend.
+5. **R9c surfacing.** `/religion me` — confirm the screen shows favour on the piety
+   line and a "Miracles: …" line marking each ✓ available / 🔒 locked / ⏳ cooldown;
+   cross-check `/religion miracle list` for costs + tiers.
+6. **Piety untouched.** Confirm casting miracles never moves the piety bar (favour is
+   the only cost).
