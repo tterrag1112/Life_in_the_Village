@@ -122,11 +122,20 @@ public final class PlayerReligionSnapshotBuilder {
             }
         }
 
+        // ── Active divine calling (Divine Layer V3) ──────────────────────────
+        String activeCalling = rites.getPlayerCalling(playerId)
+                .map(c -> {
+                    String fname = ReligionRegistry.find(c.religionId())
+                            .map(Religion::displayName).orElse(c.religionId());
+                    return fname + ": " + c.describe();
+                })
+                .orElse("");
+
         return new OpenPlayerReligionPacket(
                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                 hasPledge, pledgeTempleName, pledgeFaithName,
                 ritesThisMonth, meetsMonthly,
-                today, calendar, favourSummary, miracleSummary);
+                today, calendar, favourSummary, miracleSummary, activeCalling);
     }
 
     /** The village owning {@code buildingId}, if any. */

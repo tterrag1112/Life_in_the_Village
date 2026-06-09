@@ -98,6 +98,24 @@ public final class DivineFavour {
         float next = clamp(current + act.base * weight, 0f, cap);
         data.getOrCreatePlayerFavour(playerId).set(religionId, next, now);
         data.markDirty();
+        // Divine Layer V3 — an act may fulfil a standing divine calling (bonus
+        // favour + a lore vision). The bonus uses addCapped (no calling hook) so
+        // it can't re-trigger this.
+        DivineVision.onFavourAct(level, playerId, religionId, act, now);
+    }
+
+    /** Adds favour respecting the piety-tier cap, WITHOUT the calling hook — used
+     *  for the V3 calling-fulfilment bonus (so it can't re-enter {@link
+     *  #awardConcept}'s calling check). */
+    public static void addCapped(ServerLevel level, UUID playerId, String religionId,
+                                 float amount, long now) {
+        if (religionId == null) return;
+        RiteSavedData data = RiteSavedData.get(level);
+        float cap = cap(tierFor(data, playerId, religionId));
+        if (cap <= 0f) return;
+        float next = clamp(current(level, playerId, religionId, now) + amount, 0f, cap);
+        data.getOrCreatePlayerFavour(playerId).set(religionId, next, now);
+        data.markDirty();
     }
 
     /** Debug/test grant — adds raw favour bypassing the piety cap (so V2 spend can be
