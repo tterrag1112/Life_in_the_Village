@@ -101,6 +101,9 @@ public final class Tithing {
                 pp.adjustBelief(faith, TITHE_PIETY);
                 pp.recordRiteAttendance(now);
                 rdata.markDirty();
+                // Divine Layer V1 — the recurring tithe earns Divine Favour with
+                // the deity (deity-demand weighted via GENEROSITY).
+                DivineFavour.award(level, playerId, faith, DivineFavour.FavourAct.TITHE, now);
             }
         }
     }

@@ -98,7 +98,138 @@ public final class ReligionDebugCommand {
                                     return b.buildFuture();
                                 })
                                 .executes(ReligionDebugCommand::handleIdentity)))
+
+                // Divine Layer V1 — /religion favour [view] | grant <faith> <amt> |
+                // spend <faith> <amt>  (operates on the executing player).
+                .then(Commands.literal("favour")
+                        .executes(ReligionDebugCommand::handleFavourView)
+                        .then(Commands.literal("view").executes(ReligionDebugCommand::handleFavourView))
+                        .then(Commands.literal("grant")
+                                .then(Commands.argument("religionId", StringArgumentType.word())
+                                        .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 100f))
+                                                .executes(ctx -> handleFavourGrantSpend(ctx, true)))))
+                        .then(Commands.literal("spend")
+                                .then(Commands.argument("religionId", StringArgumentType.word())
+                                        .then(Commands.argument("amount", FloatArgumentType.floatArg(0f, 100f))
+                                                .executes(ctx -> handleFavourGrantSpend(ctx, false))))))
+
+                // Divine Layer V2 — /religion miracle list | cast <id>  (executing player).
+                .then(Commands.literal("miracle")
+                        .executes(ReligionDebugCommand::handleMiracleList)
+                        .then(Commands.literal("list").executes(ReligionDebugCommand::handleMiracleList))
+                        .then(Commands.literal("cast")
+                                .then(Commands.argument("miracleId", StringArgumentType.word())
+                                        .suggests((c, b) -> {
+                                            for (var m : tterrag1112.life_in_the_village.Npc.Religion
+                                                    .Miracles.all()) b.suggest(m.id());
+                                            return b.buildFuture();
+                                        })
+                                        .executes(ReligionDebugCommand::handleMiracleCast))))
         );
+    }
+
+    // ── /religion miracle ────────────────────────────────────────────────────
+
+    private static int handleMiracleList(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        long now = level.getGameTime();
+
+        StringBuilder sb = new StringBuilder("§e=== Miracles ===");
+        for (Religion r : ReligionRegistry.all()) {
+            var set = tterrag1112.life_in_the_village.Npc.Religion.Miracles.forReligion(r.id());
+            if (set.isEmpty()) continue;
+            float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                    .current(level, player.getUUID(), r.id(), now);
+            sb.append(String.format(Locale.ROOT, "%n§6%s§7 (favour %.0f):", r.displayName(), fav));
+            for (var m : set) {
+                var st = tterrag1112.life_in_the_village.Npc.Religion.MiracleInvoker
+                        .status(level, player, m, now);
+                String tag = switch (st) {
+                    case AVAILABLE     -> "§a✓";
+                    case ON_COOLDOWN   -> "§e⏳";
+                    case LOCKED_TIER, LOCKED_FAVOUR -> "§c🔒";
+                };
+                sb.append(String.format(Locale.ROOT, "%n  %s §f%-20s§7 cost %.0f, %s, id=§f%s",
+                        tag, m.displayName(), m.cost(), m.minTier().displayName(), m.id()));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleMiracleCast(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String id = StringArgumentType.getString(ctx, "miracleId");
+        var result = tterrag1112.life_in_the_village.Npc.Religion.MiracleInvoker
+                .cast(level, player, id, level.getGameTime());
+        if (!result.success()) { src.sendFailure(Component.literal(result.message())); return 0; }
+        src.sendSuccess(() -> Component.literal("§a" + result.message()), false);
+        return 1;
+    }
+
+    // ── /religion favour ─────────────────────────────────────────────────────
+
+    private static int handleFavourView(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        long now = level.getGameTime();
+        java.util.UUID pid = player.getUUID();
+        var rites = tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData.get(level);
+
+        java.util.Set<String> faiths = new java.util.LinkedHashSet<>();
+        rites.getPlayerPiety(pid).ifPresent(p -> faiths.addAll(p.beliefs().keySet()));
+        rites.getPlayerFavour(pid).ifPresent(f -> faiths.addAll(f.all().keySet()));
+
+        StringBuilder sb = new StringBuilder("§e=== Divine Favour ===");
+        if (faiths.isEmpty()) sb.append("\n  §7(no standing with any deity)");
+        for (String fid : faiths) {
+            float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                    .current(level, pid, fid, now);
+            String name = ReligionRegistry.find(fid).map(Religion::displayName).orElse(fid);
+            sb.append(String.format(Locale.ROOT, "%n  §6%-16s§7 %.1f", name, fav));
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    private static int handleFavourGrantSpend(CommandContext<CommandSourceStack> ctx,
+                                              boolean grant) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String fid = StringArgumentType.getString(ctx, "religionId");
+        if (ReligionRegistry.get(fid) == null) {
+            src.sendFailure(Component.literal("Unknown religion " + fid));
+            return 0;
+        }
+        float amount = FloatArgumentType.getFloat(ctx, "amount");
+        long now = level.getGameTime();
+        java.util.UUID pid = player.getUUID();
+        if (grant) {
+            // Raw debug grant (bypasses the piety cap so V2 spend can be exercised).
+            float v = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                    .debugGrant(level, pid, fid, amount, now);
+            src.sendSuccess(() -> Component.literal(
+                    "§aGranted§7 " + amount + " favour with " + fid + " → §f" + v), false);
+        } else {
+            boolean ok = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
+                    .spend(level, pid, fid, amount, now);
+            if (!ok) { src.sendFailure(Component.literal("Insufficient favour with " + fid)); return 0; }
+            src.sendSuccess(() -> Component.literal(
+                    "§aSpent§7 " + amount + " favour with " + fid), false);
+        }
+        return 1;
     }
 
     // ── /religion identity <religion> ───────────────────────────────────────

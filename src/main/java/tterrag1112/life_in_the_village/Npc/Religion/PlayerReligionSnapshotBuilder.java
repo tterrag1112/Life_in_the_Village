@@ -93,11 +93,40 @@ public final class PlayerReligionSnapshotBuilder {
                     e.dayOfYear(), e.daysAway(), own));
         }
 
+        // ── Divine Favour per deity (Divine Layer V1) ────────────────────────
+        long now = level.getGameTime();
+        java.util.Set<String> favourFaiths = new java.util.LinkedHashSet<>();
+        pietyOpt.ifPresent(p -> favourFaiths.addAll(p.beliefs().keySet()));
+        rites.getPlayerFavour(playerId).ifPresent(f -> favourFaiths.addAll(f.all().keySet()));
+        List<String> favourSummary = new ArrayList<>();
+        for (String faithId : favourFaiths) {
+            float fav = DivineFavour.current(level, playerId, faithId, now);
+            if (fav >= 1f) {
+                String fname = ReligionRegistry.find(faithId)
+                        .map(Religion::displayName).orElse(faithId);
+                favourSummary.add(fname + " " + Math.round(fav));
+            }
+        }
+
+        // ── Miracles for the player's primary faith (Divine Layer V2) ────────
+        List<String> miracleSummary = new ArrayList<>();
+        if (ownFaithId != null) {
+            for (Miracle m : Miracles.forReligion(ownFaithId)) {
+                MiracleInvoker.Status st = MiracleInvoker.status(level, player, m, now);
+                String glyph = switch (st) {
+                    case AVAILABLE   -> "✓";   // ✓
+                    case ON_COOLDOWN -> "⏳";   // ⏳
+                    case LOCKED_TIER, LOCKED_FAVOUR -> "🔒"; // 🔒
+                };
+                miracleSummary.add(m.displayName() + " " + glyph);
+            }
+        }
+
         return new OpenPlayerReligionPacket(
                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                 hasPledge, pledgeTempleName, pledgeFaithName,
                 ritesThisMonth, meetsMonthly,
-                today, calendar);
+                today, calendar, favourSummary, miracleSummary);
     }
 
     /** The village owning {@code buildingId}, if any. */

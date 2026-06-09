@@ -83,11 +83,23 @@ public class PlayerReligionScreen extends Screen {
                     BookScreenColors.BLUE_BG);
             Pill.draw(g, font, x + bw - Pill.width(font, data.pietyTier()), panelY + 30,
                     data.pietyTier(), BookScreenColors.HIGHLIGHT, BookScreenColors.DARK);
-            g.drawString(font, "Piety " + Math.round(clamp01(data.pietyStrength()) * 100) + "%",
-                    x, panelY + 42, BookScreenColors.DARK, false);
+            // Piety % + Divine Favour per deity (V1) on one line.
+            String pietyLine = "Piety " + Math.round(clamp01(data.pietyStrength()) * 100) + "%";
+            if (!data.favourSummary().isEmpty()) {
+                pietyLine += "   Favour: " + String.join(" · ", data.favourSummary());
+            }
+            g.drawString(font, pietyLine, x, panelY + 42, BookScreenColors.DARK, false);
 
+            // Miracles (V2 — ✓ available / 🔒 locked / ⏳ cooldown) + syncretic beliefs.
+            java.util.List<String> info = new java.util.ArrayList<>();
+            if (!data.miracleSummary().isEmpty()) {
+                info.add("Miracles: " + String.join(" · ", data.miracleSummary()));
+            }
             if (!data.beliefSummary().isEmpty()) {
-                g.drawString(font, "Beliefs: " + String.join(" · ", data.beliefSummary()),
+                info.add("Beliefs: " + String.join(" · ", data.beliefSummary()));
+            }
+            if (!info.isEmpty()) {
+                g.drawString(font, String.join("   ", info),
                         x, panelY + 53, BookScreenColors.LIGHT, false);
             }
         }

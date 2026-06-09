@@ -42,7 +42,13 @@ public record OpenPlayerReligionPacket(
 
         // Religious calendar
         int     today,              // current day-of-year (0..364)
-        List<CalendarRow> calendar
+        List<CalendarRow> calendar,
+
+        // Divine Layer V1 — favour per deity ("Sunstead 42"); empty = none
+        List<String> favourSummary,
+
+        // Divine Layer V2 — miracle lines ("Healing Light ✓" / "Reweave 🔒")
+        List<String> miracleSummary
 ) implements CustomPacketPayload {
 
     /** One upcoming calendar event for the list. {@code ownFaith} = the player's
@@ -51,8 +57,10 @@ public record OpenPlayerReligionPacket(
                               int dayOfYear, int daysAway, boolean ownFaith) {}
 
     public OpenPlayerReligionPacket {
-        beliefSummary = List.copyOf(beliefSummary);
-        calendar      = List.copyOf(calendar);
+        beliefSummary  = List.copyOf(beliefSummary);
+        calendar       = List.copyOf(calendar);
+        favourSummary  = List.copyOf(favourSummary);
+        miracleSummary = List.copyOf(miracleSummary);
     }
 
     public static final Type<OpenPlayerReligionPacket> TYPE = new Type<>(
@@ -85,6 +93,12 @@ public record OpenPlayerReligionPacket(
                             buf.writeVarInt(r.daysAway());
                             buf.writeBoolean(r.ownFaith());
                         }
+
+                        buf.writeVarInt(pkt.favourSummary().size());
+                        for (String s : pkt.favourSummary()) buf.writeUtf(s);
+
+                        buf.writeVarInt(pkt.miracleSummary().size());
+                        for (String s : pkt.miracleSummary()) buf.writeUtf(s);
                     },
                     buf -> {
                         String religionName = buf.readUtf();
@@ -114,11 +128,19 @@ public record OpenPlayerReligionPacket(
                             calendar.add(new CalendarRow(faith, day, doy, away, own));
                         }
 
+                        int favCount = buf.readVarInt();
+                        List<String> favourSummary = new ArrayList<>(favCount);
+                        for (int i = 0; i < favCount; i++) favourSummary.add(buf.readUtf());
+
+                        int miracleCount = buf.readVarInt();
+                        List<String> miracleSummary = new ArrayList<>(miracleCount);
+                        for (int i = 0; i < miracleCount; i++) miracleSummary.add(buf.readUtf());
+
                         return new OpenPlayerReligionPacket(
                                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                                 hasPledge, pledgeTemple, pledgeFaith,
                                 ritesThisMonth, meetsMonthly,
-                                today, calendar);
+                                today, calendar, favourSummary, miracleSummary);
                     });
 
     @Override

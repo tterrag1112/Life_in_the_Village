@@ -7713,3 +7713,287 @@ staggered ticks dodge the tail-dedupe; the idempotency guard prevents re-seeding
 5. **No regressions.** Confirm normal history producers (births, crimes, offices)
    and festival scheduling/fronting/crowd-bless are otherwise unchanged; the live
    chronicle isn't flooded; per-faith content is distinct.
+
+## V1 — Divine Favour foundation (Divine Layer, Pillar 3) (2026-06-09)
+
+(First phase of the divine layer — the resource miracles/visions/wrath will
+later spend or gate on.)
+
+### Disposition (findings)
+
+Before miracles we need the resource: **Divine Favour** — a per-deity measure of
+a deity's regard for the player. Piety is *belief*; favour is *standing* — built
+on piety but distinct and spendable.
+
+1. **Player religion data** lives on `RiteSavedData` (per-world SavedData): a
+   `Map<UUID, PietyComponent> playerPiety` + the R4d-1 `autoTitheTemple` map, both
+   `optionalFieldOf` (codec at 3 fields — room under the 16 cap). Favour is a
+   sibling per-player structure here.
+2. **`ReligionIdentity.deity` (D1)** carries `demands`/`rewards` (prose) and the
+   **structured** form — the faith's authored `virtues` (`FaithConcept`-tagged).
+   The virtues ARE the machine-readable "what the deity esteems", so favour weights
+   an act by whether its concept is one of the faith's virtues.
+3. **Earning acts** that fire discrete player events: `MakeOfferingVerb` (resolves
+   `religionId` + `playerId`), `AttendRiteVerb` (`targetFaith`), `CommissionRiteVerb`
+   (`faith`), and the R4d-1 player auto-tithe (`Tithing.tickPlayerTithes`, `faith`).
+   **Pilgrimage is NPC-only** (no player pilgrimage verb), so it is not a player
+   hook this phase. D2's player-virtue side is thin (no live player-virtue trigger).
+4. **Surfacing**: R9c `PlayerReligionSnapshotBuilder` → `OpenPlayerReligionPacket`
+   (manual StreamCodec) → `PlayerReligionScreen`. Add favour-per-deity alongside
+   piety.
+
+**Model chosen — one lazy relaxation formula (no per-tick scan).** Favour is
+stored per (player, deity) as `(amount, lastTick)` and relaxed on read toward a
+piety-tier **equilibrium** with τ ≈ 3 in-game days: `v' = eq + (v−eq)·e^(−Δt/τ)`,
+clamped to `[0, cap]`. One formula yields all three required behaviours —
+**passive accrual** (idle devout player rises to the tier equilibrium), **gentle
+decay** (favour earned above eq by service drifts back to eq), and **lapse-fade**
+(losing the faith drops the tier → eq = cap = 0 → favour fades). Tier is computed
+from the player's belief in **that** faith, so favour is genuinely coupled to
+piety and per-deity. Deity-demand weighting: an act whose `FaithConcept` is one of
+the faith's virtues earns ×1.5.
+
+### What shipped
+
+- **`Npc/Religion/PlayerFavour.java`** (new) — pure per-player data: `Map<religionId,
+  Entry(amount, lastTick)>` + CODEC (nested record codec; `set` drops non-positive
+  entries). Persisted via `RiteSavedData`.
+- **`Npc/Religion/DivineFavour.java`** (new) — the one economy helper:
+  `FavourAct` enum (OFFERING/TITHE/ATTEND_RITE/COMMISSION_RITE/PILGRIMAGE/VIRTUE,
+  each base + concept); `award` (deity-weighted, piety-capped — the verbs/tithe
+  call it), `awardVirtue(concept)` (ready for player-virtue hooks), `current`
+  (relaxed read), `spend` (V2's entry point), `debugGrant` (raw, cap-bypassing for
+  testing). Per-tier `equilibrium` (0/5/15/30) and `cap` (0/30/60/100) as exhaustive
+  `PietyTier` switches; alignment via `ReligionIdentity.virtues()`.
+- **`RiteSavedData`** — +1 codec field `playerFavour` (`optionalFieldOf` → pre-V1
+  saves load empty; now 4 fields, under the cap) + `getOrCreatePlayerFavour` /
+  `getPlayerFavour`.
+- **Earning hooks** — `MakeOfferingVerb` (OFFERING), `AttendRiteVerb` (ATTEND_RITE),
+  `CommissionRiteVerb` (COMMISSION_RITE), `Tithing.tickPlayerTithes` (TITHE), each
+  one `DivineFavour.award(...)` after the existing piety bookkeeping. Additive — no
+  existing behaviour changed.
+- **Surfacing** — `OpenPlayerReligionPacket` +`favourSummary` field (StreamCodec
+  write/read appended); `PlayerReligionSnapshotBuilder` builds it from
+  `DivineFavour.current` across the player's faiths; `PlayerReligionScreen` renders
+  a "Favour: <deity> NN" line in the faith block.
+- **Debug** — `/religion favour [view] | grant <faith> <amt> | spend <faith> <amt>`
+  (operates on the executing player; `grant` is the raw cap-bypassing test grant,
+  `spend` exercises the V2 API).
+
+### Tie-in audit
+
+1. **Upstream feeders.** The earning acts (offering/tithe/attend/commission),
+   `ReligionIdentity.virtues()` (the deity-demand weighting), `PietyComponent` (the
+   per-faith tier favour is capped/baselined by). All read-only; none changed shape.
+2. **Downstream callers.** `RiteSavedData` persists it; the R9c packet/screen
+   surface it; `DivineFavour.spend` is V2's future consumer (exercised now by the
+   debug command). `current` has the snapshot + command + award callers.
+3. **Sibling systems.** Piety is **distinct** — favour reads piety (tier → cap/eq)
+   but never writes it; the acts' existing `adjustBelief` calls are untouched, so
+   piety is unchanged by favour. R4d-1 tithe / R9d verbs / pilgrimage hooks are
+   additive. R9 panels: the screen gains one line; the packet stays backward-shaped
+   (new field appended).
+4. **Exhaustive switches.** Two new `PietyTier` switches (`equilibrium`, `cap`) —
+   both cover all four arms with no `default` (a new tier would force an update —
+   intended). No `DeityDomain`/`FaithConcept` switch (alignment uses a stream
+   `anyMatch`, not a switch).
+
+### Simplification sweep
+
+- One favour resource (`PlayerFavour`) + one economy helper (`DivineFavour`) the
+  acts call; the deity-demand weighting is a single `ReligionIdentity.virtues()`
+  lookup. No parallel system: piety stays in `PietyComponent`, favour is a sibling
+  map on the same `RiteSavedData`. Classes in scope: `PlayerFavour`/`DivineFavour`
+  (new, callers = 4 verbs/tithe + snapshot + command), `RiteSavedData` (+1 field),
+  the 4 earning verbs/tithe (+1 call each), the R9c packet/snapshot/screen (+1 field
+  / +1 line), `ReligionDebugCommand` (+1 subcommand). No orphan; `FavourAct
+  .PILGRIMAGE`/`VIRTUE` are defined for the (flagged) future player-pilgrimage /
+  player-virtue hooks + NPC favour.
+
+### Deviations from prompt
+
+- **Pilgrimage not hooked** — there is no player pilgrimage verb (pilgrimage is an
+  NPC role/behavior), so no player favour hook exists for it this phase. The
+  `FavourAct.PILGRIMAGE` slot is defined for when a player pilgrimage / NPC favour
+  lands. Flagged, not invented.
+- **Decay model** — implemented the recommended gentle decay (the lazy
+  relaxation-to-equilibrium), not deferred.
+- **Debug `grant` is a raw cap-bypassing grant** (not the honest `award`) so a
+  tester can load favour to exercise the V2 `spend` API regardless of their piety.
+
+### Out-of-scope but flagged
+
+- **V2 miracles** (the first real `spend` consumer — favour gates/pays for them),
+  **V3 visions**, **V4 curses/wrath**, **V5 theophany** — no deity *effects* this
+  phase, only the ledger + earning + spend API.
+- **NPC favour** — player-primary this phase; the favour math is player-keyed but
+  the relaxation/weighting model would generalize.
+- **Player-virtue earning** — `awardVirtue` is ready, but D2's player-side virtue
+  trigger is still thin; wiring a real player-virtue → favour hook is a follow-up
+  (favour may be the first meaningful player-virtue reward, as the prompt notes).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review: `RiteSavedData` codec now 4 fields (under the 16 cap), the new field
+`optionalFieldOf` (old saves load empty); the packet StreamCodec write/read are
+balanced (favourSummary appended both sides); `DivineFavour` reads piety but never
+writes it (piety/favour distinct); the two `PietyTier` switches are exhaustive;
+alignment uses a stream (no enum switch); favour clamps to `[0, cap]` everywhere
+(bounded).
+
+### Smoke test (user-runnable)
+
+1. **Earning + per-deity surfacing.** As a devout Sunstead player, make an offering,
+   tithe, attend a rite, and commission a rite; open `/religion me` (R9c screen) and
+   confirm a "Favour: Sunstead NN" line rises with each act, distinct from the piety
+   bar. Cross-check with `/religion favour view`.
+2. **Deity-demand weighting.** Confirm a giving act (offering/tithe — GENEROSITY)
+   earns MORE for a faith that esteems GENEROSITY (Sunstead) than for one that does
+   not, and that the four faiths' favour economies differ accordingly (use
+   `/religion favour view` after equivalent acts in different faiths).
+3. **Passive accrual + gentle decay.** As a PIOUS adherent, let favour sit with no
+   service and confirm it settles toward the tier baseline (not zero); after earning
+   above the baseline, confirm it drifts gently back down over in-game days.
+4. **Lapse-fade.** Drop piety in a faith (e.g. `/religion set` low) and confirm that
+   faith's favour fades toward 0 (favour can't be held without standing).
+5. **Spend API (for V2).** `/religion favour grant sunstead 50` then `/religion
+   favour spend sunstead 20` — confirm the spend succeeds and the balance drops;
+   confirm spending more than held fails.
+6. **Piety unchanged.** Confirm none of the favour operations move the piety bar —
+   they are distinct resources.
+
+## V2 — Miracles (the boon) (2026-06-09)
+
+(Divine Layer, Pillar 3 — the headline: Divine Favour becomes power.)
+
+### Disposition (findings)
+
+V1 built the favour ledger; V2 lets a devout player spend it on **miracles** —
+per-deity, domain-flavoured boons that scale from grounded (potion-tier) at low
+favour to fantastical at the peaks.
+
+1. **Cost path** — `DivineFavour.current`/`spend` (V1) is the gate + sink; the
+   favour scale (per-tier eq 0/5/15/30, cap 0/30/60/100) sets sensible miracle
+   costs (8 low → 50 high) and tier gates. Added a public `DivineFavour.tierIn`
+   for the per-faith tier gate.
+2. **Theming** — `ReligionIdentity.deity().domain()` (SUN/SEA/FORGE/FATE) + rewards
+   (D1) drive each faith's set: Sun-Mother heals/grows, Sea-Mother fishing/water/
+   storm, Forge-Father strength/ward, Loom luck/foresight/fate-turn.
+3. **Effect toolkit** — vanilla `MobEffects` (`new MobEffectInstance(holder, dur,
+   amp)` + `player.addEffect`, the `EventEffects.applyPlayerBuff` precedent),
+   `player.heal`, `BonemealableBlock.performBonemeal` (area crop growth),
+   `ServerLevel.setWeatherParameters` (clear the storm), `GLOWING` reveal — no
+   custom effect framework.
+4. **Invocation** — chose a command (`/religion miracle list | cast <id>`) + R9c
+   surfacing as the testable path (a verb requires an NPC; a miracle is the player
+   calling on their deity directly). A dedicated miracle GUI is flagged as deferred
+   polish. `RequestBlessingVerb` is the free, NPC-priest *blessing* (mood/rite) —
+   miracles are the favour-powered tier above it (distinct, not replaced).
+
+### What shipped
+
+- **`Npc/Religion/Miracle.java`** (new) — the model: `record Miracle(id, religionId,
+  displayName, domain, cost, minTier, minFavour, cooldownTicks, flavour, Effect)`
+  with a functional `Effect.apply(level, player, favour)` (favour-scaled).
+- **`Npc/Religion/Miracles.java`** (new) — the per-deity registry (mirrors
+  `ReligionContent`/`MonasticCrafts`): a flat authored list + `byId`/`forReligion`/
+  `all`, plus the environment effect helpers (`growCropsAround` via bonemeal,
+  `revealNearbyMobs` via GLOWING, `clearHarmfulEffects`). Twelve miracles, three per
+  faith, low→high: **Sun** Healing Light → Warmth → Bountiful Harvest; **Sea** The
+  Catch → Tide's Grace → Calm the Waters; **Forge** Ancestral Might → Forge-Ward →
+  Unbreaking Resolve; **Loom** Fortune's Thread → Foresight → Reweave. A
+  `magnitude(favour)` (0/1/2 at <45/45/80) scales amplifier/duration/area within a
+  miracle.
+- **`Npc/Religion/MiracleInvoker.java`** (new) — the single invocation path:
+  `status` (AVAILABLE/LOCKED_TIER/LOCKED_FAVOUR/ON_COOLDOWN) + `cast` (gate → tier →
+  favour ≥ max(minFavour,cost) → `DivineFavour.spend` → `Effect.apply` → arm
+  cooldown). Per-player, per-miracle cooldown in a small in-memory map (no brain
+  memory, no persistence — a short anti-spam timer). Clear denial messages.
+- **`DivineFavour.tierIn`** (new public) — the per-faith piety tier for the gate.
+- **Command** — `/religion miracle list` (per-deity, with favour, cost, tier, and a
+  ✓/🔒/⏳ status glyph + id) and `/religion miracle cast <id>` (invokes; surfaces the
+  `Result` message).
+- **Surfacing** — `OpenPlayerReligionPacket` +`miracleSummary`; the snapshot builds
+  the player's primary-faith miracles with status glyphs; `PlayerReligionScreen`
+  renders favour on the piety line and a "Miracles: …" line (✓/🔒/⏳).
+
+### Tie-in audit
+
+1. **Upstream feeders.** `DivineFavour` (V1 — `current`/`spend`/`tierIn`, the cost +
+   gate), `ReligionIdentity.deity().domain()` (D1 — theming), vanilla
+   `MobEffects`/environment. All read-only except the favour `spend` (the intended
+   sink).
+2. **Downstream callers.** The command (`MiracleInvoker.cast`/`status`,
+   `Miracles.*`); `DivineFavour.spend` (miracles are its first real sink);
+   `MobEffect`/weather/bonemeal application; the R9c packet/snapshot/screen.
+3. **Sibling systems.** **Piety untouched** — miracles cost favour only (verified:
+   the invoker calls `DivineFavour.spend`, never `adjustBelief`). V1 favour is the
+   economy; `RequestBlessingVerb` (free NPC blessing) is the lesser, NPC-mediated
+   boon below miracles. R9 packet stays backward-shaped (field appended).
+4. **Exhaustive switches.** Two new switches over `MiracleInvoker.Status` (command +
+   snapshot) — both cover all four arms (LOCKED_TIER/LOCKED_FAVOUR grouped), no
+   `default`. No `DeityDomain` switch was needed (sets are authored per-religion;
+   the domain is a carried display field), so none added.
+
+### Simplification sweep
+
+- One `Miracle` model + one per-deity registry (`Miracles`) + one invocation path
+  (`MiracleInvoker`) that spends favour and applies a vanilla effect — no parallel
+  effect framework, no per-faith invoker duplication (the effect is a lambda on the
+  record). Classes in scope: `Miracle`/`Miracles`/`MiracleInvoker` (new; callers =
+  the command + the snapshot), `DivineFavour` (+1 public accessor), the R9c
+  packet/snapshot/screen (+1 field/line), `ReligionDebugCommand` (+1 subcommand). No
+  orphan; cooldown state is one small in-memory map.
+
+### Deviations from prompt
+
+- **Invocation is a command + R9c surfacing**, not a player verb — a verb is
+  NPC-targeted; a miracle is the player→deity call. A dedicated miracle GUI is
+  flagged deferred polish (the R9c line + command cover view + cast).
+- **No deity-triggered (automatic) miracle** shipped (the prompt allowed at most one
+  light example) — kept this phase to requestable boons; automatic miracles flagged
+  for later.
+- Effects are starter sets tuned here; balance is a refine pass.
+
+### Out-of-scope but flagged
+
+- **V3 visions**, **V4 curses/wrath**, **V5 theophany**, **NPC miracles**.
+- **Deity-triggered (automatic) miracles** — none this phase; flagged.
+- **Dedicated miracle GUI** (cast buttons via `litv-gui-screen`) — the R9c line +
+  `/religion miracle` command are the surfacing; a rich screen is deferred polish.
+- **Cooldown persistence** — in-memory (resets on restart); fine for a short
+  anti-spam timer, flagged if a durable cooldown is ever wanted.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review: effects use the `EventEffects.applyPlayerBuff` `MobEffectInstance`
+idiom (`Holder<MobEffect>` ctor) + `BonemealableBlock`/`setWeatherParameters`;
+invoker gates tier+favour+cooldown then `spend`s then applies (piety never written);
+costs/tiers scale (8/FAITHFUL → 50/PIOUS); the two `Status` switches are exhaustive;
+packet StreamCodec write/read balanced for `miracleSummary`; no new brain memory; no
+`RiteSavedData` codec change.
+
+### Smoke test (user-runnable)
+
+1. **Grounded heal + cooldown.** `/religion favour grant sunstead 30`, then
+   `/religion miracle cast sun_healing_light` — confirm favour drops by 8, you heal +
+   gain Regeneration, and an immediate re-cast is refused (cooldown).
+2. **High-tier gate + fantastical.** With low favour, `cast sun_bountiful_harvest` is
+   refused (needs PIOUS + 70 favour); raise belief to PIOUS (`/religion set …`) and
+   favour (`/religion favour grant sunstead 80`), then cast — confirm the crops
+   around you leap to ripeness.
+3. **Per-deity distinctness.** Grant favour and cast a Sea (`sea_calm_the_waters` —
+   clears a storm), Forge (`forge_ward` — resistance/absorption), and Loom
+   (`loom_reweave` — heal + strip debuffs) miracle; confirm each is domain-distinct
+   and grounded at low favour vs fantastical at high.
+4. **Clear denial.** With little favour, `cast forge_unbreaking_resolve` — confirm a
+   clear "not enough favour / deeper devotion" message, no effect, no spend.
+5. **R9c surfacing.** `/religion me` — confirm the screen shows favour on the piety
+   line and a "Miracles: …" line marking each ✓ available / 🔒 locked / ⏳ cooldown;
+   cross-check `/religion miracle list` for costs + tiers.
+6. **Piety untouched.** Confirm casting miracles never moves the piety bar (favour is
+   the only cost).
