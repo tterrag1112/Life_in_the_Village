@@ -32,6 +32,11 @@ public class PlayerEventProximityHandler {
         tterrag1112.life_in_the_village.Npc.BusinessFront.BuildingPresenceTracker
                 .onPlayerTick(player);
 
+        // Liveliness — keep the player's current village's chunks (and so all its
+        // NPCs) loaded + ticking. Self-throttled (one reconcile per window); no new
+        // per-tick scan added here.
+        tterrag1112.life_in_the_village.Village.VillageChunkLoader.onPlayerTick(player);
+
         if (level.getGameTime() % 100 != 0) return; // check every 5s
 
         VillageSavedData data = VillageSavedData.get(level);

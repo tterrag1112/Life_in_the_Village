@@ -3103,3 +3103,251 @@ phase change only); flavour switches use `default`; no new memory.
 3. Strollers/gatherers show varied text; `/liv npc brain` reflects it.
 4. No nameplate flicker (text changes per action/phase, not per tick).
 5. Idle "why" debug unchanged; no perf regression.
+
+## Liveliness L5 — committing behaviors preempt ambient (home/work/greet) + jitter fix
+
+### Regression diagnosed
+
+NPCs never went home to sleep and most never went to work — they strolled
+near the inn/square all day; greet didn't walk to the player. Root cause:
+the ambient behaviors (`IdleDirectorBehavior`, `GatherAtSquareBehavior`,
+`HobbyBehavior`) and the WORK `GreetPlayerBehavior` share the single
+`WALK_TARGET`/navigation channel with the *committing* behaviors
+(`ReturnHomeBehavior`, production, greet-approach). Vanilla `Brain` never
+preempts a RUNNING behavior — a running ambient stroll held the channel via
+`canStillUse` = `navigation.isInProgress()`, and because it kept `WALK_TARGET`
+set + nav in progress, the committer's gates (`WALK_TARGET` ABSENT +
+`BrainNavGuard.canSteerNavigation`) stayed closed. Priority alone couldn't
+help: vanilla starts higher-priority behaviors only when they're eligible,
+and the ambient's lingering memory/nav kept them ineligible. Plus the L3
+phase jitter was applied twice (brain Activity on 2× jitter, the
+`isWorkTime()`/`shouldBeHome()` predicates on 1×), so the active Activity and
+the schedule predicates disagreed by up to one jitter span.
+
+### Principle
+
+A *committing* behavior (go home, go to work, greet a customer) must be able
+to **preempt** an *ambient* one, and the ambient must **actively yield**
+(`canStillUse` → false) and **free the channel** (erase `WALK_TARGET` + stop
+nav) the moment a committing need pends — priority is necessary but not
+sufficient because vanilla won't stop a running behavior.
+
+### What shipped
+
+- **`ReturnHomeBehavior.isCommitting(level, entity)`** (new public static) —
+  the single "this NPC owes a home trip now" predicate (shouldBeHome &&
+  !ADVENTURER && (not-already-home || night), or homeless-and-not-at-town-hall).
+  `checkExtraStartConditions` refactored to gate on it (behavior identical),
+  so the ambient behaviors share one source of truth.
+- **`GreetPlayerBehavior.isGreetPending(entity)`** (new public static) —
+  `GREET_TARGET` present (a customer to greet).
+- **`IdleDirectorBehavior`** — new `yieldToCommitting(level, entity)` consulted
+  in BOTH `checkExtraStartConditions` and `canStillUse`: yields on a pending
+  greet (any instance); the WORK instance (`requireWorkSatisfied`) yields the
+  moment work is available again (`NO_ACTIONABLE_WORK` cleared) so production
+  reclaims the slot; the REST/IDLE instance yields to `ReturnHomeBehavior
+  .isCommitting`. `stop()` now erases `WALK_TARGET` + `navigation.stop()` so the
+  committer's gates open immediately (not after the 200-tick stale-nav escape).
+- **`GatherAtSquareBehavior`** — `yieldToCommitting(entity)` (greet pending OR
+  `!isSocialTime()`) in `checkExtraStartConditions` + `canStillUse`; `stop()`
+  frees the channel (erase `WALK_TARGET` + nav stop). NPCs leave the square the
+  moment SOCIAL ends (no leak past the transition).
+- **`HobbyBehavior`** — yields on a pending greet in `checkExtraStartConditions`
+  + `canStillUse` (work-resume was already handled via `hobbyEligible` →
+  LEAVING); `stop()` adds `navigation.stop()` to free the channel now.
+- **`AbstractProductionBehavior`** — defers/yields while `GREET_TARGET` is
+  present (in `checkExtraStartConditions` + `canStillUse`), releasing the post +
+  nav so `GreetPlayerBehavior` (WORK @0, inserted before production) actually
+  walks to the player; production re-enters when greet clears. This is the
+  "make greet not wait on the 200-tick escape" mechanism.
+- **`NpcSchedules.tick`** — jitter fix: pass the RAW `dayTime` to `activityAt`
+  (which routes through `ScheduleResolver.phaseAt`, the single place jitter is
+  applied). Removes the double-application so the brain Activity and
+  `isWorkTime()`/`shouldBeHome()` agree on the same jittered time.
+
+### Priority backstop (confirmed, no change needed)
+
+`Brain.addActivity(act, start, list)` assigns `start + index` per element, so
+the committer already sits strictly above the ambient director in each
+activity: REST `ReturnHome`=P0 above `IdleDirector(false)`=P1; WORK production
+=P0 (and `GreetPlayer`=P0 inserted first) above `IdleDirector(true)`=P2. The
+yield checks are the actual fix; the ordering was already correct.
+
+### Tie-In Audit
+
+- The `NO_ACTIONABLE_WORK` signal lifecycle is unchanged — the WORK director
+  now also *reads* it in `canStillUse` (stop when cleared); nothing writes it
+  differently.
+- No new brain memory (no `brainMemories()` change — freeze trap avoided); the
+  yield checks are cheap predicate reads (memory-presence / schedule predicate /
+  the existing home lookup), no new per-tick scan.
+- Greet preemption is one direction only: production yields to `GREET_TARGET`;
+  greet does not depend on the stale-nav escape anymore. Other workers in the
+  same building keep producing (only the seated greeter holds `GREET_TARGET`).
+- Confirmed behaviors that already self-handle transitions are untouched in
+  spirit: hobby's work-resume LEAVING path stays; AttendGathering / religion
+  behaviors unaffected (they don't share the ambient role).
+
+### Deviations from prompt
+
+- The priority backstop (#2) required no code change — it was already correct
+  (vanilla per-index priority). Documented rather than edited.
+- Home-pending yield is applied to the `IdleDirectorBehavior(false)` (REST/IDLE)
+  instances generally, not only the REST registration — harmless (during WORK
+  `shouldBeHome` is false) and simpler than per-registration wiring.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Runtime-sensitive — wants an in-game check. Static review: every ambient
+behavior (director, gather, hobby) yields in `canStillUse` AND
+`checkExtraStartConditions` when a committing need pends and frees the channel
+in `stop()`; committing behaviors are strictly above ambient in priority;
+production releases nav on `GREET_TARGET`; jitter applied exactly once; no new
+memory.
+
+### Smoke test (user-runnable)
+
+1. At night, NPCs walk home and sleep (not strolling near the inn).
+2. During work hours, workers go to their post and work (not strolling);
+   idle-only gaps still get the director.
+3. A player entering an NPC's shop: the NPC walks to the player, greets, then
+   returns to work.
+4. SOCIAL-time gathering still works, but NPCs leave the square when REST/WORK
+   begins (no leak past the transition).
+5. `/liv npc brain` shows the right behavior winning per phase (ReturnHome at
+   night, production at work, greet on a customer).
+6. NPCs transition at slightly staggered times (jitter once, not desynced; the
+   brain Activity flips in step with isWorkTime/shouldBeHome).
+7. No movement freeze / per-tick regression (no unregistered memory).
+
+## Liveliness L6 — village chunkloading + festival-gather participation
+
+### Goal
+
+Make a village **fully active while a player is inside it** so NPCs on the
+far/unloaded side are real entities (position + pathfinding) that commute,
+work, go home, and — the motivating case — **converge on the town square /
+temple for a festival or rite**. Village NPCs are ordinary persistent entities
+that cease to exist when their chunks unload; rather than a heavyweight per-NPC
+position LOD, we force-load the player's village footprint so the EXISTING
+gather machinery just works. Builds on the L5 committing-preempts-ambient fix.
+
+### Disposition (findings)
+
+- **No existing force-loading** (grep `setChunkForced`/`forceLoad`/`ForcedChunk`/
+  `addTicket`/`TicketType` — empty). `RosterChunkLoadHandler` reacts to chunk
+  load/unload to realize livestock rosters and demonstrates the codebase's
+  hysteresis idiom (`DEREALIZE_HYSTERESIS_TICKS = 200`).
+- **Footprint** = `Village.getBounds(data)` → `Optional<AABB>` (union of building
+  AABBs). **Player-in-village** = bounds-contains (the existing
+  `PlayerEventProximityHandler` already inflates bounds by 32 for its event
+  proximity check). The per-player tick hook is `PlayerEventProximityHandler
+  .onPlayerTick` (drives `BuildingPresenceTracker` every tick).
+- **API**: `ServerLevel.setChunkForced(x, z, add)` — the vanilla `/forceload`
+  mechanism; forced chunks are level-31 (entity-ticking), so NPC brains run. It
+  shows in `/forceload query` (the smoke-test's verification surface), which is
+  why it's the right call over a bespoke ticket.
+- **Gather (Part B)**: `AttendGatheringBehavior` already walks an event-flagged
+  NPC (gate: `isEventTime()`, i.e. an `eventOverride` is set) to the venue
+  (pinned loc → linked rite/temple → town square/centre). It's registered in
+  IDLE @3 and SOCIAL — strictly ABOVE the hobby (@13) and idle director (@15).
+  The only gap: the running ambient stroll didn't YIELD to it (the L5 fix only
+  yielded to home/work/greet).
+
+### What shipped
+
+**Part A — `Village/VillageChunkLoader.java` (new).**
+- Driven from `PlayerEventProximityHandler.onPlayerTick` (self-throttled to one
+  reconcile per `RECONCILE_INTERVAL = 40` ticks — no new per-tick scan / no new
+  `@SubscribeEvent`). A village is "occupied" while any online player is within
+  its bounds inflated by `ENTRY_INFLATE = 16`.
+- Forces every chunk the footprint occupies (`getBounds` inflated by
+  `FOOTPRINT_MARGIN = 16`, capped at `MAX_VILLAGE_CHUNKS = 400`) via
+  `ServerLevel.setChunkForced` — scoped tightly to the footprint, entity-ticking.
+- **Release with hysteresis** — a village with no player inside releases after
+  `RELEASE_HYSTERESIS_TICKS = 200` of continuous absence (mirrors the roster
+  derealize window) so edge-walking doesn't thrash tickets. Chunks are
+  **ref-counted** (`forceCount`) so overlapping villages don't unforce a shared
+  chunk while the other still needs it.
+- **Every release path covered**: a normal leave → hysteresis; **logout** →
+  `onPlayerLogout` releases emptied villages immediately (also the only path that
+  reaches the "last player leaves" case — once no players tick, the periodic
+  reconcile never runs again); a **removed** village → released on the next
+  reconcile (`getVillageById` empty → release); **server stop** →
+  `releaseAll(server)` drops everything. Wired in `PlayerEventProximityHandler`
+  (tick), `ModModEvents.onPlayerLogout`, and `ModModEvents.onServerStopping`.
+
+**Part B — festival-gather preemption (minimal wire).**
+- Added `entity.isEventTime()` to the ambient yield predicates so attending a
+  gathering is treated as a *committing* need that preempts ambient strolling:
+  `IdleDirectorBehavior.yieldToCommitting`, `GatherAtSquareBehavior
+  .yieldToCommitting`, and `HobbyBehavior` (checkExtra + canStillUse). The
+  ambient behavior stops + frees the nav channel (L5 `stop()` already erases
+  `WALK_TARGET` + `navigation.stop()`), so `AttendGatheringBehavior` (already
+  higher priority) starts and walks the now-loaded far-side NPC to the venue.
+  No change to `AttendGatheringBehavior` itself — it already resolves the venue
+  and converges with the officiant.
+
+### Tie-In Audit
+
+- **Forced chunks** keep the village's block entities + entities ticking
+  (intended). Vanilla forced chunks are entity-ticking → NPC brains run; the
+  `RosterChunkLoadHandler` ChunkEvent.Load path also fires for newly-forced
+  chunks (livestock realize) — a benign, desirable side effect.
+- **No new brain memory** (no `brainMemories()` change — freeze trap avoided).
+  Part B reuses `isEventTime()` and the existing `AttendGatheringBehavior`
+  memories (`UPCOMING_EVENT_TARGET` / `EVENT_ATTENDANCE_POS`, already registered).
+- **No new per-tick scan** — the reconcile is throttled (40-tick window) and
+  reuses the existing player tick; villages count is small.
+- **Detection cadence** shares the `PlayerEventProximityHandler` tick already
+  used for `BuildingPresenceTracker` + event proximity.
+
+### Out of scope (flagged)
+
+- **Per-NPC position LOD / simulated movement** — explicitly NOT built; the
+  chunkload replaces the need.
+- **Brain-tick LOD / compute throttling** — THE perf follow-on: distant loaded
+  NPCs should tick their brains less often to cap the per-NPC cost a fully-loaded
+  village now pays. Flagged as the next step; deliberately not done here.
+- New festival/rite content; the religion rework.
+
+### Deviations from prompt
+
+- The reconcile is invoked from the existing per-player tick but self-throttles
+  with a single shared `lastReconcileTick` (so N online players don't each run
+  it on the same tick) and aggregates across all players (needed for the
+  release-when-empty decision) — still "driven off the existing tracker tick, no
+  new per-tick scan", just guarded.
+- **Known caveat (save-safety not required, per prompt):** `setChunkForced`
+  persists to `ForcedChunksSavedData`. All *live* release paths are covered
+  (leave/logout/stop/removal), so normal play leaves no leak; a hard **crash**
+  (no `ServerStoppingEvent`) could persist forced entries our in-memory maps no
+  longer track. Flagged; a start-time cleanup is the mitigation if it matters.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Runtime-sensitive — wants an in-game check, chunk tickets especially. Static
+review: force/release ref-counted and symmetric; every release path
+(leave-hysteresis / logout / server-stop / village-removed) calls
+`setChunkForced(false)`; footprint scoped + capped; reconcile throttled, no new
+per-tick scan; Part B adds only `isEventTime()` reads (no new memory).
+
+### Smoke test (user-runnable)
+
+1. Stand at one edge of a large village: NPCs on the FAR side are active
+   (moving/working), not frozen — the whole village ticks.
+2. Walk away: the forced chunks RELEASE after ~10s (far side goes quiet; verify
+   via `/forceload query` — our chunks disappear). No leaked loaded chunks.
+3. Cross the village edge in/out repeatedly: no ticket thrash (200-tick
+   hysteresis holds).
+4. Trigger a festival/rite at the square/temple: involved NPCs from across the
+   WHOLE village walk to the venue and attend, leaving their ambient behavior.
+5. A festival-attending NPC isn't pulled away by the idle director (committing
+   preempts ambient — the director yields on `isEventTime`).
+6. Perf: note tick time with a full village loaded — bounded/acceptable for now
+   (brain-tick LOD is the follow-on if heavy).
+7. No movement freeze / unregistered-memory error.

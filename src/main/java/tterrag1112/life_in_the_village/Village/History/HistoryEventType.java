@@ -52,6 +52,10 @@ public enum HistoryEventType {
     TEMPLE_CONSECRATED       (HistoryImportance.MAJOR),
     HIGH_PRIEST_ANOINTED     (HistoryImportance.NOTABLE),
     FEAST_DAY_CELEBRATED     (HistoryImportance.MINOR),
+    /** D3c — a faith's foundational sacred history (founding myth + key events)
+     *  seeded into a village's chronicle once its faith is established. MAJOR so
+     *  the religious origins are never pruned. */
+    SACRED_HISTORY           (HistoryImportance.MAJOR),
 
     // ── Village-wide ──────────────────────────────────────────────────────
     FESTIVAL_HELD            (HistoryImportance.MINOR),

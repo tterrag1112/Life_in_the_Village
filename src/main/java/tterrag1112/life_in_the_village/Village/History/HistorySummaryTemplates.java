@@ -96,6 +96,8 @@ public final class HistorySummaryTemplates {
         m.put(HistoryEventType.TEMPLE_CONSECRATED,   "The temple of {village_name} was consecrated.");
         m.put(HistoryEventType.HIGH_PRIEST_ANOINTED, "{npc_name} was anointed high priest of {village_name}.");
         m.put(HistoryEventType.FEAST_DAY_CELEBRATED, "{village_name} celebrated {feast_name}.");
+        // D3c — the lore text is composed by the producer and passed in {summary}.
+        m.put(HistoryEventType.SACRED_HISTORY,       "{summary}");
 
         // ── Village-wide ─────────────────────────────────────────────────
         m.put(HistoryEventType.FESTIVAL_HELD,        "{village_name} held the {festival_name}.");

@@ -50,9 +50,25 @@ public class GatherAtSquareBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         if (entity.isChild()) return false;
+        if (yieldToCommitting(entity)) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         return HobbyLocationResolver.resolve(
                 HobbyLocation.TOWN_SQUARE, entity, level).isPresent();
+    }
+
+    /**
+     * Committing-preempts-ambient — true when this ambient gather must yield the
+     * nav channel: a customer to greet ({@code GREET_TARGET}), or the SOCIAL window
+     * has ended (should-be-home / work begins), so the milling NPC doesn't leak
+     * past the transition and pin itself at the square. Cheap predicate reads.
+     */
+    private static boolean yieldToCommitting(TownspersonMob entity) {
+        // Greet / a festival-rite the NPC is pulled into / SOCIAL ending all
+        // preempt the ambient square-gather (an event attendee converges on the
+        // venue via AttendGatheringBehavior, registered above this).
+        return GreetPlayerBehavior.isGreetPending(entity)
+                || entity.isEventTime()
+                || !entity.isSocialTime();
     }
 
     @Override
@@ -73,12 +89,19 @@ public class GatherAtSquareBehavior extends Behavior<TownspersonMob> {
 
     @Override
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
+        // Actively yield the channel when a committing need pends or SOCIAL ends —
+        // vanilla won't preempt a RUNNING behavior, so the ambient stops itself.
+        if (yieldToCommitting(entity)) return false;
         return entity.getNavigation().isInProgress();
     }
 
     @Override
     protected void stop(ServerLevel level, TownspersonMob entity, long gameTime) {
         entity.getBrain().eraseMemory(NpcMemoryTypes.CARRYING_DISPLAY_ITEM.get());
+        // Free the nav channel for the committer (erase WALK_TARGET so the gates
+        // open, stop the in-flight path so canSteerNavigation clears immediately).
+        entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
+        entity.getNavigation().stop();
     }
 
     private void armCooldown(TownspersonMob entity) {

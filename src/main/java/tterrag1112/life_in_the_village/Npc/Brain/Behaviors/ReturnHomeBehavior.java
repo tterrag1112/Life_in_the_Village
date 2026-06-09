@@ -54,24 +54,44 @@ public class ReturnHomeBehavior extends Behavior<TownspersonMob> {
         ), MAX_RUN);
     }
 
-    @Override
-    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+    /**
+     * Liveliness committing-preempts-ambient — the single "this NPC owes a home
+     * trip right now" predicate, shared with the ambient behaviors so a running
+     * stroll/gather/hobby yields (canStillUse → false) the moment ReturnHome wants
+     * the nav channel. True when the NPC should be home AND isn't settled there:
+     * not yet at the house (or town hall), or at the house but it's night and it
+     * still needs to get to its bed. Cheap predicate reads (no nav, no scan past
+     * the existing home lookup). Mirrors the gates in
+     * {@link #checkExtraStartConditions} exactly, minus the nav guard.
+     */
+    public static boolean isCommitting(ServerLevel level, TownspersonMob entity) {
         if (!entity.shouldBeHome()) return false;
         if (entity.getProfession() == Profession.ADVENTURER) return false;
+        if (entity.hasHome()) {
+            // Committing while not yet home, or home-but-night (still needs the bed).
+            return !isAlreadyHome(level, entity) || isNightTime(level);
+        }
+        // Homeless — committing while a town hall exists and the NPC isn't in it.
+        Building townHall = findTownHall(level, entity);
+        return townHall != null && !townHall.getShape().contains(entity.blockPosition());
+    }
+
+    @Override
+    protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
+        if (!isCommitting(level, entity)) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
 
         if (entity.hasHome()) {
-            if (isAlreadyHome(level, entity) && !isNightTime(level)) return false;
             targetBed = findBedInHouse(level, entity);
             standPos = targetBed != null
                     ? findStandPosNearBed(level, targetBed)
                     : getHouseOrigin(level, entity);
             return standPos != null;
         }
-        // No house — fall back to town hall.
+        // No house — fall back to town hall (isCommitting confirmed one exists
+        // and the NPC isn't already inside it).
         Building townHall = findTownHall(level, entity);
         if (townHall == null) return false;
-        if (townHall.getShape().contains(entity.blockPosition())) return false;
         standPos = townHall.getShape().getOrigin().offset(
                 townHall.getShape().getWidth() / 2, 1,
                 townHall.getShape().getLength() / 2);
