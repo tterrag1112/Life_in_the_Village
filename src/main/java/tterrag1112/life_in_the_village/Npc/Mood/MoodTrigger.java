@@ -45,6 +45,14 @@ public enum MoodTrigger {
     GOAL_COMPLETED           (+25, 0.0f),
     GOAL_FAILED              (-15, 0.0f),
 
+    // ── Faith conscience (Religion Deepening D2) ─────────────────────────────
+    /** Contentment from living a virtue of one's faith (magnitude passed per-act
+     *  by FaithJudgment; daily-capped). */
+    CONTENTMENT              (+6,  0.2f),
+    /** Guilt from breaking a taboo of one's OWN faith (conscience, not external
+     *  punishment). Modest — a single sin is a dip, not a breakdown. */
+    GUILT                    (-8,  0.2f),
+
     // ── Repeatable / recurring ───────────────────────────────────────────────
     FESTIVAL_ATTENDED        (+15, 0.2f),
     CRIME_VICTIM             (-30, 0.3f),

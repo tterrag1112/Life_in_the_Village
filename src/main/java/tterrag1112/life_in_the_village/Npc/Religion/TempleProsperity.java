@@ -262,9 +262,15 @@ public final class TempleProsperity {
         float almsShare = Math.max(0.1f, Math.min(0.9f, 0.5f + compassion * 0.4f));
         long almsBudget = Math.round(budget * almsShare);
 
-        long spent = distributeAlms(level, village, data, econ, almsBudget, currentTick);
-        spent += stockLibraryBook(level, village, data, econ, building, priest,
-                budget - spent, currentTick);
+        long almsSpent = distributeAlms(level, village, data, econ, almsBudget, currentTick);
+        if (almsSpent > 0) {
+            // D2 — the priest's charitable distribution is a generous act; a faith
+            // that esteems GENEROSITY (Sunstead) rewards the giver (faith-relative;
+            // other faiths' priests get no GENEROSITY reward here).
+            FaithJudgment.judge(priest, FaithConcept.GENEROSITY, java.util.List.of(), currentTick);
+        }
+        long spent = almsSpent + stockLibraryBook(level, village, data, econ, building, priest,
+                budget - almsSpent, currentTick);
         if (spent > 0) data.setDirty();
     }
 

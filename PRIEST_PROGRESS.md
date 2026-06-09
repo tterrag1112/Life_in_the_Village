@@ -7098,3 +7098,173 @@ from the identity; the new enums are not exhaustively switched.
    usage (rite invocations, confession tenet lines) still work unchanged.
 4. **Unknown/unauthored.** `/religion identity <bad-id>` fails cleanly ("Unknown
    religion"); an authored-but-future id would report "No authored identity".
+
+---
+
+## D2 — virtues & taboos → NPC behaviour + mood (2026-06-09)
+
+(Religion Deepening, Pillar 1 — the headline.)
+
+### Disposition (findings)
+
+D1 gave each faith authored virtues/taboos as `FaithConcept` tags. D2 makes them
+bite: an adherent who lives a virtue gains piety + contentment + standing; one who
+breaks a taboo feels guilt + is judged by co-religionist witnesses. Religion
+becomes an active force on NPC psychology.
+
+1. **Lookup + faith.** `ReligionIdentity.get(faith).virtues()/.taboos()` (D1, each a
+   `{FaithConcept, text}`); the actor's + witnesses' faith via
+   `PietyComponent.primaryReligion()`; `FaithReconciliation`'s co-religion notion —
+   but the cleaner witness rule is "the witness's faith HOLDS the concept" (a
+   co-religionist always does; a different faith sharing the value also does —
+   exactly "co-religionist or holds the same value").
+2. **Crime (primary taboo hook).** `CrimeReporter.commit → applySideEffects(report)`:
+   the perpetrator is a UUID (NPC or player), witnesses are TownspersonMob NPCs (a
+   16-block scan), and it already applies victim/witness mood (`CRIME_VICTIM`/
+   `CRIME_WITNESSED`) + an NPC↔NPC −60 victim→perp relationship + a player-perp
+   village-reputation drop. The faith overlay layers at the END of
+   `applySideEffects` (witnesses + perpetrator known), ADDITIVE.
+   `CrimeType` (13 values) → `FaithConcept` taboo map.
+3. **Virtue hooks (discrete).** R5 `GraveVisit.contemplate` (the remembrance moment,
+   when the visitor cares about the grave) → REMEMBRANCE; R4d-2
+   `TempleProsperity.spendSurplus` after `distributeAlms` (the priest is the giver)
+   → GENEROSITY.
+4. **Effect channels.** `PietyComponent.adjustBelief` (clamped [0,1]); mood via
+   `applyWithRawMagnitude` — `MoodTrigger` had no guilt/contentment, but its only
+   internal switch (`traitMultiplier`) has a `default` arm, so adding values is safe
+   → added `GUILT`/`CONTENTMENT`; NPC↔NPC judgment via
+   `NpcRelationshipLedger.adjust(otherId, delta, tick, origin)` (clamped [-100,100]).
+   `VillageReputation` is player↔village only, so it's NOT the witness-judgment
+   channel — NPC↔NPC relationship is.
+
+### What shipped
+
+- **`Npc/Religion/FaithJudgment.java`** (new) — the one canonical helper:
+  `judge(actor, FaithConcept, witnesses, now)` looks up the concept in the ACTOR's
+  own faith — virtue → reward (piety +0.02 + `CONTENTMENT` mood), taboo → guilt
+  (piety −0.02 + `GUILT` mood), neutral/atheist → nothing — then each witness whose
+  OWN faith holds the concept judges the actor via NPC↔NPC relationship (+3 for a
+  witnessed virtue, −4 for a witnessed taboo). Plus `conceptForCrime(CrimeType)`
+  (theft→GREED, assault/murder→DISCORD, fraud/bribery/contract-breach/perjury/
+  smuggling/tax-evasion/seal→DECEIT, vandalism→SACRILEGE; `default→null` for
+  trespassing + future types).
+- **`Npc/Mood/MoodTrigger.java`** — added `CONTENTMENT` (+6, cap 0.2) + `GUILT`
+  (−8, cap 0.2). Safe (the lone internal switch has a `default`); no external
+  exhaustive switch over `MoodTrigger`.
+- **`Npc/Crime/CrimeReporter.java`** — the faith overlay at the end of
+  `applySideEffects`: an NPC perpetrator whose crime is a taboo of THEIR faith feels
+  guilt + co-religionist (or same-value) witnesses judge them, ON TOP of the existing
+  crime effects.
+- **`Village/Graveyard/GraveVisit.java`** — when an adherent who cares about a grave
+  visits it, `judge(npc, REMEMBRANCE)` rewards a faith that esteems it (Tidecall) —
+  a distinct channel from the universal grief-ease.
+- **`Npc/Religion/TempleProsperity.java`** — after alms are distributed,
+  `judge(priest, GENEROSITY)` rewards the giving priest's faith if it esteems it
+  (Sunstead).
+
+### Bounds (anti-spiral)
+
+Per-act magnitudes are tiny and bounded by the existing clamps: piety ±0.02
+(`adjustBelief` clamps [0,1]); mood ±6/8 under `MoodTrigger`'s daily cap (0.2 ⇒ ±20
+mood/day max); witness relationship ±3/4 (`NpcRelationshipLedger` clamps [-100,100]).
+A single sin is a dip + a modest nudge from the faithful, not ruin; a single virtuous
+act is a nudge, not sanctification.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionIdentity`/`FaithConcept` (D1 — the virtue/taboo
+   lookup), the hooked events (`CrimeReporter`, R5 `GraveVisit`, R4d-2 alms via
+   `spendSurplus`), `PietyComponent` (the actor's/witnesses' faith).
+2. **Downstream callers.** `CrimeReporter.applySideEffects` (overlay), `GraveVisit.
+   contemplate`, `TempleProsperity.spendSurplus` — all call the ONE `FaithJudgment`
+   helper. Effects hit `PietyComponent.adjustBelief`, mood (`CONTENTMENT`/`GUILT`),
+   and `NpcRelationshipLedger`. No new event system.
+3. **Sibling systems.** The crime/justice system is unmodified except the additive
+   overlay (the existing reputation/mood/relationship effects are untouched — the
+   faith effect is on top). R5 grave-visiting: REMEMBRANCE is a DISTINCT faith-virtue
+   channel from the R5b grief-ease and the R5c Forge `venerate()` (Forge holds
+   HONOUR_THE_ANCESTORS not REMEMBRANCE → only `venerate()`; no double-dip). R4d-2
+   alms unchanged except the added priest reward. `FaithReconciliation` — the
+   "holds the concept" rule supersedes a bare sameFaith check (covers cross-faith
+   shared values).
+4. **Exhaustive switches.** `conceptForCrime` switches over `CrimeType` with a
+   `default` arm (safe as `CrimeType` grows); `MoodTrigger.traitMultiplier` has a
+   `default` (new values safe). No exhaustive switch over either was broken.
+   Confirmed.
+
+### Simplification Sweep
+
+One `FaithJudgment` helper; every hook just maps its event to a `FaithConcept` +
+context (witnesses) and calls `judge`. The crime overlay reuses `CrimeReporter`'s
+witness scan + reputation/mood; the grave/alms hooks reuse the existing call sites.
+No new judgment/mood/reputation framework. Classes in scope + inbound callers:
+`FaithJudgment` (new; 3 — CrimeReporter, GraveVisit, TempleProsperity), `MoodTrigger`
+(+2 values; consumed by FaithJudgment), `ReligionIdentity`/`FaithConcept` (D1, the
+lookup), `NpcRelationshipLedger`/`PietyComponent`/mood (effect channels, reused).
+
+### Deviations from prompt
+
+- **Witness rule is "the witness's faith holds the concept", not bare same-faith** —
+  this is exactly the prompt's "co-religionist (or hold the same value)" and is the
+  cleaner, faith-relative key (a Forge witness judges a Tidecall sacrilege because
+  both hold SACRILEGE).
+- **The GENEROSITY hook rewards the alms-distributing PRIEST** (the discrete NPC
+  generous act available) — there is no NPC→NPC personal gifting today (GiveGiftVerb
+  is player→NPC, so the giver is a player with no NPC mood). Only Sunstead priests
+  benefit (faith-relative). NPC personal gifting is a flagged future hook.
+- **Grave REMEMBRANCE only when the visitor cares about the grave** (a meaningful
+  remembrance act); Forge's HONOUR_THE_ANCESTORS stays the existing R5c `venerate()`
+  reward (complementary, no double-dip) — so D2 doesn't route HONOUR_THE_ANCESTORS
+  through a new hook this phase.
+- **Added `MoodTrigger.GUILT`/`CONTENTMENT`** (enum VALUES on an existing enum, not a
+  new enum) — semantically correct + consumer-justified (FaithJudgment), and safe
+  (the internal switch has a `default`; no external exhaustive switch).
+- **Player perpetrators get no faith guilt** (players have no NPC mood); the player's
+  own piety judgment is a flagged future extension.
+
+### Out-of-scope but flagged
+
+- **Continuous virtues/taboos** (HONEST_LABOUR / IDLENESS judged per work-cycle) — a
+  daily-cadence follow-up (rate-limited), deliberately NOT per-tick this phase.
+- **D3** — deity / sacred-history / cosmology consumption (dialogue, sermons).
+- **D4** — aesthetics → building NBT / visuals.
+- More action→concept hooks (NPC personal gifting → GENEROSITY; valour/loyalty/
+  cowardice from combat; truthfulness/deceit from trade); routing player-actor faith
+  judgment; HONOUR_THE_ANCESTORS via a dedicated D2 hook.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+Static review done: one `FaithJudgment` helper hit by all three hooks; signatures
+confirmed (`adjustBelief` clamp [0,1], `applyWithRawMagnitude(trigger,mag,tick)`,
+`NpcRelationshipLedger.adjust(uuid,int,tick,origin)` clamp [-100,100],
+`RelationshipOrigin.MET_SOCIALLY/MET_IN_CONFLICT`, `primaryReligion()`); the crime
+overlay is additive (after the existing effects, inside `applySideEffects`, with
+`now`/`type`/`perpetratorId`/`report` in scope) and skips player/atheist/neutral
+cases inside `judge`; `conceptForCrime` + `MoodTrigger.traitMultiplier` both have a
+`default` arm (no exhaustive-switch break from the +2 MoodTrigger values); the grave
+REMEMBRANCE channel is distinct from grief-ease + `venerate()` (no double-dip);
+magnitudes are small + clamped (anti-spiral).
+
+### Smoke test (user-runnable)
+
+1. **Taboo guilt + witness judgment.** Make a devout Sunstead NPC (GREED is its
+   taboo) steal in view of co-religionist Sunstead NPCs; confirm — ON TOP of normal
+   crime handling — the thief gets a GUILT mood dip + a small piety loss, and the
+   Sunstead witnesses' opinion of the thief drops (check their NPC relationship).
+   Confirm a Sunstead NPC committing ASSAULT (DISCORD — NOT a Sunstead taboo) gets
+   NO faith guilt (faith-relative).
+2. **Cross-faith / atheist witnesses.** Confirm a witness of a different faith that
+   does NOT hold the violated taboo does not judge; an atheist witness never judges;
+   and a different-faith witness that DOES share the taboo (e.g. SACRILEGE held by
+   both Tidecall and Forge) does judge.
+3. **Virtue rewards.** Have a Tidecall adherent visit a loved one's grave → confirm a
+   REMEMBRANCE reward (CONTENTMENT mood + small piety) distinct from the grief-ease;
+   let a Sunstead priest distribute alms → confirm a GENEROSITY reward.
+4. **Bounded.** Confirm a single sin doesn't tank an NPC (piety/mood/relationship move
+   only a little) and a single virtue doesn't sanctify; repeated faith-mood within a
+   day is daily-capped.
+5. **No regressions.** Confirm normal crime/grave/alms behaviour is otherwise
+   unchanged (the faith effect is additive), a Forge venerator still gets the R5c
+   `venerate()` reward (not double), and R3a/existing religion behaviour is intact.
