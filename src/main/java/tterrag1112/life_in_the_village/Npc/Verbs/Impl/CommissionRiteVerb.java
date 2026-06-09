@@ -111,7 +111,7 @@ public final class CommissionRiteVerb implements PlayerVerb {
         // Divine Layer V1 — sponsoring a rite earns Divine Favour with the deity
         // (deity-demand weighted via GENEROSITY).
         if (faith != null) {
-            tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.award(
+            tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.awardForReligion(
                     ctx.level(), playerId, faith,
                     tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.COMMISSION_RITE,
                     ctx.level().getGameTime());

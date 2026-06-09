@@ -8651,3 +8651,138 @@ enum values; no save/codec break for existing data.
    `/religion me` is unchanged.
 4. **Invocation/scripture text unchanged.** Confirm `Religion.deity()`-driven text
    (rite invocation, scripture title) reads identically — the name field is untouched.
+
+## F1a sub-stage 3a — re-key the FAVOUR ECONOMY to godId (2026-06-09)
+
+(Foundation 1 — separating gods from religions. Favour becomes a per-GOD standing;
+behaviour-preserving for the single-god starters.)
+
+### Disposition (findings)
+
+`PlayerFavour` was `Map<religionId, Entry>` + codec `unboundedMap(STRING, Entry)`.
+`DivineFavour`'s whole public API took a `religionId`: `award`/`awardVirtue`/
+`addCapped`/`offend`/`debugGrant`/`spend`/`current`/`tierIn`; the piety coupling
+(`tierFor`) read `PietyComponent.beliefIn(religionId)` (**piety is belief in a
+RELIGION, not a god** — the wrinkle); `aligned` read `ReligionIdentity.get(religionId)
+.virtues()`. `RiteSavedData` stores the `PlayerFavour` (shape unchanged). Grepped the
+FULL caller list (the safety net): the three act verbs + `Tithing` (`award`),
+`DivineWrath` (`offend`/`current`), `DivineVision` (`tierIn`/`current`/`addCapped`),
+`MiracleInvoker` (`tierIn`/`current`/`spend`), `DivineTheophany` (`current`/`tierIn`/
+`addCapped`/`offend`), `PlayerReligionSnapshotBuilder` + the `/religion gods`,
+`/religion miracle list`, `/religion favour`, `/religion sacrilege` readouts/debug
+(`current`/`debugGrant`/`spend`/`offend`). No religion→god link was read before
+sub-stage 2; the divine-event CONTENT selection is 3b (untouched here).
+
+### The piety-coupling resolution
+
+A god's cap/equilibrium derive from a piety TIER, and piety is per-religion. Built a
+**`god → religions` reverse index** in `GodRegistry` (at init, from each religion's
+`godIds`): `religionsVenerating(godId)`. A god's tier = the **best** `beliefIn` among
+its venerating religions → tier. Single-god starters → the one religion's belief
+(identical to today).
+
+### What shipped
+
+- **`PlayerFavour`** — inner map re-keyed `byReligion` → `byGod` (params
+  `religionId`→`godId`); codec shape unchanged (only the semantic key changed).
+- **`GodRegistry`** — `RELIGIONS_BY_GOD` reverse index built at init +
+  `religionsVenerating(godId)` (reused by 3b for god→religion content).
+- **`DivineFavour` — split into core (godId) + convenience (religionId):**
+  - **Core, god-keyed:** `award`/`awardVirtue`/`addCapped`/`offend`/`debugGrant`/
+    `spend`/`current` take a `godId`; `tierIn`→`tierForGod`; `tierFor` resolves the
+    god's tier via the reverse index (best venerating-religion belief); `aligned`
+    checks **`God.virtues()`** (the demand belongs to the god). `awardConcept` no
+    longer fires the V3 calling hook (moved — below).
+  - **Convenience, religion-keyed (the ONE home for multi-god policy):**
+    `awardForReligion` (fan out `act` to every `godsFor(religion)` god + fire the V3
+    calling hook once), `awardVirtueForReligion`, `offendForReligion`,
+    `addCappedForReligion`, `currentForReligion`/`tierForReligion`/`spendForReligion`
+    (the religion's PRIMARY god). Single-god → just the primary, behaviour-identical.
+- **Call sites updated** (the signature change + the grep forced every one):
+  the act verbs + `Tithing` → `awardForReligion`; `DivineWrath`/`DivineVision`/
+  `DivineTheophany`/`MiracleInvoker` favour reads/writes → the `...ForReligion`
+  convenience (single-god → primary god); the V3 calling-bonus → `addCappedForReligion`;
+  the snapshot + `/religion favour view` → **per-god** (iterate the player's
+  favour-entry gods + the gods of their belief religions, show each god's `current`);
+  `/religion favour grant|spend` → **god-keyed** (`debugGrant`/`spend` take a god id);
+  `/religion sacrilege` → `offendForReligion`; **`/religion miracle list`** favour
+  header → `currentForReligion` (the straggler the grep caught — `current` still
+  compiles with a String, so the semantic change was invisible to the compiler).
+
+### Tie-in audit
+
+1. **Upstream feeders.** `GodRegistry.godsFor`/`primaryGod` + the new reverse index;
+   `PietyComponent.beliefIn` (still per-religion, now read via the reverse index);
+   `God.virtues()` (demand bonus). Confirmed.
+2. **Downstream callers.** The FULL favour caller list — every one recompiled against
+   the new shape; each dispositioned (acts → `...ForReligion`; divine-event reads →
+   convenience-resolved to the primary god; debug grant/spend → god-keyed; the favour
+   screens → per-god). **No religion-keyed favour path remains** (grep-verified: the
+   only bare core `current`/`spend`/etc. outside `DivineFavour` is the snapshot loop
+   over genuine god ids).
+3. **Sibling systems.** `PietyComponent` unchanged. The divine-event CONTENT
+   selection (`Miracles`/`Curses` by `DeityDomain`; vision/wrath/theophany flavour by
+   `ReligionIdentity.deity().domain()`) is **untouched** — 3a only changed how they
+   READ/SPEND favour (now god-resolved). `ReligionIdentity`/`Religion.deity()`
+   untouched.
+4. **Exhaustive switches.** No enum change; the two `DeityDomain` switches
+   (`DivineVision` colour, `God.displayName`) and the `DispleasureTier`/`Status`
+   switches are unaffected.
+
+### Simplification sweep
+
+- The **convenience layer is the single future home** for multi-god favour policy
+  (today: fan-out to all gods on writes, primary god on reads). The **reverse index**
+  is reused by 3b (god→religion for content). Touched: `PlayerFavour` (re-key),
+  `GodRegistry` (+index/+`religionsVenerating`), `DivineFavour` (core+convenience),
+  9 caller files. No orphaned religion-keyed favour helper remains (the religion-
+  keyed API is now exactly the `...ForReligion` convenience; nothing else).
+
+### Deviations from prompt
+
+None of substance. The V3 calling hook (`DivineVision.onFavourAct`) was moved from
+the core `awardConcept` (now god-keyed) to `awardForReligion` (religion-keyed, where
+the calling — itself religion-keyed — belongs); its bonus uses `addCappedForReligion`.
+The favour debug `grant`/`spend` command now targets a **god id** (per the per-god
+verification goal); `sacrilege` stays religion-facing (`offendForReligion`).
+
+### Out-of-scope but flagged
+
+- **3b** — re-point the divine-EVENT content selection (miracles/curses/visions/
+  wrath/theophany) to the god (currently `DeityDomain` / `ReligionIdentity.deity()`).
+- **Sub-stage 4** — re-point virtues/taboos + the six `Religion.deity()`-name consumers
+  to the god.
+- **Cleanup** — invert authoring onto `God`, relocate the nested types, delete the
+  `ReligionIdentity` deity duplication.
+- **F1b** — per-world religions.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Container current; no reset needed.] Static review: `PlayerFavour` codec shape
+unchanged (only the key semantic); core favour methods take `godId`, resolving tier
+via the reverse index (single-god starters → identical numbers); the religion-facing
+convenience fans out (writes to all gods, reads from primary); every caller recompiled
+and was grep-audited — no bare core call passes a religion id (the `/religion miracle
+list` straggler was fixed to `currentForReligion`); the divine-event content selection
++ `ReligionIdentity`/`Religion.deity()` are untouched; no new enum values; favour codec
+key may change freely (no save-safety needed).
+
+### Smoke test (user-runnable)
+
+1. **Act → god favour.** As a Sunstead adherent (`/religion set <you> sunstead 0.6`)
+   make an offering — confirm `/religion favour view` shows `the Sun-Mother
+   (sun_mother)` favour risen by the same amount it used to (≈ +6 for OFFERING,
+   GENEROSITY-aligned ×1.5 ⇒ +9), and that `/religion gods` / R9c show it per god.
+2. **Decay/cap.** Confirm a devout-idle player holds the tier equilibrium for the god
+   and over-cap service decays back — same numbers as before.
+3. **Miracle spends the god.** `/religion favour grant sun_mother 50`, then
+   `/religion miracle cast sun_healing_light` — confirm it spends the GOD's favour and
+   is tier-gated exactly as before (`/religion miracle list` header shows the primary
+   god's favour).
+4. **Sacrilege.** `/religion sacrilege sunstead 40` (or steal as a Sunstead adherent)
+   — confirm `sun_mother`'s favour drops into displeasure as before.
+5. **Loom.** Confirm `the_pattern` (impersonal) favour works for the Loom's single god.
+6. **Independence.** Confirm standing with each of the four gods is independent and
+   matches pre-change behaviour.

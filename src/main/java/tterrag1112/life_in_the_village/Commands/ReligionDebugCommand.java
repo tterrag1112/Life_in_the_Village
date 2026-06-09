@@ -208,10 +208,11 @@ public final class ReligionDebugCommand {
         }
         float amount = FloatArgumentType.getFloat(ctx, "amount");
         long now = level.getGameTime();
+        // Sacrilege is religion-relative (against your faith); fan out to its god(s).
         tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                .offend(level, player.getUUID(), fid, amount, now);
+                .offendForReligion(level, player.getUUID(), fid, amount, now);
         float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                .current(level, player.getUUID(), fid, now);
+                .currentForReligion(level, player.getUUID(), fid, now);
         src.sendSuccess(() -> Component.literal(
                 "§cSacrilege§7 against " + fid + " — favour now §f" + Math.round(fav)), false);
         return 1;
@@ -231,7 +232,7 @@ public final class ReligionDebugCommand {
             var set = tterrag1112.life_in_the_village.Npc.Religion.Miracles.forReligion(r.id());
             if (set.isEmpty()) continue;
             float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                    .current(level, player.getUUID(), r.id(), now);
+                    .currentForReligion(level, player.getUUID(), r.id(), now);
             sb.append(String.format(Locale.ROOT, "%n§6%s§7 (favour %.0f):", r.displayName(), fav));
             for (var m : set) {
                 var st = tterrag1112.life_in_the_village.Npc.Religion.MiracleInvoker
@@ -274,17 +275,25 @@ public final class ReligionDebugCommand {
         java.util.UUID pid = player.getUUID();
         var rites = tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData.get(level);
 
-        java.util.Set<String> faiths = new java.util.LinkedHashSet<>();
-        rites.getPlayerPiety(pid).ifPresent(p -> faiths.addAll(p.beliefs().keySet()));
-        rites.getPlayerFavour(pid).ifPresent(f -> faiths.addAll(f.all().keySet()));
+        // F1a sub-stage 3a — favour is per GOD now. Show the player's standing with
+        // each god they have an entry with, or whose religion they believe in.
+        java.util.Set<String> gods = new java.util.LinkedHashSet<>();
+        rites.getPlayerFavour(pid).ifPresent(f -> gods.addAll(f.all().keySet()));
+        rites.getPlayerPiety(pid).ifPresent(p -> {
+            for (String rid : p.beliefs().keySet())
+                ReligionRegistry.find(rid).ifPresent(r ->
+                        tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                                .godsFor(r).forEach(g -> gods.add(g.id())));
+        });
 
-        StringBuilder sb = new StringBuilder("§e=== Divine Favour ===");
-        if (faiths.isEmpty()) sb.append("\n  §7(no standing with any deity)");
-        for (String fid : faiths) {
+        StringBuilder sb = new StringBuilder("§e=== Divine Favour (per god) ===");
+        if (gods.isEmpty()) sb.append("\n  §7(no standing with any god)");
+        for (String gid : gods) {
             float fav = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                    .current(level, pid, fid, now);
-            String name = ReligionRegistry.find(fid).map(Religion::displayName).orElse(fid);
-            sb.append(String.format(Locale.ROOT, "%n  §6%-16s§7 %.1f", name, fav));
+                    .current(level, pid, gid, now);
+            var god = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.get(gid);
+            String name = god != null ? god.displayName() : gid;
+            sb.append(String.format(Locale.ROOT, "%n  §6%-16s§8(%s)§7 %.1f", name, gid, fav));
         }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
@@ -297,9 +306,11 @@ public final class ReligionDebugCommand {
         ServerLevel level = src.getLevel();
         var player = src.getPlayer();
         if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
-        String fid = StringArgumentType.getString(ctx, "religionId");
-        if (ReligionRegistry.get(fid) == null) {
-            src.sendFailure(Component.literal("Unknown religion " + fid));
+        // F1a sub-stage 3a — the favour debug grant/spend target a GOD id now.
+        String gid = StringArgumentType.getString(ctx, "religionId");
+        if (tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.get(gid) == null) {
+            src.sendFailure(Component.literal("Unknown god " + gid
+                    + " (try sun_mother / the_pattern / sea_mother / forge_father)"));
             return 0;
         }
         float amount = FloatArgumentType.getFloat(ctx, "amount");
@@ -308,15 +319,15 @@ public final class ReligionDebugCommand {
         if (grant) {
             // Raw debug grant (bypasses the piety cap so V2 spend can be exercised).
             float v = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                    .debugGrant(level, pid, fid, amount, now);
+                    .debugGrant(level, pid, gid, amount, now);
             src.sendSuccess(() -> Component.literal(
-                    "§aGranted§7 " + amount + " favour with " + fid + " → §f" + v), false);
+                    "§aGranted§7 " + amount + " favour with god " + gid + " → §f" + v), false);
         } else {
             boolean ok = tterrag1112.life_in_the_village.Npc.Religion.DivineFavour
-                    .spend(level, pid, fid, amount, now);
-            if (!ok) { src.sendFailure(Component.literal("Insufficient favour with " + fid)); return 0; }
+                    .spend(level, pid, gid, amount, now);
+            if (!ok) { src.sendFailure(Component.literal("Insufficient favour with god " + gid)); return 0; }
             src.sendSuccess(() -> Component.literal(
-                    "§aSpent§7 " + amount + " favour with " + fid), false);
+                    "§aSpent§7 " + amount + " favour with god " + gid), false);
         }
         return 1;
     }
