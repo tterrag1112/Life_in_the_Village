@@ -242,7 +242,6 @@ Per-village `RiteSchedule` on `VillageSavedData`.
 
 ### Does not
 
-- Magic / divine intervention.
 - Persecution / inquisition v1.
 - Secret religions / underground practice.
 - Validate theological doctrine consistency.
@@ -283,7 +282,7 @@ Phase 3 depends on:
 
 ## Does-not-include
 
-- Divine miracles / chosen one.
+- Messianic "chosen one" narratives (v1).
 - Religious factions / schisms v1.
 - Holy war / religious combat.
 - Food restrictions beyond gift-preference modifiers.
@@ -292,6 +291,16 @@ Phase 3 depends on:
 ## Revision Notes
 
 (changes recorded here as the spec evolves after testing)
+
+### 2026-06-07 — Divine intent restored (owner-directed correction)
+
+The earlier exclusions of "Magic / divine intervention" and "Divine
+miracles" were an agent-introduced constraint that did **not** reflect
+the design intent and were removed. **Divine concepts — theophany,
+visions, miracles, blessings, curses, and divine favor — ARE a planned
+pillar** of the religion system (the RPG payoff for a religious
+playstyle), to be built once the religions are deep. Only messianic
+"chosen one" narratives remain out of scope unless revisited.
 
 ### Phase 3-20 implementation (initial pass)
 

@@ -192,8 +192,9 @@ public class PilgrimageSavedData extends SavedData {
         boolean attended = p.hasAttended();
         float pietyBoon = attended ? BOON_PIETY_ATTENDED : BOON_PIETY_MISSED;
         int   moodBoon  = attended ? BOON_MOOD_ATTENDED  : BOON_MOOD_MISSED;
+        TownspersonMob finalMob = mob;
         mob.getPiety().primaryReligion().ifPresent(faith ->
-                mob.getPiety().adjustBelief(faith, pietyBoon));
+                finalMob.getPiety().adjustBelief(faith, pietyBoon));
         mob.getMood().applyWithRawMagnitude(MoodTrigger.FESTIVAL_ATTENDED, moodBoon, currentTick);
         LOGGER.info("[Pilgrimage] {} returned home and reintegrated ({}festival)",
                 mob.getNpcName(), attended ? "attended " : "missed ");
