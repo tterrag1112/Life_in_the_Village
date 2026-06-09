@@ -13,60 +13,62 @@ import java.util.List;
 /**
  * Server→client. Opens
  * {@link tterrag1112.life_in_the_village.Gui.PlayerReligionScreen} for the
- * requesting player. Religion Rework R9c.
- *
- * <p>Carries a fully server-computed, read-only snapshot of the player's own
- * religious standing (faith / piety / tithe pledge / observance) plus the
- * upcoming religious calendar across faiths (computed on the {@code % 365}
- * liturgical axis). Mirrors the {@code OpenBusinessFrontPacket} /
- * {@code OpenTempleScreenPacket} pattern — the Open packet IS the data; no
- * separate sync this phase. Empty strings / false / 0 / empty lists are the
- * graceful unaffiliated state (no crash).</p>
+ * requesting player. Religion Rework R9c; F1a sub-stage 4b — the divine section
+ * (favour / miracles / theophany) is now a <b>per-god</b> structure
+ * ({@link GodStanding}) instead of the flat string summaries, so the player sees
+ * each god's standing independently. The religion-level fields (faith / piety /
+ * beliefs / tithe / observance / calendar / calling) are unchanged.
  */
 public record OpenPlayerReligionPacket(
-        // Your faith
+        // Your faith (religion-level)
         String religionName,        // "" = unaffiliated
-        String deityName,           // "" = none
+        String deityName,           // primary god's name ("" = impersonal/none)
         float  pietyStrength,
         String pietyTier,
         List<String> beliefSummary, // syncretic lines ("Faith — 30%"); empty for single-faith
 
         // Tithe pledge (R4d-1)
         boolean hasPledge,
-        String  pledgeTempleName,   // "" = none
-        String  pledgeFaithName,    // "" = none
+        String  pledgeTempleName,
+        String  pledgeFaithName,
 
         // Observance
         int     ritesThisMonth,
         boolean meetsMonthlyAttendance,
 
         // Religious calendar
-        int     today,              // current day-of-year (0..364)
+        int     today,
         List<CalendarRow> calendar,
 
-        // Divine Layer V1 — favour per deity ("Sunstead 42"); empty = none
-        List<String> favourSummary,
-
-        // Divine Layer V2 — miracle lines ("Healing Light ✓" / "Reweave 🔒")
-        List<String> miracleSummary,
-
-        // Divine Layer V3 — the active divine calling, or "" if none
+        // Divine Layer V3 — the active divine calling (religion-level), or ""
         String activeCalling,
 
-        // Divine Layer V5 — last theophany witnessed ("✦ Sun-Mother's glory"), or ""
-        String theophany
+        // F1a 4b — per-god divine standing (favour / miracles / theophany)
+        List<GodStanding> gods
 ) implements CustomPacketPayload {
 
-    /** One upcoming calendar event for the list. {@code ownFaith} = the player's
-     *  primary religion; {@code daysAway == 0} = today. */
+    /** One upcoming calendar event for the list. */
     public record CalendarRow(String faithDisplay, String dayLabel,
                               int dayOfYear, int daysAway, boolean ownFaith) {}
 
+    /**
+     * F1a 4b — a player's standing with one god: the display name, signed favour +
+     * its band ({@code NONE}/{@code OMEN}/{@code CURSE}/{@code WRATH} from
+     * {@code DivineFavour.displeasureOf}), that god's miracles (each "Name glyph"),
+     * and the god's theophany history (each "glory (Nd)" / "wrath (Nd)").
+     */
+    public record GodStanding(String name, int favour, String band,
+                              List<String> miracles, List<String> theophanies) {
+        public GodStanding {
+            miracles    = List.copyOf(miracles);
+            theophanies = List.copyOf(theophanies);
+        }
+    }
+
     public OpenPlayerReligionPacket {
-        beliefSummary  = List.copyOf(beliefSummary);
-        calendar       = List.copyOf(calendar);
-        favourSummary  = List.copyOf(favourSummary);
-        miracleSummary = List.copyOf(miracleSummary);
+        beliefSummary = List.copyOf(beliefSummary);
+        calendar      = List.copyOf(calendar);
+        gods          = List.copyOf(gods);
     }
 
     public static final Type<OpenPlayerReligionPacket> TYPE = new Type<>(
@@ -100,14 +102,19 @@ public record OpenPlayerReligionPacket(
                             buf.writeBoolean(r.ownFaith());
                         }
 
-                        buf.writeVarInt(pkt.favourSummary().size());
-                        for (String s : pkt.favourSummary()) buf.writeUtf(s);
-
-                        buf.writeVarInt(pkt.miracleSummary().size());
-                        for (String s : pkt.miracleSummary()) buf.writeUtf(s);
-
                         buf.writeUtf(pkt.activeCalling());
-                        buf.writeUtf(pkt.theophany());
+
+                        // Per-god standing (each with its inner miracle + theophany lists).
+                        buf.writeVarInt(pkt.gods().size());
+                        for (GodStanding g : pkt.gods()) {
+                            buf.writeUtf(g.name());
+                            buf.writeInt(g.favour());        // signed
+                            buf.writeUtf(g.band());
+                            buf.writeVarInt(g.miracles().size());
+                            for (String s : g.miracles()) buf.writeUtf(s);
+                            buf.writeVarInt(g.theophanies().size());
+                            for (String s : g.theophanies()) buf.writeUtf(s);
+                        }
                     },
                     buf -> {
                         String religionName = buf.readUtf();
@@ -137,23 +144,28 @@ public record OpenPlayerReligionPacket(
                             calendar.add(new CalendarRow(faith, day, doy, away, own));
                         }
 
-                        int favCount = buf.readVarInt();
-                        List<String> favourSummary = new ArrayList<>(favCount);
-                        for (int i = 0; i < favCount; i++) favourSummary.add(buf.readUtf());
-
-                        int miracleCount = buf.readVarInt();
-                        List<String> miracleSummary = new ArrayList<>(miracleCount);
-                        for (int i = 0; i < miracleCount; i++) miracleSummary.add(buf.readUtf());
-
                         String activeCalling = buf.readUtf();
-                        String theophany = buf.readUtf();
+
+                        int godCount = buf.readVarInt();
+                        List<GodStanding> gods = new ArrayList<>(godCount);
+                        for (int i = 0; i < godCount; i++) {
+                            String name = buf.readUtf();
+                            int favour  = buf.readInt();
+                            String band = buf.readUtf();
+                            int mCount  = buf.readVarInt();
+                            List<String> miracles = new ArrayList<>(mCount);
+                            for (int j = 0; j < mCount; j++) miracles.add(buf.readUtf());
+                            int tCount  = buf.readVarInt();
+                            List<String> theophanies = new ArrayList<>(tCount);
+                            for (int j = 0; j < tCount; j++) theophanies.add(buf.readUtf());
+                            gods.add(new GodStanding(name, favour, band, miracles, theophanies));
+                        }
 
                         return new OpenPlayerReligionPacket(
                                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                                 hasPledge, pledgeTemple, pledgeFaith,
                                 ritesThisMonth, meetsMonthly,
-                                today, calendar, favourSummary, miracleSummary, activeCalling,
-                                theophany);
+                                today, calendar, activeCalling, gods);
                     });
 
     @Override

@@ -9062,3 +9062,128 @@ new enum values; no codec/save change.
    unchanged; the theophany banner shows the god's display name. (Per-god rows = 4b.)
 5. **No regressions.** Favour/miracles/curses/visions/theophany (3a/3b) behave exactly
    as before for all four single-god faiths.
+
+## F1a sub-stage 4b — the per-god player-religion screen (2026-06-09)
+
+(Foundation 1 — the presentation half of sub-stage 4. The runtime is god-driven
+(3a/3b/4a); this surfaces the divine relationship PER GOD. A display redesign —
+values unchanged, regrouped per god + enriched.)
+
+### Disposition (findings)
+
+- **`Gui/PlayerReligionScreen`** (Path A migration) — `Screen` on `Chrome.COMPACT`
+  (320×240) + `Gui.Framework` (`Chrome`/`Pill`/`NeedMeter`/`ScrollList`/
+  `StyledButton`), a `ScrollList<CalendarRow>`. The divine info was scattered:
+  favour on the piety line, miracles on the beliefs line, theophany on the title.
+- **`OpenPlayerReligionPacket`** — flat divine fields: `favourSummary`/
+  `miracleSummary` (`List<String>`) + a single `theophany` string; hand-written
+  `StreamCodec` (count+loop idiom; `CalendarRow` nested).
+- **`PlayerReligionSnapshotBuilder`** — already gathered favour **per god** (3a);
+  miracles were still `forReligion(primaryFaith)` (primary-only) and theophany the
+  single most-recent string (4a fixed its god-key resolution). Stale primary-faith /
+  single-string remnants to convert.
+- **`rites.theophanies(playerId)`** — per-god store, keys `godId|pole`, value tick.
+- Framework check: `ScrollList<T>` (generic), `Pill`, `NeedMeter` cover the need; no
+  new primitive required. Packet already registered (`registerPayloads`) — only the
+  payload shape changes, `TYPE`/`CODEC`/handler unchanged.
+
+### What shipped
+
+- **`OpenPlayerReligionPacket`** — replaced the three flat divine fields with a
+  structured **`List<GodStanding>` gods**. `GodStanding(String name, int favour,
+  String band, List<String> miracles, List<String> theophanies)` (band =
+  `DispleasureTier.name()`; miracles each "Name glyph"; theophanies each
+  "glory (Nd)"/"wrath (Nd)"). Compact ctor `List.copyOf`s the row + its inner lists.
+  Extended the `StreamCodec` following the existing count-then-loop idiom, with the
+  nested inner-list framing (write/read orders verified identical); favour written as
+  a signed `int`. Religion-level fields (faith/piety/beliefs/tithe/observance/
+  calendar/`activeCalling`) unchanged.
+- **`PlayerReligionSnapshotBuilder`** — builds the per-god `GodStanding` list over the
+  standing set (primary faith's gods first, then favour-entry gods, then belief
+  gods): per god — `DivineFavour.current` + `displeasureOf` band; that god's miracles
+  (`Miracles.forDomain(god.domain())` + `MiracleInvoker.status` glyph, per 3a/3b
+  gating); the god's theophany history from `rites.theophanies` filtered to its
+  `godId|pole` keys with day-recency. Deleted the old flat
+  `favourSummary`/`miracleSummary`/`theophany` build code.
+- **`PlayerReligionScreen`** — a `ScrollList<GodStanding>` "Gods" section (3-line rows:
+  name + signed favour band-coloured; the god's miracles; its theophany history)
+  above the kept `ScrollList<CalendarRow>`; the faith header (name/piety bar+tier
+  pill/piety%/beliefs), tithe pledge, and calling/observance rows kept. Band colour
+  via a `String` switch (OMEN→amber, CURSE/WRATH→red, NONE→green) — all arms +
+  default. A `clip()` helper truncates overflow. Read-only (Close only); both lists
+  route scroll + click. Removed the old favour/miracle/theophany render.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `DivineFavour.current`/`displeasureOf`, `Miracles.forDomain`
+   + `MiracleInvoker.status` (per god), `rites.theophanies`, `GodRegistry`/`God`, the
+   player's-gods standing set. Confirmed.
+2. **Downstream callers.** The packet is built in the snapshot path and handled
+   client-side into the screen; the `StreamCodec` write order == read order
+   (re-verified, incl. the nested miracle/theophany lists); `TYPE`/`CODEC`/handler +
+   the `registerPayloads` registration are unchanged, so `/religion me` still opens
+   the screen.
+3. **Sibling systems.** No server logic changed — favour/miracle/theophany runtime
+   (3a/3b/4a) untouched; the 3b debug commands still function (the screen complements
+   them). The snapshot is the only producer; the screen the only consumer.
+4. **Exhaustive switches.** Reused `MiracleInvoker.Status` (glyph switch — all arms)
+   and `DispleasureTier` (the band string, built in the snapshot); the screen's band
+   colour switch over the band String covers OMEN/CURSE/WRATH + default. No new enum.
+
+### Simplification sweep
+
+- The flat `favourSummary`/`miracleSummary`/`theophany` strings (field + builder +
+  render) are fully replaced by the `GodStanding` structure — no orphaned
+  string-summary path remains (grep-confirmed). Touched: `OpenPlayerReligionPacket`
+  (restructured), `PlayerReligionSnapshotBuilder` (per-god build), `PlayerReligionScreen`
+  (per-god render). One producer, one consumer; no duplicate.
+
+### Deviations from prompt
+
+- Per-god rows render the miracle list + theophany history inline (3-line rows,
+  clipped to the COMPACT width) rather than a hover tooltip — keeps it read-at-a-glance
+  without `TooltipLayer` wiring; the full miracle names also remain in `/religion
+  miracle list`.
+- The single-string theophany title mark (V5) is removed; theophany now lives in each
+  god's row (history, not just the latest).
+
+### Out-of-scope but flagged
+
+- **Cleanup stage** — invert authoring onto `God`, relocate `Miracles`/`Curses` + the
+  nested types onto `God`, and delete the `ReligionIdentity` deity duplication +
+  `Religion.deity()` (4a confirmed no readers remain except `GodRegistry.derive`).
+- **F1b** — per-world religions.
+- This **completes the F1a re-point + surfacing** (3a/3b/4a/4b); only the cleanup
+  stage remains before F1b.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Container current; no reset.] Static review (per the litv-gui-screen contract):
+uses only `Gui.Framework` primitives (`Chrome.draw` 5-arg + `PARCHMENT`, `ScrollList`,
+`Pill`, `NeedMeter`, `StyledButton`) — no manual panel/scrollbar drawing; the packet
+`StreamCodec` write/read orders are identical incl. the nested inner lists (count +
+loop), favour as signed `int`; the row renderers match the `RowRenderer` signature;
+both lists route scroll/click before `super`; `TYPE`/`CODEC`/handler + payload
+registration unchanged; the old flat fields + their build/render code are deleted (no
+orphan); single-god data shows as one god row, identical values.
+
+### Smoke test (user-runnable)
+
+1. **Per-god row.** As a Sunstead adherent (`/religion set <you> sunstead 0.9`,
+   `/religion favour grant sun_mother 60`) open `/religion me` — confirm a `the
+   Sun-Mother` row showing favour (+60, green), her miracles with ✓/⏳/🔒 glyphs, and
+   "—" theophany.
+2. **Bands + theophany update.** `/religion favour offend sun_mother 200`, reopen —
+   confirm the row goes red with the band label (cursed/WRATH); `/religion theophany
+   favour sun_mother` then `… wrath sun_mother`, reopen — confirm both glory + wrath
+   marks appear with day-recency.
+3. **Impersonal god.** As a Loom adherent confirm the `the Pattern` row renders with a
+   clean name (no blank), FATE miracles.
+4. **Syncretic.** Give a player belief in two faiths (`/religion set` twice) — confirm
+   a row per god, each with its own favour/miracles/theophany.
+5. **Religion-level unchanged.** Confirm the faith header, beliefs, tithe pledge,
+   calling, observance, and the calendar list read as before.
+6. **No desync.** Confirm the screen opens cleanly (StreamCodec round-trips — no
+   client disconnect) and both lists scroll.
