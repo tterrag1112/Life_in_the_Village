@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village;
 
 import net.minecraft.world.level.block.AnvilBlock;
+import net.minecraft.world.level.block.BeehiveBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BlastFurnaceBlock;
 import net.minecraft.world.level.block.BrewingStandBlock;
@@ -8,6 +9,7 @@ import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.CraftingTableBlock;
 import net.minecraft.world.level.block.FurnaceBlock;
 import net.minecraft.world.level.block.GrindstoneBlock;
+import net.minecraft.world.level.block.LecternBlock;
 import net.minecraft.world.level.block.LoomBlock;
 import net.minecraft.world.level.block.SmokerBlock;
 import net.minecraft.world.level.block.StonecutterBlock;
@@ -48,7 +50,12 @@ public enum AmenityType {
     /** Vanilla stonecutter — STONEMASON workstation (Phase 6.6.1.3). */
     STONECUTTER  (b -> b instanceof StonecutterBlock),
     /** Vanilla loom — WEAVER workstation (Phase 6.6.1.3). */
-    LOOM         (b -> b instanceof LoomBlock);
+    LOOM         (b -> b instanceof LoomBlock),
+    /** Vanilla beehive / bee-nest — R6b monastic apiary (BEEKEEPING honey work).
+     *  Both BEEHIVE and BEE_NEST are {@link BeehiveBlock}. */
+    APIARY       (b -> b instanceof BeehiveBlock),
+    /** Vanilla lectern — R6b monastic scriptorium (LITERACY manuscript copying). */
+    LECTERN      (b -> b instanceof LecternBlock);
 
     // GARDEN_PLOT intentionally omitted at v1 — adjunct plots live on
     // HouseholdData, not on the building's own block bounds, so the
