@@ -37,6 +37,10 @@ public class PlayerEventProximityHandler {
         // per-tick scan added here.
         tterrag1112.life_in_the_village.Village.VillageChunkLoader.onPlayerTick(player);
 
+        // Divine Layer V3 — a high-favour player's deity may speak (bounded by a
+        // cooldown + chance inside; the per-player tick is the existing cadence).
+        tterrag1112.life_in_the_village.Npc.Religion.DivineVision.tick(player);
+
         if (level.getGameTime() % 100 != 0) return; // check every 5s
 
         VillageSavedData data = VillageSavedData.get(level);

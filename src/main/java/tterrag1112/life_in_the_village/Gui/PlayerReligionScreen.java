@@ -110,9 +110,16 @@ public class PlayerReligionScreen extends Screen {
                         + (data.pledgeFaithName().isEmpty() ? "" : " (" + data.pledgeFaithName() + ")")
                 : "No tithe pledge";
         g.drawString(font, pledge, x, panelY + 66, BookScreenColors.MID, false);
-        String obs = data.ritesThisMonth() + " rite(s) this month"
-                + (data.meetsMonthlyAttendance() ? " — observant" : "");
-        g.drawString(font, obs, x, panelY + 77, BookScreenColors.MID, false);
+        // Divine calling (V3) takes this row when active — it's the live task;
+        // otherwise the observance count.
+        if (!data.activeCalling().isEmpty()) {
+            g.drawString(font, "✦ Calling — " + data.activeCalling(),
+                    x, panelY + 77, BookScreenColors.DARK, false);
+        } else {
+            String obs = data.ritesThisMonth() + " rite(s) this month"
+                    + (data.meetsMonthlyAttendance() ? " — observant" : "");
+            g.drawString(font, obs, x, panelY + 77, BookScreenColors.MID, false);
+        }
 
         // ── Calendar header + list ───────────────────────────────────────────
         g.drawString(font, "Religious Calendar  (day " + data.today() + " of 365)",

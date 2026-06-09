@@ -7997,3 +7997,143 @@ packet StreamCodec write/read balanced for `miracleSummary`; no new brain memory
    cross-check `/religion miracle list` for costs + tiers.
 6. **Piety untouched.** Confirm casting miracles never moves the piety bar (favour is
    the only cost).
+
+## V3 — Visions (the narrative hook) (2026-06-09)
+
+(Divine Layer, Pillar 3 — where the divine becomes a relationship, not just a
+power source.)
+
+### Disposition (findings)
+
+A high-favour player's deity now *speaks* — revealing lore, affirming/admonishing
+recent deeds, warning of what's coming, and lightly calling them to a sacred act.
+Per-deity voiced from the authored identity (D1), so the Sun-Mother and the Loom
+speak utterly differently.
+
+1. **Gate** — V1 `DivineFavour.tierIn`/`current`: visions are for the devout +
+   favoured (tier ≥ DEVOUT, favour ≥ 40 with their primary faith).
+2. **Voice + content** — `ReligionIdentity` (D1): cosmology, founding myth, deity
+   character, sacred-history events (lore); virtues/taboos (affirm/admonish);
+   `Religion.deity()` (the name). Same authored source D3b `FaithVoice` / D3
+   `ScriptureFactory` draw on (composed fresh into vision messages rather than
+   reusing their NPC-line / full-book outputs).
+3. **Omen source** — `CalendarView.upcomingFor(religion, now)` gives the next holy
+   day + `daysAway` for the "be present" warning.
+4. **Recent-deed proxy** — D2's player-side virtue record is thin (V1 finding), so
+   guidance reads the player's `VillageReputation.Tier` (low → admonish a taboo)
+   and favour level (high → affirm a virtue) as the cheap player-deed signal.
+5. **Trigger** — the existing per-player tick (`PlayerEventProximityHandler`) is the
+   cadence host; visions self-throttle (cooldown + chance) so they feel special.
+6. **Delivery** — `player.sendSystemMessage` with a styled `Component` (the
+   `VerbInvocation`/`DialogueRunner` precedent).
+7. **Calling persistence** — a current calling per player on `RiteSavedData`
+   (`optionalFieldOf`, now 5 fields, under the cap). The `Guilds/.../Requests` board
+   is noted for the *deeper* quest tie-in — explicitly NOT wired (flagged); the V3
+   calling is light (a tracked task fulfilled by the V1 act hooks).
+
+### What shipped
+
+- **`Npc/Religion/PlayerCalling.java`** (new) — the persisted light task: `(religionId,
+  FavourAct act, issuedTick)` + CODEC (act via name xmap) + `describe()` (exhaustive
+  `FavourAct` switch). One active calling per player.
+- **`Npc/Religion/DivineVision.java`** (new) — the deliverer + trigger + calling
+  tracker: `tick(player)` (per-player-tick host; gates tier+favour, rolls behind a
+  ~10-min cooldown + 1/6 chance, in-memory last-vision map — transient);
+  `composeVision` (weighted pool: lore always, omen when a holy day is within 20
+  days, admonish on low reputation / affirm on high favour); a 1/3 chance to lay a
+  `PlayerCalling` instead; `onFavourAct` (calling fulfilment from the V1 hooks →
+  `DivineFavour.addCapped` bonus + a lore vision); per-deity-voiced styled two-line
+  message (deity name + their italic, domain-coloured words).
+- **`DivineFavour`** — `addCapped` (capped favour add WITHOUT the calling hook, so
+  the bonus can't re-trigger) + a one-line `DivineVision.onFavourAct` call at the end
+  of `awardConcept` (so offering/tithe/attend/commission fulfil a matching calling).
+- **`RiteSavedData`** — +1 codec field `playerCalling` (`optionalFieldOf`) +
+  `getPlayerCalling`/`setPlayerCalling`/`clearPlayerCalling`.
+- **Trigger wire** — `PlayerEventProximityHandler.onPlayerTick` → `DivineVision.tick`.
+- **Surfacing** — `OpenPlayerReligionPacket` +`activeCalling`; the snapshot fills it
+  from `RiteSavedData.getPlayerCalling`; `PlayerReligionScreen` shows "✦ Calling — …"
+  on the observance row when active.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `DivineFavour` (V1 — tier/favour gate + the `addCapped`
+   reward), `ReligionIdentity`/`Religion.deity()` (D1 voice + content),
+   `CalendarView` (omens), `VillageReputation`/`ReputationManager` (the deed proxy),
+   the per-player tick. All read-only except the favour reward (intended).
+2. **Downstream callers.** `DivineVision.tick` (the trigger), `onFavourAct` (the one
+   new call from `DivineFavour.awardConcept`); `RiteSavedData` persists the calling;
+   the R9c packet/snapshot/screen surface it.
+3. **Sibling systems.** V1 favour (callings grant it via `addCapped`; the favour
+   economy is otherwise untouched). **V2 miracles unaffected** (separate path).
+   **Piety untouched** (visions read it, never write). D2/D3 content reused. The
+   event/calendar system feeds omens read-only.
+4. **Exhaustive switches.** Two over `DeityDomain` (`domainColor`) — wait, one over
+   `DeityDomain` (`domainColor`, all 4 arms, no default) and one over `FavourAct`
+   (`PlayerCalling.describe`, all 6 arms, no default). Both exhaustive; a new
+   domain/act forces an update. No new enum added (reused `FavourAct`/`DeityDomain`).
+
+### Simplification sweep
+
+- One vision content source + deliverer (`DivineVision`) + one light calling record
+  (`PlayerCalling`) fulfilled by the existing V1 act hooks — no parallel quest
+  system, no parallel content store (lore reuses D1; the favour reward reuses V1).
+  Classes in scope: `DivineVision`/`PlayerCalling` (new; callers = the per-player
+  tick + `DivineFavour.awardConcept` + the snapshot), `DivineFavour` (+`addCapped`,
+  +1 hook call), `RiteSavedData` (+1 field/3 accessors), the R9c packet/snapshot/
+  screen (+1 field/line), `PlayerEventProximityHandler` (+1 call). No orphan; the
+  cooldown is one small in-memory map.
+
+### Deviations from prompt
+
+- **Recent-deed signal** uses `VillageReputation` + favour level as the player-deed
+  proxy (D2's player-virtue record is thin) rather than a literal D2 read. Noted.
+- **Voice** composes fresh vision text from the D1 identity (the same source
+  `FaithVoice`/`ScriptureFactory` use) rather than calling those APIs directly
+  (their outputs are an NPC greeting line / a full scripture book, not a vision).
+- **Trigger** is the periodic devout-roll (cooldown + chance); temple-visit / rest /
+  favour-milestone triggers are noted as possible refinements, not added.
+- The `lore()` variety pick uses `System.nanoTime() % n` (no RandomSource threaded
+  through `onFavourAct`) — harmless flavour jitter.
+
+### Out-of-scope but flagged
+
+- **V4 curses/wrath**, **V5 theophany**, **NPC visions** (later).
+- **Deep quest-board (`Guilds/.../Requests`) integration** for callings — the V3
+  calling is a light tracked task fulfilled by existing act hooks; the rich quest
+  tie-in is flagged.
+- **Deity-triggered automatic events** beyond visions — none here.
+- **A vision log / history in R9c** — only the active calling is surfaced; a
+  "recent visions" list is deferred.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava` 403s on `neoform-runtime` before javac; no javac errors surfaced).
+[Note: this session's container started on a stale R9c checkout; the local branch
+was hard-reset to the pushed remote tip (V2, c9433ec) before V3 work — all V1/V2
+files verified present.] Static review: `RiteSavedData` codec now 5 fields (under
+16), the new field `optionalFieldOf` (old saves load empty); the packet StreamCodec
+write/read are balanced (activeCalling appended both sides); the two switches
+(`DeityDomain`, `FavourAct`) are exhaustive; the calling bonus uses `addCapped` (no
+re-trigger); visions read piety/favour but never write piety; cadence is
+cooldown+chance bounded; no new brain memory.
+
+### Smoke test (user-runnable)
+
+1. **Eligibility + voice.** Make a player PIOUS in Sunstead and grant favour (≥40):
+   over time confirm they occasionally receive a "✦ The Sun-Mother speaks ✦" vision
+   (lore/guidance), and that a Loom / Forge adherent's visions read distinctly
+   (different idiom + colour).
+2. **Affirm / admonish.** With high favour, confirm an affirming vision can quote a
+   virtue; lower the player's village reputation (transgress) and confirm an
+   admonishing vision can quote a taboo.
+3. **Omen.** Near a faith's upcoming holy day, confirm a vision can warn "a day
+   approaches — … in N days. Be present."
+4. **Bounded cadence.** Confirm visions don't spam (a ≥10-min cooldown between them);
+   confirm a low-favour / FAITHFUL / unaffiliated player gets NO visions.
+5. **Divine calling.** Receive a "I would have you serve…" calling (also shown as
+   "✦ Calling —" in `/religion me`); fulfil it via the named act (offering / attend
+   rite / commission); confirm bonus favour lands + a fulfilment lore vision, and
+   the calling clears.
+6. **Isolation.** Confirm miracles (V2) and the piety bar are unaffected — visions
+   read favour/piety but only ever grant favour (the calling reward).

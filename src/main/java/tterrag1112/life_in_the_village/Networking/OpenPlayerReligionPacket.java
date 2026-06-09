@@ -48,7 +48,10 @@ public record OpenPlayerReligionPacket(
         List<String> favourSummary,
 
         // Divine Layer V2 — miracle lines ("Healing Light ✓" / "Reweave 🔒")
-        List<String> miracleSummary
+        List<String> miracleSummary,
+
+        // Divine Layer V3 — the active divine calling, or "" if none
+        String activeCalling
 ) implements CustomPacketPayload {
 
     /** One upcoming calendar event for the list. {@code ownFaith} = the player's
@@ -99,6 +102,8 @@ public record OpenPlayerReligionPacket(
 
                         buf.writeVarInt(pkt.miracleSummary().size());
                         for (String s : pkt.miracleSummary()) buf.writeUtf(s);
+
+                        buf.writeUtf(pkt.activeCalling());
                     },
                     buf -> {
                         String religionName = buf.readUtf();
@@ -136,11 +141,13 @@ public record OpenPlayerReligionPacket(
                         List<String> miracleSummary = new ArrayList<>(miracleCount);
                         for (int i = 0; i < miracleCount; i++) miracleSummary.add(buf.readUtf());
 
+                        String activeCalling = buf.readUtf();
+
                         return new OpenPlayerReligionPacket(
                                 religionName, deityName, pietyStrength, pietyTier, beliefSummary,
                                 hasPledge, pledgeTemple, pledgeFaith,
                                 ritesThisMonth, meetsMonthly,
-                                today, calendar, favourSummary, miracleSummary);
+                                today, calendar, favourSummary, miracleSummary, activeCalling);
                     });
 
     @Override

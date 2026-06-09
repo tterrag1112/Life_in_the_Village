@@ -54,25 +54,34 @@ public class RiteSavedData extends SavedData {
                     com.mojang.serialization.Codec.unboundedMap(
                                     UUID_STRING_KEY, PlayerFavour.CODEC)
                             .optionalFieldOf("playerFavour", Map.of())
-                            .forGetter(d -> Map.copyOf(d.playerFavour))
+                            .forGetter(d -> Map.copyOf(d.playerFavour)),
+                    // Divine Layer V3 — player's current divine calling (one per
+                    // player). Optional so pre-V3 saves load empty.
+                    com.mojang.serialization.Codec.unboundedMap(
+                                    UUID_STRING_KEY, PlayerCalling.CODEC)
+                            .optionalFieldOf("playerCalling", Map.of())
+                            .forGetter(d -> Map.copyOf(d.playerCalling))
             ).apply(i, RiteSavedData::fromCodec)));
 
     private final Map<UUID, RiteExecution>     rites           = new HashMap<>();
     private final Map<UUID, PietyComponent>    playerPiety     = new HashMap<>();
     private final Map<UUID, UUID>              autoTitheTemple = new HashMap<>();
     private final Map<UUID, PlayerFavour>      playerFavour    = new HashMap<>();
+    private final Map<UUID, PlayerCalling>     playerCalling   = new HashMap<>();
 
     public RiteSavedData() {}
 
     private static RiteSavedData fromCodec(List<RiteExecution> rites,
                                            Map<UUID, PietyComponent> playerPiety,
                                            Map<UUID, UUID> autoTitheTemple,
-                                           Map<UUID, PlayerFavour> playerFavour) {
+                                           Map<UUID, PlayerFavour> playerFavour,
+                                           Map<UUID, PlayerCalling> playerCalling) {
         RiteSavedData d = new RiteSavedData();
         if (rites != null) for (RiteExecution r : rites) d.rites.put(r.riteId(), r);
         if (playerPiety != null) d.playerPiety.putAll(playerPiety);
         if (autoTitheTemple != null) d.autoTitheTemple.putAll(autoTitheTemple);
         if (playerFavour != null) d.playerFavour.putAll(playerFavour);
+        if (playerCalling != null) d.playerCalling.putAll(playerCalling);
         return d;
     }
 
@@ -180,6 +189,22 @@ public class RiteSavedData extends SavedData {
 
     public Optional<PlayerFavour> getPlayerFavour(UUID playerId) {
         return Optional.ofNullable(playerFavour.get(playerId));
+    }
+
+    // ── Player divine calling (Divine Layer V3) ──────────────────────────────
+
+    public Optional<PlayerCalling> getPlayerCalling(UUID playerId) {
+        return Optional.ofNullable(playerCalling.get(playerId));
+    }
+
+    public void setPlayerCalling(UUID playerId, PlayerCalling calling) {
+        if (calling == null) playerCalling.remove(playerId);
+        else playerCalling.put(playerId, calling);
+        setDirty();
+    }
+
+    public void clearPlayerCalling(UUID playerId) {
+        if (playerCalling.remove(playerId) != null) setDirty();
     }
 
     // ── Player auto-tithe opt-in (R4d-1) ─────────────────────────────────────
