@@ -108,14 +108,6 @@ public final class DivineFavour {
         DivineVision.onFavourAct(level, playerId, religionId, act, now);
     }
 
-    /** Awards {@link FavourAct#VIRTUE} (weighted by {@code concept}) to the religion's god(s). */
-    public static void awardVirtueForReligion(ServerLevel level, UUID playerId,
-                                              String religionId, FaithConcept concept, long now) {
-        Religion r = ReligionRegistry.get(religionId);
-        if (r == null) return;
-        for (God g : GodRegistry.godsFor(r)) awardVirtue(level, playerId, g.id(), concept, now);
-    }
-
     /** Drives displeasure with every god the religion venerates (V4 sacrilege). */
     public static void offendForReligion(ServerLevel level, UUID playerId,
                                          String religionId, float amount, long now) {
@@ -132,29 +124,13 @@ public final class DivineFavour {
         for (God g : GodRegistry.godsFor(r)) addCapped(level, playerId, g.id(), amount, now);
     }
 
-    /** The religion's headline favour — its PRIMARY god's current standing (0 if god-less). */
+    /** The religion's headline favour — its PRIMARY god's current standing (0 if
+     *  god-less); the readout/sacrilege debug reads in religion terms. */
     public static float currentForReligion(ServerLevel level, UUID playerId,
                                            String religionId, long now) {
-        God g = primaryGodOf(religionId);
-        return g == null ? 0f : current(level, playerId, g.id(), now);
-    }
-
-    /** The religion's headline tier — its PRIMARY god's tier (UNAFFILIATED if god-less). */
-    public static PietyTier tierForReligion(ServerLevel level, UUID playerId, String religionId) {
-        God g = primaryGodOf(religionId);
-        return g == null ? PietyTier.UNAFFILIATED : tierForGod(level, playerId, g.id());
-    }
-
-    /** Spends from the religion's PRIMARY god (the V2 miracle cost). */
-    public static boolean spendForReligion(ServerLevel level, UUID playerId,
-                                           String religionId, float amount, long now) {
-        God g = primaryGodOf(religionId);
-        return g != null && spend(level, playerId, g.id(), amount, now);
-    }
-
-    private static God primaryGodOf(String religionId) {
         Religion r = ReligionRegistry.get(religionId);
-        return r == null ? null : GodRegistry.primaryGod(r).orElse(null);
+        God g = r == null ? null : GodRegistry.primaryGod(r).orElse(null);
+        return g == null ? 0f : current(level, playerId, g.id(), now);
     }
 
     // =========================================================================

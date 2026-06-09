@@ -52,20 +52,19 @@ public final class DivineTheophany {
         long now = level.getGameTime();
         if (now % CHECK_INTERVAL != 0) return;
         UUID pid = player.getUUID();
-        String faith = primaryFaith(level, pid);
-        if (faith == null) return;
-
-        float fav = DivineFavour.currentForReligion(level, pid, faith, now);
         RiteSavedData data = RiteSavedData.get(level);
 
-        if (fav >= FAVOUR_PEAK
-                && DivineFavour.tierForReligion(level, pid, faith) == PietyTier.PIOUS) {
-            if (now - data.getTheophanyTick(pid, faith + "|favour") >= COOLDOWN) {
-                fireFavour(level, player, faith, now);
-            }
-        } else if (fav <= WRATH_DEPTH) {
-            if (now - data.getTheophanyTick(pid, faith + "|wrath") >= COOLDOWN) {
-                fireWrath(level, player, faith, now);
+        for (God god : GodRegistry.playerGods(level, pid)) {
+            float fav = DivineFavour.current(level, pid, god.id(), now);
+            if (fav >= FAVOUR_PEAK
+                    && DivineFavour.tierForGod(level, pid, god.id()) == PietyTier.PIOUS) {
+                if (now - data.getTheophanyTick(pid, god.id() + "|favour") >= COOLDOWN) {
+                    fireFavour(level, player, god, now);
+                }
+            } else if (fav <= WRATH_DEPTH) {
+                if (now - data.getTheophanyTick(pid, god.id() + "|wrath") >= COOLDOWN) {
+                    fireWrath(level, player, god, now);
+                }
             }
         }
     }
@@ -73,9 +72,9 @@ public final class DivineTheophany {
     // ── The two manifestations (public so the debug command can force them) ──
 
     /** Theophany of favour — a glorious manifestation + a potent, lasting boon. */
-    public static void fireFavour(ServerLevel level, ServerPlayer player, String faith, long now) {
-        manifest(level, player, domainOf(faith), false);
-        DivineVision.speak(faith, player,
+    public static void fireFavour(ServerLevel level, ServerPlayer player, God god, long now) {
+        manifest(level, player, god.domain(), false);
+        DivineVision.speak(god, player,
                 "You have given all, and I answer in glory. Behold me — and be marked as "
                         + "mine. My favour rests upon you, and shall not soon depart.");
         // A potent, lasting blessing beyond any miracle.
@@ -84,30 +83,30 @@ public final class DivineTheophany {
         player.addEffect(new MobEffectInstance(MobEffects.RESISTANCE, 12000, 1));
         player.addEffect(new MobEffectInstance(MobEffects.ABSORPTION, 12000, 3));
         player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 12000, 0));
-        // The lasting mark of favour: pinned to the cap.
-        DivineFavour.addCappedForReligion(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
-        RiteSavedData.get(level).setTheophanyTick(player.getUUID(), faith + "|favour", now);
+        // The lasting mark of favour: this GOD's favour pinned to the cap.
+        DivineFavour.addCapped(level, player.getUUID(), god.id(), DivineFavour.MAX_FAVOUR, now);
+        RiteSavedData.get(level).setTheophanyTick(player.getUUID(), god.id() + "|favour", now);
     }
 
     /** Theophany of wrath — a dread manifestation + a severe but NON-permanent
      *  calamity (the road back, V4, still holds). */
-    public static void fireWrath(ServerLevel level, ServerPlayer player, String faith, long now) {
-        manifest(level, player, domainOf(faith), true);
-        DivineVision.speak(faith, player,
+    public static void fireWrath(ServerLevel level, ServerPlayer player, God god, long now) {
+        manifest(level, player, god.domain(), true);
+        DivineVision.speak(god, player,
                 "You have defied me to the last — now look upon my wrath made manifest. "
                         + "Yet even now: repent, and the road remains. Defy me no further.");
         // Severe debuffs — but non-fatal (POISON stops at half a heart; the
-        // lightning is visual-only). The calamity drives favour to its depth, which
-        // the V1 earning can still climb back out of (never permanent damnation).
+        // lightning is visual-only). The calamity drives the GOD's favour to its
+        // depth, which the V1 earning can still climb back out of.
         player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 6000, 2));
         player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 6000, 2));
         player.addEffect(new MobEffectInstance(MobEffects.HUNGER, 6000, 2));
         player.addEffect(new MobEffectInstance(MobEffects.BLINDNESS, 600, 0));
         player.addEffect(new MobEffectInstance(MobEffects.CONFUSION, 600, 0));
         player.addEffect(new MobEffectInstance(MobEffects.POISON, 300, 1));
-        DivineFavour.offendForReligion(level, player.getUUID(), faith, DivineFavour.MAX_FAVOUR, now);
-        DivineWrath.armConsequenceCooldown(player.getUUID(), now);   // no double curse
-        RiteSavedData.get(level).setTheophanyTick(player.getUUID(), faith + "|wrath", now);
+        DivineFavour.offend(level, player.getUUID(), god.id(), DivineFavour.MAX_FAVOUR, now);
+        DivineWrath.armConsequenceCooldown(player.getUUID(), god.id(), now);  // no double curse
+        RiteSavedData.get(level).setTheophanyTick(player.getUUID(), god.id() + "|wrath", now);
     }
 
     // ── The vanilla visual/audio toolkit (domain-flavoured) ──────────────────
@@ -157,15 +156,4 @@ public final class DivineTheophany {
         level.sendParticles(particle, x, y + 1.2, z, count, 1.2, 1.8, 1.2, 0.06);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    private static DeityDomain domainOf(String faith) {
-        ReligionIdentity id = ReligionIdentity.get(faith);
-        return id != null ? id.deity().domain() : DeityDomain.SUN;
-    }
-
-    private static String primaryFaith(ServerLevel level, UUID playerId) {
-        return RiteSavedData.get(level).getPlayerPiety(playerId)
-                .flatMap(PietyComponent::primaryReligion).orElse(null);
-    }
 }

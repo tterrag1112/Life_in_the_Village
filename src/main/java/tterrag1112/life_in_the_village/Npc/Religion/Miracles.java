@@ -49,6 +49,16 @@ public final class Miracles {
         return out;
     }
 
+    /** F1a sub-stage 3b — a god's miracles, selected by the god's DOMAIN (miracles
+     *  stay {@link tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain}-keyed
+     *  data; the god is the subject), low-tier first. */
+    public static List<Miracle> forDomain(
+            tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain domain) {
+        List<Miracle> out = new ArrayList<>();
+        for (Miracle m : MIRACLES) if (m.domain() == domain) out.add(m);
+        return out;
+    }
+
     private static Map<String, Miracle> index() {
         Map<String, Miracle> m = new LinkedHashMap<>();
         for (Miracle x : MIRACLES) m.put(x.id(), x);

@@ -40,6 +40,16 @@ public final class Curses {
         return null;
     }
 
+    /** F1a sub-stage 3b — a god's curse for a band, selected by the god's DOMAIN
+     *  (curses stay {@link DeityDomain}-keyed data; the god is the subject). Null if
+     *  the domain has no authored curse at that band. */
+    public static Curse forDomain(DeityDomain domain, DispleasureTier severity) {
+        for (Curse c : CURSES) {
+            if (c.domain() == domain && c.severity() == severity) return c;
+        }
+        return null;
+    }
+
     public static List<Curse> all() { return CURSES; }
 
     private static MobEffectInstance fx(Holder<MobEffect> e, int dur, int amp) {

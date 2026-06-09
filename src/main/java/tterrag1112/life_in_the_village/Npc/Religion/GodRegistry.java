@@ -1,12 +1,16 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Foundation 1 (F1a) — the canonical home of the four {@link God}s, mirroring
@@ -91,6 +95,31 @@ public final class GodRegistry {
     public static List<String> religionsVenerating(String godId) {
         ensureInit();
         return godId == null ? List.of() : RELIGIONS_BY_GOD.getOrDefault(godId, List.of());
+    }
+
+    /** F1a sub-stage 3b — a religion that venerates {@code godId} (its first), for
+     *  reading RELIGION-narrative attributes (cosmology / calendar / sacred history)
+     *  the deity attributes don't cover. Empty for an unknown / unvenerated god. */
+    public static Optional<Religion> primaryReligionOf(String godId) {
+        List<String> rids = religionsVenerating(godId);
+        return rids.isEmpty() ? Optional.empty() : ReligionRegistry.find(rids.get(0));
+    }
+
+    /**
+     * F1a sub-stage 3b — the distinct gods a player has standing with: the gods of
+     * every religion the player believes in (deduped, belief order). The one shared
+     * iteration subject for the divine-event ticks (visions / wrath / theophany), so
+     * each doesn't re-derive it. Empty for an atheist player.
+     */
+    public static List<God> playerGods(ServerLevel level, UUID playerId) {
+        ensureInit();
+        PietyComponent piety = RiteSavedData.get(level).getPlayerPiety(playerId).orElse(null);
+        if (piety == null) return List.of();
+        LinkedHashSet<God> set = new LinkedHashSet<>();
+        for (String rid : piety.beliefs().keySet()) {
+            ReligionRegistry.find(rid).ifPresent(r -> set.addAll(godsFor(r)));
+        }
+        return new ArrayList<>(set);
     }
 
     // ── Init ───────────────────────────────────────────────────────────────
