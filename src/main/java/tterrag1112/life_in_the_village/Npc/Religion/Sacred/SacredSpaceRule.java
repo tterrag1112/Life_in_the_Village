@@ -95,7 +95,10 @@ public sealed interface SacredSpaceRule
             implements SacredSpaceRule {
         public float potencyAt(ServerLevel level, BlockPos pos) {
             for (ResourceKey<Structure> key : structures) {
-                if (level.structureManager().getStructureWithPieceAt(pos, key).isValid()) {
+                // No ResourceKey overload exists — match via the Holder predicate
+                // overload (Holder.is(ResourceKey)).
+                if (level.structureManager()
+                        .getStructureWithPieceAt(pos, holder -> holder.is(key)).isValid()) {
                     return potency;
                 }
             }
