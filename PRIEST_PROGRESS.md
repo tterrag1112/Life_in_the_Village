@@ -10122,3 +10122,147 @@ prior numbers; the theophany structure-query band is unchanged on non-holy days.
 5. **No regression / perf.** A sub-DEVOUT player, a non-believer, and any non-holy day
    behave exactly as before; confirm no per-tick structure-lookup spam (the holy check
    is a cheap calendar lookup; the sacred query stays behind the staged guard).
+
+## Sacred Space S3 — decaying theophany imprints (the dynamic third source) (2026-06-10)
+
+The capstone of the sacred-space layer and the first **location-tied, persisted**
+divine state in the mod. A glory theophany **sanctifies the ground where it occurs** —
+a sacred **imprint** that **decays over time**, its decay **slowed by a nearby player
+SHRINE** of the god's faith, its strength **raised by nearby rites**. The loop the
+design built toward: a divine event makes a place holy for a while; the player keeps it
+holy with a shrine + rites; neglect lets it fade. It folds into
+`SacredSpace.sacrednessAt` as the **third source**, so every S1b/S2 effect inherits it
+automatically. **Completes the Sacred Space + Sacred Time layer.**
+
+### Disposition (investigation)
+
+- **SavedData idiom:** `GraveyardSavedData` / `RiteSavedData` — own `SavedDataType` +
+  storage name, a codec over the collection (list rebuilt to a map in `fromCodec`),
+  `get(level)` via `computeIfAbsent`, `markDirty`. The new store is imprint-keyed.
+- **Fold seam:** the commented S3 spot in `SacredSpace.explain` — the imprint source
+  ADDS the summed current strength of the god's nearby imprints.
+- **Write point:** `DivineTheophany.fireFavour` (god + player + level + now → the
+  player's BlockPos is the site). **Glory only** — `fireWrath` writes nothing
+  (profanity is a future option).
+- **Refresh point:** `RiteExecutor.runOne` after a SUCCESSFUL rite (`gatheringLocation`
+  + `religionId` → `godsFor`). Rites RAISE existing imprints; they do not seed new ones.
+- **Shrine detection:** a `SHRINE` of the god's faith near the imprint — the same
+  god-aware building scan the built source already does.
+- **Lazy decay:** `DivineFavour`'s relax-on-read precedent — store `(anchorStrength,
+  anchorTick)`, compute current on query; no per-tick scan.
+
+### Model + decisions
+
+- **`SacredSpaceSavedData`** (new, `Npc/Religion/Sacred/`, storage
+  `life_in_the_village_sacred_imprints`) — `Map<String, Imprint>` keyed by
+  `godId@pos.asLong()`. **`Imprint`** = `(godId, pos, bornTick, anchorStrength,
+  anchorTick)` with its own codec (`BlockPos.CODEC` etc.); the store's codec is a
+  `listOf().optionalFieldOf` rebuilt to the map (the Graveyard idiom).
+- **Decay (lazy, shrine-slowed):** linear to 0 over `LIFETIME_TICKS` (6 in-game days)
+  from `anchorStrength` at `anchorTick`; a same-faith `SHRINE` within `SHRINE_SLOW_RADIUS`
+  multiplies the lifetime ×`SHRINE_LIFETIME_MULT` (3) — checked at read time. Computed in
+  `currentStrength`; **pruned lazily** when it reaches 0 on access (no global scan).
+- **Create:** `addImprint(godId, pos, now, INITIAL_STRENGTH=2.0)` — MAJOR-tier so a
+  fresh theophany site reads strongly sacred.
+- **Refresh:** `refreshNear(godId, pos, now)` raises imprints of that god within
+  `REFRESH_RADIUS` toward `STRENGTH_CAP=3.0` by `RITE_BOOST=0.5` and resets the anchor.
+- **Query:** `imprintPotency(level, godId, pos, now)` = summed current strength of the
+  god's imprints within `IMPRINT_RADIUS` (24). Short-circuits O(1) when the map is empty
+  (the common case — theophanies are rare).
+- **Shared scan (de-dup):** added `BuildingFaith.hasBuildingOfGodNear(level, godId, pos,
+  radius, typeFilter)` — the ONE god-aware building-near-position scan; the **built**
+  source (`isReligiousBuilding` filter) and the imprint **shrine-slow** (`SHRINE` filter)
+  both use it. `SacredSpace.builtPotency` was refactored onto it (removing its duplicate
+  scan).
+
+### What shipped
+
+- New: `SacredSpaceSavedData` (+ nested `Imprint`).
+- `SacredSpace.explain` — the S3 seam is **filled** (imprint contribution added to the
+  natural + built sum); `builtPotency` delegates to the shared scan.
+- `BuildingFaith.hasBuildingOfGodNear` — the shared scan.
+- `DivineTheophany.fireFavour` — writes the imprint (glory only).
+- `RiteExecutor.runOne` — refreshes nearby same-god imprints on a successful, located
+  rite.
+- `/religion sacred` — auto-shows the `imprint` contribution (via `explain`) and flags
+  `(shrine-tended)` when a shrine is slowing it.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `DivineTheophany.fireFavour` (creates), `RiteExecutor`
+   (refreshes), `BuildingFaith`/SHRINE (slows decay), `GodRegistry`/`Religions` (god
+   resolution) — all confirmed.
+2. **Downstream callers.** `SacredSpace.sacrednessAt`/`explain` (the fold) → every S1b
+   favour/miracle/theophany and S2 holy-day effect inherits imprints with **no extra
+   wiring**. No double-count: natural (rules), built (buildings), imprint (theophany
+   sites) are distinct sources summed once. The `/religion sacred` readout.
+3. **Sibling systems.** `GraveyardSavedData`/`RiteSavedData` — sibling SavedData, the
+   new store has a distinct storage name (`…_sacred_imprints`) so they coexist in
+   separate `.dat` files. The per-player theophany ledger (cooldown milestone, in
+   `RiteSavedData`) is separate player-state; the imprint is WORLD-state — not conflated.
+4. **Exhaustive switches.** None added (reused `SacrednessTier`). Confirmed.
+
+### Simplification Sweep
+
+- **One store** (`SacredSpaceSavedData`), **one decay helper** (`currentStrength`,
+  lazy/read-time), **one fold point** (`SacredSpace.explain`). The **S1a seam is now
+  filled**, not left dangling.
+- **Shrine/building detection de-duplicated:** the new `BuildingFaith.hasBuildingOfGodNear`
+  is the single god-aware scan; `SacredSpace.builtPotency` (built source) and the imprint
+  shrine-slow both call it — and `SacredSpace` shed its own copy of the scan (and the now-
+  unused `VillageSavedData`/`Village`/`Building`/`PosUtil`/`Religion`/`Religions` imports).
+- **Touched classes:** `SacredSpaceSavedData` (new), `SacredSpace`, `BuildingFaith`,
+  `DivineTheophany`, `RiteExecutor`, `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **Lazy prune only** (on access) — no separate periodic sweep added; theophanies are
+  rare so the map stays tiny and read-time pruning suffices (a periodic sweep can be
+  added if a world ever accrues many).
+- **Linear decay** (not exponential) — matches the prompt's "decay toward 0 over a
+  lifetime L" most directly and makes the shrine's lifetime-multiplier intuitive.
+- **`refreshNear` takes `level`** (to evaluate the shrine-slow when computing the
+  current strength it raises from) — a small signature detail; no caller churn (one
+  caller, `RiteExecutor`).
+- Captured `religionId` into a `final faithId` in `RiteExecutor.runOne` for the refresh
+  lambda (it is reassigned earlier, so not effectively final) — a local fix, no
+  behaviour change.
+
+### Out-of-scope but flagged
+
+- **Wrath / profanity imprints** (negative sacredness) — glory only this stage;
+  `fireWrath` writes nothing. The store + fold could carry a signed strength later.
+- **NPC-side** imprint creation / NPC holy-day observance + festivals.
+- **Holy-city / sacred-kingdom** contributor; **worldgen** shrine-spawn.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the S2 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep**: all `SacredSpaceSavedData` / `hasBuildingOfGodNear`
+/ `addImprint` / `refreshNear` / `imprintPotency` / `isShrineTended` references resolve;
+the `Imprint` codec is a 5-field record (BlockPos.CODEC + 2 long + 1 float + 1 string),
+under the cap; `fromCodec` is a 1-arg Function matching the single group field; the
+fold short-circuits O(1) when no imprints exist; the empty-store default means pre-S3
+saves load clean. **Caught locally-only bug class:** `religionId` non-effectively-final
+capture (fixed) — exactly what the qualifier/closure grep + a careful read surface when
+javac can't run here.
+
+### Smoke test (user-runnable)
+
+1. **Theophany sanctifies ground.** On ordinary ground, force a Sun-Mother glory
+   theophany (`/religion theophany favour sun_mother`) → `/religion sacred sun_mother`
+   there now reads MAJOR with an `imprint +2.0`, and an offering there gets the sacred
+   favour multiplier.
+2. **Decay.** Advance time (`/time add`) and re-check — the imprint strength drops, then
+   `/religion sacred` reads NONE once it prunes (~6 days bare).
+3. **Shrine slows decay.** Repeat, build a `SHRINE` of the faith within ~32 blocks →
+   `/religion sacred` shows `imprint … (shrine-tended)` and the decay is slower (×3
+   lifetime).
+4. **Rites refresh.** Hold a rite of the faith near the imprint → its strength rises
+   (toward 3.0) and its clock resets.
+5. **Glory only / rites don't seed.** A wrath theophany leaves no sacred imprint; a
+   routine rite on un-imprinted ground creates none.
+6. **Persistence + perf.** Save+reload → imprints persist; confirm no per-tick spam
+   (decay is read-time; the fold is O(1) when no imprints exist).

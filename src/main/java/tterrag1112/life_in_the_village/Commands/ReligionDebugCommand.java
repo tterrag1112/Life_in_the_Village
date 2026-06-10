@@ -304,7 +304,15 @@ public final class ReligionDebugCommand {
             sb.append(String.format(Locale.ROOT, "%n§6%-12s %s%s§7 (%.1f)",
                     g.id(), colour, tier, bd.total()));
             for (var c : bd.contributions()) {
-                sb.append(String.format(Locale.ROOT, "%n  §8• %s §7+%.1f", c.source(), c.potency()));
+                // S3 — flag a shrine slowing a theophany imprint's decay.
+                String extra = "";
+                if (c.source().equals("imprint")
+                        && tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpaceSavedData
+                                .get(level).isShrineTended(level, g.id(), pos)) {
+                    extra = " §a(shrine-tended)";
+                }
+                sb.append(String.format(Locale.ROOT, "%n  §8• %s §7+%.1f%s",
+                        c.source(), c.potency(), extra));
             }
         }
         src.sendSuccess(() -> Component.literal(sb.toString())

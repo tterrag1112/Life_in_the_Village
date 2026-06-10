@@ -153,6 +153,19 @@ public final class RiteExecutor {
         };
 
         rdata.putRite(rite.withPresider(priestId).withOutcome(outcome, now));
+        // S3 — a SUCCESSFUL rite of the faith near a theophany imprint of its god(s)
+        // REFRESHES (strengthens + resets decay) that sacred ground; it does NOT seed
+        // new imprints (sacredness originates from the divine event, not routine rites).
+        if (outcome == RiteOutcome.SUCCESSFUL) {
+            final String faithId = religionId;   // religionId is reassigned above → capture
+            rite.gatheringLocation().ifPresent(loc -> {
+                var store = tterrag1112.life_in_the_village.Npc.Religion.Sacred
+                        .SacredSpaceSavedData.get(level);
+                Religions.find(level, faithId).ifPresent(r ->
+                        GodRegistry.godsFor(r).forEach(g ->
+                                store.refreshNear(level, g.id(), loc, now)));
+            });
+        }
         if (priest.getProfession() == Profession.PRIEST) {
             // Priest gains SOCIAL XP from officiating, scaled by rite tier
             // (R1a) so harder rites progress faster once qualified. Single

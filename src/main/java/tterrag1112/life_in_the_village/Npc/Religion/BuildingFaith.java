@@ -216,6 +216,35 @@ public final class BuildingFaith {
     }
 
     /**
+     * Sacred Space — is there a religious building of {@code godId}'s faith (its
+     * primary god) within {@code radius} (horizontal) of {@code pos}, matching
+     * {@code typeFilter}? The ONE god-aware building-near-position scan, shared by the
+     * built-sacredness source ({@code isReligiousBuilding} filter) and the imprint
+     * decay-slow ({@code SHRINE} filter), so neither re-implements the scan.
+     */
+    public static boolean hasBuildingOfGodNear(ServerLevel level, String godId, BlockPos pos,
+                                               int radius,
+                                               java.util.function.Predicate<BuildingType> typeFilter) {
+        if (godId == null || pos == null) return false;
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageAt(pos).orElse(null);
+        if (village == null) return false;
+        tterrag1112.life_in_the_village.Utilities.PosUtil at =
+                new tterrag1112.life_in_the_village.Utilities.PosUtil(pos);
+        for (UUID bid : village.getBuildingIds()) {
+            Building b = data.getBuildingById(bid).orElse(null);
+            if (b == null || !typeFilter.test(b.getType())) continue;
+            if (at.horizontalDistanceTo(b.getShape().getOrigin()) > radius) continue;
+            String faith = resolveFaith(level, village, b);
+            if (faith == null) continue;
+            Religion r = Religions.get(level, faith);
+            God primary = r == null ? null : GodRegistry.primaryGod(r).orElse(null);
+            if (primary != null && primary.id().equals(godId)) return true;
+        }
+        return false;
+    }
+
+    /**
      * The served test's building-aware core: is there a loaded PRIEST in the
      * village whose building faith equals {@code faith}? Covers both a dominant
      * temple/chapel priest and a minority shrine priest with one scan.

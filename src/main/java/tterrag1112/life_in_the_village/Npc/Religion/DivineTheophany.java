@@ -139,6 +139,12 @@ public final class DivineTheophany {
         player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 12000, 0));
         // The lasting mark of favour: this GOD's favour pinned to the cap.
         DivineFavour.addCapped(level, player.getUUID(), god.id(), DivineFavour.MAX_FAVOUR, now);
+        // S3 — the glory SANCTIFIES the ground: a decaying sacred imprint at the site
+        // (wrath writes none this stage — profanity is a future option).
+        tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpaceSavedData.get(level)
+                .addImprint(god.id(), player.blockPosition(), now,
+                        tterrag1112.life_in_the_village.Npc.Religion.Sacred
+                                .SacredSpaceSavedData.INITIAL_STRENGTH);
         RiteSavedData.get(level).setTheophanyTick(player.getUUID(), god.id() + "|favour", now);
     }
 
