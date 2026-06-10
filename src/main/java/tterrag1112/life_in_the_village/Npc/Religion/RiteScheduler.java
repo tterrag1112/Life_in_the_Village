@@ -88,6 +88,15 @@ public final class RiteScheduler {
             LOGGER.warn("[RiteScheduler] tithe pass threw: {}", t.getMessage());
         }
 
+        // 5b. SR1 — living-saint NPC sweep: designate sustained-PIOUS holy people +
+        // revoke any whose piety lapsed. Daily, sampling loaded NPCs (no per-tick scan).
+        try {
+            tterrag1112.life_in_the_village.Npc.Religion.Saints.Saints
+                    .dailyNpcSweep(level, vdata, level.getGameTime());
+        } catch (Throwable t) {
+            LOGGER.warn("[RiteScheduler] saint sweep threw: {}", t.getMessage());
+        }
+
         // 6. R4e — prune stale transient completed rites so the unpruned ledger
         // stays bounded. The consecration SUCCESS marker + PENDING rites + the
         // player-piety map are retained.

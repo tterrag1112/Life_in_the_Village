@@ -10266,3 +10266,130 @@ javac can't run here.
    routine rite on un-imprinted ground creates none.
 6. **Persistence + perf.** Save+reload → imprints persist; confirm no per-tick spam
    (decay is read-time; the fold is O(1) when no imprints exist).
+
+## Saints & Relics SR1 — living saints (holy people) (2026-06-10)
+
+The first holy-layer stage and the richer saint tier: a **living holy person** — a
+status a devout player or NPC attains in life through deep devotion and a god's
+recognition. The player's religious summit; an NPC's path to a revered focal point; the
+seed of the canonized roster (SR2 auto-canonizes a living saint who dies). SR1 builds
+the **status**: who becomes one, what they get (recognition + personal divine ease), how
+it's lost, where it's stored and shown. No canonization/death (SR2), intercession (SR3),
+or relics (SR4).
+
+### Disposition (investigation)
+
+- **Anointing hook:** `DivineTheophany.fireFavour` already fires only at peak favour for
+  a PIOUS player (the favour-pole tick gates `tierForGod == PIOUS`), so the glory
+  manifesting IS the recognition — no extra numeric threshold needed.
+- **Gates:** `PietyComponent.primaryTier()` / `DivineFavour.tierForGod` (PIOUS),
+  `DivineFavour.current` (favour), `meetsMonthlyAttendance()` (NPC sustained signal).
+- **Amplifier-composition pattern:** the favour grant (`DivineFavour.awardConcept`) and
+  miracle gate (`MiracleInvoker`) already fold `SacredSpace.amplifierAt` ×
+  `SacredTime.holyDayFactor` multiplicatively — `SaintFactor` slots in as one more
+  factor with identical shape.
+- **SavedData idiom:** `SacredSpaceSavedData`/`RiteSavedData` — new `SaintsSavedData`.
+- **Daily NPC hook:** `RiteScheduler.dailyTick` already does a per-village pass; the NPC
+  saint sweep rides it.
+
+### Model + what shipped
+
+- **`SaintsSavedData`** (new, `Npc/Religion/Saints/`, storage `life_in_the_village_saints`)
+  — `Map<UUID beingId, LivingSaint(beingId, godId, becameTick, isPlayer)>` (a being is
+  the Holy of at most one god). Reads `isLivingSaint`/`livingSaintGod`/`livingSaintsOf`/
+  `all`; writes `add` (idempotent) / `remove`. List-codec rebuilt to the map; empty
+  default. Shaped to accept SR2's canonized roster (a second list) later.
+- **`SaintFactor`** (new) — the personal-ease multiplier mirroring the sacred amplifiers:
+  `amplifierFor(level, beingId, godId)` = `SAINT_AMPLIFIER` (1.25) for a living saint of
+  that god, else 1.0. The one home for the saint multiplier.
+- **`Saints`** (new) — the one home for the transitions: `anointPlayer` (idempotent),
+  `reviewPlayerLapse` (revoke on favour ≤ CURSE band or tier < PIOUS), `dailyNpcSweep`
+  (designate sustained-PIOUS NPCs of their faith's primary god; revoke on piety lapse).
+- **Anointing (player):** `DivineTheophany.fireFavour` → `Saints.anointPlayer`.
+- **Personal ease:** `awardConcept` and `MiracleInvoker.status`/`cast` now multiply by
+  `SaintFactor.amplifierFor` beside the space × time amplifiers (composes; still clamped
+  to the favour cap — eases, never bypasses the cap or tier gate).
+- **Loss:** player on the per-player theophany cadence (`DivineTheophany.tick`); NPC on
+  the daily `RiteScheduler` sweep. Both routed through `Saints` (one logic home).
+- **Surfacing:** `/religion saints` (living saints by god) + a `★ HOLY OF <god>` flag on
+  `/religion favour view`.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `DivineTheophany.fireFavour` (player anoint), `tierForGod` /
+   `DivineFavour.current` / `PietyComponent` (gates), `GodRegistry.primaryGod` (NPC patron
+   god). Confirmed.
+2. **Downstream callers.** Favour grant + miracle gate now also fold `SaintFactor`; the
+   two command readouts. **Non-saints read 1.0 → today's exact numbers.**
+3. **Sibling systems.** Composes with sacred space (S1b) × time (S2) MULTIPLICATIVELY —
+   distinct sources, no double-count. The anointing rides the existing `fireFavour`
+   (after its effect + cooldown stamp) — it does not disturb the theophany's
+   cooldown/milestone or effect.
+4. **Exhaustive switches.** None added — `SaintFactor` is a boolean→multiplier (no enum);
+   `Saints` switches nothing. No existing enum changed.
+
+### Simplification Sweep
+
+- **One store** (`SaintsSavedData`), **one multiplier helper** (`SaintFactor`, folded
+  beside the existing amplifiers — not a parallel favour path), **one transitions home**
+  (`Saints`: anoint / player-lapse / NPC-sweep all live here; the effect sites only
+  READ via `SaintFactor`/`isLivingSaint`).
+- **Touched classes:** `SaintsSavedData` (new), `SaintFactor` (new), `Saints` (new),
+  `DivineTheophany`, `DivineFavour`, `MiracleInvoker`, `RiteScheduler`,
+  `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **Optional favour-ceiling bump skipped** — kept to the ease amplifier + recognition
+  (the prompt's stated core); the saint's grant is eased but still clamped to the
+  piety-tier cap. A bounded ceiling bump can be added later if desired.
+- **Surfacing via command readouts** (`/religion saints` + favour-view flag) rather than
+  the GUI player-religion screen — avoids packet/screen churn ("keep it light"); the
+  screen "Holy of <God>" line is a light future add (flagged).
+- **NPC reverence is roster-only** — no greeting/standing AI flag (the prompt allowed
+  "a light flag at most / optional"); the `/religion saints` readout surfaces NPC saints.
+  Deeper NPC reverence deferred.
+- **Player loss reviewed on the theophany cadence** (every 200 ticks per player) and NPC
+  on the daily sweep — both lazy/periodic, no per-tick scan, per the discipline.
+
+### Out-of-scope but flagged
+
+- **SR2** — canonized / deceased saints: a living saint who dies → auto-canonize (martyr
+  fast-track + Venerable→deliberate canonization for others); a `Saint` record +
+  chronicle + grave epitaph + an S3 imprint at the grave + a saint's-day calendar add via
+  `ReligionSavedData.put`. (`SaintsSavedData` is shaped to hold the dead roster.)
+- **SR3** — intercession (pray-to-saint). **SR4** — relics.
+- **Deferred** — NPC favour / NPC theophany to unify the two saint paths; bless-others /
+  community aura; the GUI-screen "Holy of" line; deeper NPC reverence.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the S3 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep**: every `SaintsSavedData` / `SaintFactor` /
+`Saints.Saints` reference resolves; `LivingSaint` is a 4-field record codec (UUID-string
++ string + long + bool) under the cap; the multiplier reads 1.0 for non-saints
+(behaviour-preserving); `DivineFavour.CURSE_AT` / `tierForGod` are public for the
+cross-package lapse check; the NPC sweep + player review are both periodic (no per-tick
+scan).
+
+### Smoke test (user-runnable)
+
+1. **Player anointing.** As a PIOUS Sunstead player, drive favour to peak and force a
+   Sun-Mother glory theophany (`/religion theophany favour sun_mother`) → `/religion
+   saints` lists you as Holy of the Sun-Mother and `/religion favour view` shows the
+   `★ HOLY OF` flag.
+2. **Personal ease.** An offering / near-threshold miracle with the Sun-Mother is then
+   eased (×1.25 on top of any sacred space/time) vs a non-saint; the favour still clamps
+   at the cap.
+3. **Loss.** Drive favour into displeasure (`/religion sacrilege sunstead 200`) or drop
+   below PIOUS → within a theophany check the status is revoked (`/religion saints` drops
+   you).
+4. **NPC designation + loss.** A sustained-PIOUS NPC of a faith is designated (within a
+   day's sweep) and shows in `/religion saints` as an `npc`; if its piety lapses below
+   PIOUS it's revoked on a later sweep.
+5. **No regression / perf.** A non-saint player and NPC see today's exact numbers;
+   confirm no per-tick spam (the saint multiplier is an O(1) map read; the NPC sweep is
+   daily, the player review on the 200-tick theophany cadence).
