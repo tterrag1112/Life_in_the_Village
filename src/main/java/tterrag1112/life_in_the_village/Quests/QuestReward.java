@@ -12,12 +12,16 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Npc.Religion.DivineFavour;
+import tterrag1112.life_in_the_village.Npc.Religion.DivineVision;
+import tterrag1112.life_in_the_village.Npc.Religion.God;
+import tterrag1112.life_in_the_village.Npc.Religion.GodRegistry;
 
 /**
  * F2a-1 — a quest reward granted on completion. Sealed + dispatch-coded (like
- * {@link Objective}); F2a-1 ships {@link Favour} (favour with a god) and {@link Items}.
+ * {@link Objective}); F2a-1 ships {@link Favour} (favour with a god) and {@link Items};
+ * F2a-3 adds {@link Vision} (a god-voiced confirmation line, for graduated callings).
  */
-public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Items {
+public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Items, QuestReward.Vision {
 
     String type();
 
@@ -29,6 +33,7 @@ public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Item
     Codec<QuestReward> CODEC = Codec.STRING.dispatch("type", QuestReward::type, t -> switch (t) {
         case Favour.TYPE -> Favour.MAP_CODEC;
         case Items.TYPE  -> Items.MAP_CODEC;
+        case Vision.TYPE -> Vision.MAP_CODEC;
         default -> throw new IllegalStateException("Unknown reward type: " + t);
     });
 
@@ -75,6 +80,25 @@ public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Item
         }
 
         public String describe() { return count + "× " + itemId; }
+    }
+
+    /** F2a-3 — a god-voiced confirmation vision (the graduated-calling fulfilment line).
+     *  Delivered via {@link DivineVision#speak}. */
+    record Vision(String godId, String text) implements QuestReward {
+        public static final String TYPE = "vision";
+        public static final MapCodec<Vision> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                Codec.STRING.fieldOf("godId").forGetter(Vision::godId),
+                Codec.STRING.fieldOf("text").forGetter(Vision::text)
+        ).apply(i, Vision::new));
+
+        public String type() { return TYPE; }
+
+        public void grant(ServerLevel level, ServerPlayer player, long now) {
+            God god = GodRegistry.get(godId);
+            if (god != null) DivineVision.speak(god, player, text);
+        }
+
+        public String describe() { return "a vision from " + godId; }
     }
 
     Logger LOGGER = LogUtils.getLogger();

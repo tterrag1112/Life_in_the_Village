@@ -88,6 +88,20 @@ public final class QuestCommand {
             }
         }
         sb.append(String.format(Locale.ROOT, "%n§8Completed: %d", completed));
+
+        // F2a-3 — the player religious career: devotion rank per divine giver.
+        var standings = store.standings(player.getUUID());
+        if (!standings.isEmpty()) {
+            sb.append("\n§e--- Devotion ---");
+            standings.forEach((key, count) -> {
+                String godId = key.startsWith("DIVINE:") ? key.substring("DIVINE:".length()) : key;
+                String godName = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.find(godId)
+                        .map(g -> g.displayName()).orElse(godId);
+                var rank = tterrag1112.life_in_the_village.Quests.DevotionRank.fromCount(count);
+                sb.append(String.format(Locale.ROOT, "%n  §6%s§7 — §d%s§7 (%d quest(s))",
+                        godName, rank.displayName(), count));
+            });
+        }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
         return 1;

@@ -119,9 +119,8 @@ public final class DivineFavour {
         Religion r = Religions.get(level, religionId);
         if (r == null) return;
         for (God g : GodRegistry.godsFor(r)) award(level, playerId, g.id(), act, now, pos);
-        // Divine Layer V3 — an act may fulfil a standing divine calling (religion-
-        // keyed); the bonus uses addCappedForReligion (no calling re-trigger).
-        DivineVision.onFavourAct(level, playerId, religionId, act, now);
+        // F2a-3 — the V3 calling fulfilment hook is retired; graduated divine quests
+        // complete through the quest engine's own notify path (wired on each act).
     }
 
     /** Drives displeasure with every god the religion venerates (V4 sacrilege). */

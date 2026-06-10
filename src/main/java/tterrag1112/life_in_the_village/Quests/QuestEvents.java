@@ -44,6 +44,9 @@ public final class QuestEvents {
             if (progressed.allComplete()) {
                 progressed = progressed.withStatus(QuestStatus.COMPLETED);
                 grantRewards(level, player, progressed, now);
+                // F2a-3 — accrue giver standing (the player religious career) in THIS
+                // single completion path (not per-kind).
+                store.accrueStanding(player.getUUID(), progressed.giver());
                 player.displayClientMessage(Component.literal("Quest complete: " + progressed.title())
                         .withStyle(ChatFormatting.GOLD), false);
             } else {

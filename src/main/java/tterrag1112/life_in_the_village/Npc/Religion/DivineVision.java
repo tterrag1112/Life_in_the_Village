@@ -80,17 +80,22 @@ public final class DivineVision {
         // RELIGION narrative source: a religion that venerates this god.
         Religion rel = GodRegistry.primaryReligionOf(level, god.id()).orElse(null);
         ReligionIdentity id = rel == null ? null : ReligionIdentity.get(rel.id());
-        RiteSavedData data = RiteSavedData.get(level);
 
-        // Sometimes lay a calling instead of a plain vision (only if none active).
-        if (rel != null && data.getPlayerCalling(player.getUUID()).isEmpty()
+        // F2a-3 — sometimes the vision lays a DIVINE QUEST (the graduated calling)
+        // instead of a plain vision, only if the player has no active divine quest.
+        if (rel != null
+                && !tterrag1112.life_in_the_village.Quests.QuestSavedData.get(level)
+                        .hasActiveGiverQuest(player.getUUID(),
+                                tterrag1112.life_in_the_village.Quests.QuestGiver.Type.DIVINE)
                 && level.getRandom().nextInt(CALLING_CHANCE) == 0) {
             FavourAct act = CALLABLE[level.getRandom().nextInt(CALLABLE.length)];
-            PlayerCalling calling = new PlayerCalling(rel.id(), act, now);
-            data.setPlayerCalling(player.getUUID(), calling);
-            send(player, god, "I would have you serve. " + calling.describe()
-                    + " — and I shall remember it.");
-            return;
+            var quest = tterrag1112.life_in_the_village.Quests.QuestIssuer
+                    .issueDivineCalling(level, player, rel.id(), act, CALLING_REWARD, now);
+            if (quest != null) {
+                send(player, god, "I would have you serve. " + quest.description()
+                        + " — and I shall remember it.");
+                return;
+            }
         }
 
         send(player, god, composeVision(level, player, god, rel, id, now));
@@ -150,37 +155,26 @@ public final class DivineVision {
         return bits.get((int) (System.nanoTime() % bits.size()));
     }
 
-    // ── The light calling — fulfilment from the V1 act hooks (religion-keyed) ──
-
-    /**
-     * Called from {@link DivineFavour#awardForReligion} when a player completes a
-     * favour-earning act. Fulfils a matching standing calling: bonus favour + a lore
-     * vision (voiced by the religion's god). No-op otherwise.
-     */
-    public static void onFavourAct(ServerLevel level, UUID playerId, String religionId,
-                                   FavourAct act, long now) {
-        RiteSavedData data = RiteSavedData.get(level);
-        PlayerCalling c = data.getPlayerCalling(playerId).orElse(null);
-        if (c == null || !c.religionId().equals(religionId) || c.act() != act) return;
-
-        data.clearPlayerCalling(playerId);
-        DivineFavour.addCappedForReligion(level, playerId, religionId, CALLING_REWARD, now);
-
-        ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
-        if (player == null) return;
-        Religion rel = Religions.get(level, religionId);
-        God god = rel == null ? null : GodRegistry.primaryGod(rel).orElse(null);
-        if (god == null) return;
-        ReligionIdentity id = ReligionIdentity.get(religionId);
-        send(player, god, "You have answered my call. Favour is yours — and a truth: "
-                + lore(god, id, rel));
-    }
+    // F2a-3 — the V3 light calling is RETIRED: a vision now lays a real DIVINE QUEST
+    // (see deliver(), via QuestIssuer), and the quest engine's notify path tracks +
+    // completes it + grants the favour/vision reward. The old onFavourAct fulfilment
+    // hook + the PlayerCalling state are deleted (convert-then-delete).
 
     /** F1a sub-stage 3b — deliver a god-voiced line (the negative side reuses this
      *  styled message for omens / curse pronouncements). The god is the subject. */
     public static void speak(God god, ServerPlayer player, String text) {
         if (god == null) return;
         send(player, god, text);
+    }
+
+    /** F2a-3 — a lore line for {@code godId} (the graduated-calling confirmation reuses
+     *  the same flavour the old fulfilment vision did). Empty for an unknown god. */
+    public static String loreFor(ServerLevel level, String godId) {
+        God god = GodRegistry.get(godId);
+        if (god == null) return "";
+        Religion rel = GodRegistry.primaryReligionOf(level, godId).orElse(null);
+        ReligionIdentity id = rel == null ? null : ReligionIdentity.get(rel.id());
+        return lore(god, id, rel);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

@@ -33,17 +33,27 @@ public class QuestSavedData extends SavedData {
             RecordCodecBuilder.create(i -> i.group(
                     Codec.unboundedMap(UUID_STRING, Quest.CODEC.listOf())
                             .optionalFieldOf("questsByPlayer", Map.of())
-                            .forGetter(d -> Map.copyOf(d.questsByPlayer))
+                            .forGetter(d -> Map.copyOf(d.questsByPlayer)),
+                    // F2a-3 — per-player giver standing: playerId → (giverKey → completed
+                    // count). The player religious-career spine. Empty by default.
+                    Codec.unboundedMap(UUID_STRING,
+                                    Codec.unboundedMap(Codec.STRING, Codec.INT))
+                            .optionalFieldOf("standingByPlayer", Map.of())
+                            .forGetter(d -> Map.copyOf(d.standingByPlayer))
             ).apply(i, QuestSavedData::fromCodec)));
 
     /** playerId → all their quests (active + terminal; status distinguishes). */
     private final Map<UUID, List<Quest>> questsByPlayer = new LinkedHashMap<>();
+    /** F2a-3 — playerId → (giverKey "TYPE:id" → quests completed for that giver). */
+    private final Map<UUID, Map<String, Integer>> standingByPlayer = new LinkedHashMap<>();
 
     public QuestSavedData() {}
 
-    private static QuestSavedData fromCodec(Map<UUID, List<Quest>> loaded) {
+    private static QuestSavedData fromCodec(Map<UUID, List<Quest>> loaded,
+                                           Map<UUID, Map<String, Integer>> standing) {
         QuestSavedData d = new QuestSavedData();
         if (loaded != null) loaded.forEach((k, v) -> d.questsByPlayer.put(k, new ArrayList<>(v)));
+        if (standing != null) standing.forEach((k, v) -> d.standingByPlayer.put(k, new LinkedHashMap<>(v)));
         return d;
     }
 
@@ -69,6 +79,40 @@ public class QuestSavedData extends SavedData {
     public Optional<Quest> quest(UUID playerId, UUID questId) {
         for (Quest q : questsOf(playerId)) if (q.questId().equals(questId)) return Optional.of(q);
         return Optional.empty();
+    }
+
+    /** True when the player has an ACTIVE quest from a giver of {@code type} (used to
+     *  avoid stacking divine callings). */
+    public boolean hasActiveGiverQuest(UUID playerId, QuestGiver.Type type) {
+        for (Quest q : active(playerId)) if (q.giver().type() == type) return true;
+        return false;
+    }
+
+    // ── Giver standing (F2a-3 — the player religious career) ─────────────────
+
+    /** The canonical giver-standing key: "TYPE:id" (e.g. "DIVINE:sun_mother"). */
+    public static String giverKey(QuestGiver giver) {
+        return giver.type().name() + ":" + giver.id();
+    }
+
+    /** Quests {@code playerId} has completed for {@code giverKey}. */
+    public int standing(UUID playerId, String giverKey) {
+        Map<String, Integer> m = standingByPlayer.get(playerId);
+        return m == null ? 0 : m.getOrDefault(giverKey, 0);
+    }
+
+    /** The player's standing map (giverKey → count), read-only. */
+    public Map<String, Integer> standings(UUID playerId) {
+        Map<String, Integer> m = standingByPlayer.get(playerId);
+        return m == null ? Map.of() : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(m));
+    }
+
+    /** Accrues one completed quest toward {@code giver}'s standing for {@code playerId}. */
+    public void accrueStanding(UUID playerId, QuestGiver giver) {
+        if (playerId == null || giver == null) return;
+        standingByPlayer.computeIfAbsent(playerId, k -> new LinkedHashMap<>())
+                .merge(giverKey(giver), 1, Integer::sum);
+        setDirty();
     }
 
     // ── Writes ───────────────────────────────────────────────────────────────

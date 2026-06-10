@@ -11017,3 +11017,130 @@ each notify is additive after its action.
 5. **Unchanged hosts + perf.** Praying / enshrining / rites behave exactly as before
    (the notify is side-effect-free); no per-tick perf cost was added (no
    sacred-site-reach tick). Save+reload mid-quest → progress persists.
+
+## F2 — F2a-3: V3 calling graduation + the giver-standing (career) layer (2026-06-10)
+
+The integrative stage that **completes F2a**: graduate the V3 divine callings (the mod's
+existing invisible "religious quest") into real first-class quests on the F2 engine
+(convert-then-delete the parallel `PlayerCalling`), and add the **giver-standing** layer
+— the spine of the player religious career. Self-contained; guild quests untouched.
+
+### Disposition (investigation)
+
+- **V3 calling (as-built):** `DivineVision.deliver` rolls a vision; some lay a
+  `PlayerCalling(religionId, FavourAct, issuedTick)` on `RiteSavedData`;
+  `DivineVision.onFavourAct` (called from `DivineFavour.awardForReligion`) fulfils it
+  (clears it, grants `CALLING_REWARD=15` favour, sends a confirmation vision); the screen
+  shows the active calling.
+- **`PlayerCalling` usage surface (grepped, the coverage list):** `PlayerCalling.java`
+  (the record); `RiteSavedData` (codec field + map + fromCodec param + get/set/clear
+  accessors); `DivineVision` (lay in `deliver`, fulfil in `onFavourAct`);
+  `DivineFavour.awardForReligion` (the fulfilment call); `PlayerReligionSnapshotBuilder`
+  (the screen's calling line); `PlayerReligionScreen` (the "Calling" label).
+- **`FavourAct` → `Objective` kind:** `CALLABLE` is only OFFERING / ATTEND_RITE /
+  COMMISSION_RITE → MakeOffering / PerformRites (clean; no gap). PILGRIMAGE →
+  VisitSacredSite; other acts fall back to an offering objective.
+- **Completion path for standing:** `QuestEvents.notify`'s single `allComplete` branch.
+
+### What shipped
+
+**Part A — graduation (convert-then-delete):**
+- `QuestIssuer.issueDivineCalling(level, player, religionId, act, callingReward, now)` —
+  builds a real ACTIVE DIVINE quest (giver = the faith's primary god), an `Objective` from
+  the act, rewards = `Favour(godId, CALLING_REWARD)` + a new `QuestReward.Vision(godId,
+  confirmation)` (the god-voiced fulfilment line, reusing `DivineVision.loreFor`).
+- `DivineVision.deliver` now **issues that quest** instead of a `PlayerCalling` (gated on
+  no active DIVINE quest); the issuance vision ("I would have you serve. … ") still fires.
+  The quest engine's existing notify path (offering/rite/pilgrimage, F2a-1/2) tracks +
+  completes it + grants the favour/vision reward — **parity with the old `CALLING_REWARD`
+  + confirmation vision**.
+- **Deleted:** `PlayerCalling.java`; `DivineVision.onFavourAct`; the `DivineFavour
+  .awardForReligion` fulfilment call; the `RiteSavedData` calling state (codec field, map,
+  fromCodec param, get/set/clear accessors → 6→5 codec fields; a pre-F2a-3 save's
+  "playerCalling" key is ignored on load). The screen's calling line is **rerouted** to
+  the active DIVINE quest; its label is "✦ Divine quest — …".
+
+**Part B — giver standing (the player religious career):**
+- `QuestSavedData` gained a `standingByPlayer` map (playerId → giverKey "TYPE:id" → count;
+  3rd... codec field, empty default) + `accrueStanding`/`standing`/`standings`/`giverKey`
+  + `hasActiveGiverQuest`.
+- **Accrued in the ONE completion path** (`QuestEvents.notify`'s `allComplete` branch) —
+  not per-kind.
+- `DevotionRank{SUPPLICANT(0), DEVOTEE(1), DISCIPLE(3), CHAMPION(6)}` + `fromCount`.
+- Surfaced: a "--- Devotion ---" section in `/quest` (per god: rank + completed count).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `DivineVision.deliver` (issuance), `QuestEvents` completion
+   (→ standing), the act→kind map. Confirmed.
+2. **Downstream callers.** Every `PlayerCalling` reader re-pointed/removed (grep-clean —
+   zero code refs remain, only comments): the screen line → active DIVINE quest; the
+   fulfilment + state deleted; the `DivineFavour` call removed. The standing surfacing in
+   `/quest`.
+3. **Sibling systems.** The favour economy — the graduated quest's `Favour` reward is the
+   old `CALLING_REWARD` (15) via `addCapped` (parity; capped to standing). The SR1
+   living-saint status — standing is a COMPLEMENTARY career facet (distinct map/rank),
+   not conflated. The F2 engine — standing rides the existing completion path (one accrual
+   line; the `Quest` record is `git diff`-untouched).
+4. **Exhaustive switches.** New `DevotionRank` — its only switch is its own `displayName`
+   (4-arm exhaustive); no external consumer switch. The retired `PlayerCalling.describe`
+   `FavourAct` switch is deleted with the class (no orphan). No other enum touched.
+
+### Simplification Sweep
+
+- **The `PlayerCalling` parallel quest system is DELETED** — the convert-then-delete
+  payoff: no orphan state (RiteSavedData calling map gone), no orphan reader (all
+  re-pointed), no orphan fulfilment (onFavourAct gone). Grep-verified.
+- **Standing is one record + one accrual point** (`QuestSavedData.standingByPlayer` +
+  `accrueStanding` in `QuestEvents`) + one rank enum.
+- **Deleted:** `PlayerCalling`. **New:** `DevotionRank`, `QuestReward.Vision`,
+  `QuestIssuer.issueDivineCalling`, the standing map/methods. **Touched:** `DivineVision`,
+  `DivineFavour`, `RiteSavedData`, `PlayerReligionSnapshotBuilder`, `PlayerReligionScreen`,
+  `QuestEvents`, `QuestSavedData`, `QuestCommand`.
+
+### Deviations from prompt
+
+- **The screen's calling field name (`activeCalling`) is kept** (now sourced from the
+  active DIVINE quest, label "Divine quest") — avoids an `OpenPlayerReligionPacket` schema
+  change; the screen still shows the divine task line.
+- **Standing surfaced in `/quest`** (not the religion screen) — the screen surfacing would
+  need a packet field; the prompt allowed "/quest and/or the screen". The screen already
+  shows the active divine quest (the calling line); the rank lives in `/quest`.
+- **The confirmation vision's lore is generated at ISSUANCE** (stored in the `Vision`
+  reward text) rather than at fulfilment — same flavour, fixed at issue time.
+
+### Out-of-scope but flagged
+
+- **F2b** — re-seat the legacy guild quest system onto this base (behaviour-preserving,
+  F1b-style coverage migration).
+- **Later** — saint/clergy quest givers; rank-gated perks / quest-unlock trees; staged/
+  grand quests + a quest journal UI; guild/other-profession careers modelling this
+  standing.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the F2a-2 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** (the `PlayerCalling` retirement is grep-clean — zero
+code refs, only comments) + the exhaustive-switch sweep (clean): `RiteSavedData` is 6→5
+codec fields with `fromCodec` re-arity'd; the `Quest` engine record is `git diff`-empty;
+the new `QuestReward.Vision` arm uses the proven inline `MAP_CODEC`; standing accrues in
+the single completion path. One generics watch-item carried from F2a-1: the dispatch
+codecs' target-typing.
+
+### Smoke test (user-runnable)
+
+1. **Graduation.** Drive a god's favour high so `DivineVision` lays a divine quest →
+   `/quest` shows it ACTIVE (a real quest with a tasked objective, not the old invisible
+   calling); the religion screen's "✦ Divine quest" line shows it.
+2. **Fulfilment parity.** Do the tasked act (offering / rite) → the quest completes, the
+   favour reward (15, the old `CALLING_REWARD`) lands, and the god-voiced confirmation
+   vision fires — matching the old calling fulfilment.
+3. **Career.** Complete several DIVINE quests for a god → `/quest`'s "Devotion" section
+   shows the rank climbing (Supplicant → Devotee → Disciple → Champion).
+4. **No remnant.** Confirm no old "Calling" flag/state remains; the living-saint status +
+   favour are unaffected (complementary).
+5. **Persistence.** Save+reload → the active divine quest + the standing/rank persist
+   (and a pre-F2a-3 save loads cleanly, its "playerCalling" key ignored).
