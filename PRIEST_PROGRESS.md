@@ -9590,3 +9590,131 @@ unchanged).
 5. **Coverage.** The build has no remaining static `ReligionRegistry.get/find/all`
    runtime callers — compiler-clean after the accessor restriction (only the seeder
    reads `templates()`).
+
+## F1b sub-stage 2 — interreligious relations (2026-06-09)
+
+The feature half of F1b. F1b-1 made religions per-world instances; 2 lets them
+**relate** — a stance between two faiths that, for the first time, makes the world
+react to *which faiths share gods*. Unlike F1b-1 this **adds behaviour** (not
+behaviour-preserving): KINDRED faiths syncretize more readily and clash less.
+**This completes F1b** (religions are per-world instances that relate to each other).
+
+### Disposition (investigation)
+
+1. **`FaithReconciliation`** — `applyCommunalBenefit` is the cross-faith drift point:
+   a non-co-religionist attendee of a rite (when `scaledPiety > 0`) drifts
+   `SYNCRETIC_DRIFT = 0.004` toward the OFFICIATING faith (acculturation). That single
+   `adjustBelief(riteFaith, SYNCRETIC_DRIFT)` is what the stance modulates.
+2. **`ReligionAuthorityEngine.applyReligiousTension`** — stamps a
+   `TENSION_STABILITY_DIP = -3` expiring modifier per province when the kingdom's
+   official religion ≠ the province's (culture-default) faith. That dip is what the
+   stance between official and province faith modulates. One caller (`dailyTick`,
+   which has the `ServerLevel`).
+3. **Derivation inputs** — `GodRegistry.godsFor(religion)` (god ids per religion) +
+   `Religions.all(level)` (the per-world set).
+4. **Override storage** — `ReligionSavedData` already has the per-world store +
+   `markDirty`; the override map slots in as a second codec field.
+
+### What shipped
+
+- **`RelationStance`** enum (new): `KINDRED` / `NEUTRAL` / `RIVAL` / `HERETICAL`.
+- **`Relations`** facade (new) — the ONE home for the rule, mirroring `Religions`:
+  - `relation(level, idA, idB)` = override if set, else `derive(...)`.
+  - `derive(level, idA, idB)` = KINDRED when the two religions share ≥1 god (via
+    `GodRegistry.godsFor`), else NEUTRAL. Symmetric; computed fresh (never stale).
+  - `setRelation(level, idA, idB, stance)` = the override WRITE seam — **no caller
+    this stage** (like `ReligionSavedData.put`).
+- **`ReligionSavedData`** — gained a `relationOverrides` map (canonical sorted "a|b"
+  pair key → stance name) + a 2nd codec field (`unboundedMap(STRING,STRING)`,
+  `optionalFieldOf` empty default → round-trips, pre-2 saves load empty);
+  `relationOverride(idA,idB)` (unknown-name-safe) + `setRelationOverride(...)`.
+- **Consumer A — `FaithReconciliation`**: the syncretic drift is now
+  `SYNCRETIC_DRIFT × driftMultiplier(stance)` where the stance is the attendee↔rite
+  relation (level derived from the NPC entity). Multipliers — KINDRED 1.5, **NEUTRAL
+  1.0 (unchanged)**, RIVAL 0.25, HERETICAL 0 (blocked). 4-arm switch.
+- **Consumer B — `ReligionAuthorityEngine`**: the per-province mismatch dip is
+  `round(TENSION_STABILITY_DIP × tensionMultiplier(stance))` for the official↔province
+  stance (`applyReligiousTension` gained a `ServerLevel`, threaded from `dailyTick`).
+  Multipliers — KINDRED 0.5 (dip −1), **NEUTRAL 1.0 (dip −3, unchanged)**, RIVAL 1.5
+  (−4), HERETICAL 2.0 (−6). 4-arm switch.
+- **Consumer C — `/religion relations`**: prints the stance matrix across the
+  per-world religions (each distinct pair + KINDRED/NEUTRAL/override, colour-coded).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `GodRegistry.godsFor` + `Religions.all(level)` (derivation
+   inputs, read-only); `ReligionSavedData` (override storage, gains one map field).
+2. **Downstream callers.** `FaithReconciliation.applyCommunalBenefit` (drift) and
+   `ReligionAuthorityEngine.applyReligiousTension` (tension) + the readout — each
+   reads `Relations.relation(level, …)`. **NEUTRAL reproduces today's numbers
+   exactly** (drift 0.004; dip −3), so only a shared-god (KINDRED) pairing or a future
+   override visibly changes behaviour. The four single-god starters are currently
+   disjoint → all NEUTRAL → no live behaviour change yet.
+3. **Sibling systems.** Divine layer + piety untouched; the per-world store's codec
+   gains the override map (empty default, round-trips). `RiteSavedData` unaffected.
+4. **Exhaustive switches.** Two new `RelationStance` switches (`driftMultiplier`,
+   `tensionMultiplier`) cover **all four arms**, incl. the not-yet-fired
+   RIVAL/HERETICAL branches; the readout's colour ternary handles all four.
+
+### Simplification Sweep
+
+- **Seam, no callers (noted like `put`):** `Relations.setRelation` /
+  `ReligionSavedData.setRelationOverride` — the dynamism/kingdom write seam. Zero
+  callers this stage by design.
+- **Derivation has ONE home:** `Relations.derive` — both consumers and the readout go
+  through `Relations.relation`; the kindred/neutral rule is not duplicated.
+- **Touched classes:** `RelationStance` (new), `Relations` (new), `ReligionSavedData`,
+  `FaithReconciliation`, `ReligionAuthorityEngine`, `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- None of substance. The stance multipliers are concrete picks within the prompt's
+  "bounded + proportional" guidance (NEUTRAL = identity, so today's numbers hold).
+- `applyReligiousTension` gained a `ServerLevel` (one caller threaded it) — needed to
+  resolve the per-world stance; no behaviour change at NEUTRAL.
+- `FaithReconciliation` derives the level from the NPC entity (no signature change to
+  its 6 callers), consistent with the F1b-1b entity-carries-level pattern.
+
+### Out-of-scope but flagged
+
+- **No auto-derivation of RIVAL/HERETICAL** — KINDRED/NEUTRAL only; the hostile
+  stances are explicit-override, no writers yet (their consumer branches are wired).
+- **Dynamism** — founding / schism / conversion that would call `setRelation` /
+  `put`; the seams stand ready, caller-less.
+- **Condemned/evil-gods modeling** (the eventual HERETICAL source) — later.
+- **Player-screen surfacing** of relations — deferred; the debug readout is the
+  required surface this stage.
+- **Religion era-2 remaining:** dynamism, then the content layers (sacred space/time,
+  covenants/oaths, saints/relics).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the F1b-1b tip; no reset needed.] Static
+review: the override codec is a single `optionalFieldOf` map (empty default → pre-2
+saves load clean; `fromCodec` is now a 2-arg BiFunction matching the 2 group fields);
+both modulation switches are 4-arm exhaustive with NEUTRAL = 1.0 identity; the
+derivation lives only in `Relations.derive`; `applyReligiousTension`'s sole caller
+threads the level; pair keys are canonical (sorted, "|"-joined).
+
+### Smoke test (user-runnable)
+
+1. **Baseline matrix.** New world → `/religion relations` — confirm all six pairs of
+   the four starters read NEUTRAL (single-god + disjoint), no "(override)" flags.
+2. **KINDRED derivation.** Give two religions a shared god (edit a starter's `godIds`
+   to add another's god, or add a test religion that venerates an existing god) →
+   `/religion relations` shows that pair KINDRED (green), the rest NEUTRAL — proving
+   the god-overlap derivation.
+3. **Override persists.** Via a temporary `setRelation` hook (or reasoning), set an
+   override on a pair → `/religion relations` shows the stance with "(override)";
+   save + reload → the override survives (codec round-trip); the derived pairs still
+   recompute fresh.
+4. **Drift modulation.** An NPC of faith X attending a KINDRED faith Y's communal rite
+   drifts toward Y more than the same NPC attending a NEUTRAL faith (KINDRED ×1.5 vs
+   ×1.0); a NEUTRAL drift equals the pre-change 0.004.
+5. **Tension modulation.** A kingdom whose official religion is KINDRED to a
+   province's faith shows a lighter religious-tension stability dip (−1) than a NEUTRAL
+   mismatch (−3, unchanged from before).
+6. **No regression at NEUTRAL.** With no shared gods and no overrides (the shipped
+   default), every drift/tension number equals pre-F1b-2.

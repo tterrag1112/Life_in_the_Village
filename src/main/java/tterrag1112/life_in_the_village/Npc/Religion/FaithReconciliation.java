@@ -87,9 +87,34 @@ public final class FaithReconciliation {
             if (scaledPiety != 0f) npc.getPiety().adjustBelief(attendeeFaith, scaledPiety);
         } else if (scaledPiety > 0f) {
             // No own-faith credit from another faith's rite — a small drift
-            // toward the officiating faith instead (acculturation).
-            npc.getPiety().adjustBelief(riteFaith, SYNCRETIC_DRIFT);
+            // toward the officiating faith instead (acculturation). F1b-2 —
+            // modulate the drift by the stance between the attendee's faith and the
+            // officiating one: KINDRED (shared gods) syncretizes more readily,
+            // NEUTRAL keeps today's baseline, RIVAL/HERETICAL resist/block (only once
+            // an override sets them — none auto-derived this stage).
+            float drift = SYNCRETIC_DRIFT * driftMultiplier(stanceFor(npc, attendeeFaith, riteFaith));
+            if (drift > 0f) npc.getPiety().adjustBelief(riteFaith, drift);
         }
+    }
+
+    /** The stance between an attendee's faith and the officiating faith, resolved
+     *  per-world (the NPC carries the server level). NEUTRAL when either is null or
+     *  off-server (preserving today's behaviour). */
+    private static RelationStance stanceFor(TownspersonMob npc, String attendeeFaith, String riteFaith) {
+        if (attendeeFaith == null || riteFaith == null) return RelationStance.NEUTRAL;
+        if (!(npc.level() instanceof ServerLevel level)) return RelationStance.NEUTRAL;
+        return Relations.relation(level, attendeeFaith, riteFaith);
+    }
+
+    /** Drift multiplier by stance — NEUTRAL is 1.0 so today's numbers are unchanged;
+     *  only KINDRED visibly differs this stage (the hostile arms need an override). */
+    private static float driftMultiplier(RelationStance stance) {
+        return switch (stance) {
+            case KINDRED   -> 1.5f;   // shared gods → syncretism comes easily
+            case NEUTRAL   -> 1.0f;   // baseline (unchanged)
+            case RIVAL     -> 0.25f;  // resisted (override-only, later)
+            case HERETICAL -> 0f;     // blocked (override-only, later)
+        };
     }
 
     // ── Served / unserved ────────────────────────────────────────────────────
