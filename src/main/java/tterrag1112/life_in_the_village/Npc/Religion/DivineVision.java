@@ -6,10 +6,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.HistoryEvent;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Taboo;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Virtue;
 import tterrag1112.life_in_the_village.Village.Reputation.ReputationManager;
 import tterrag1112.life_in_the_village.Village.Reputation.VillageReputation;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -81,7 +78,7 @@ public final class DivineVision {
 
     private static void deliver(ServerLevel level, ServerPlayer player, God god, long now) {
         // RELIGION narrative source: a religion that venerates this god.
-        Religion rel = GodRegistry.primaryReligionOf(god.id()).orElse(null);
+        Religion rel = GodRegistry.primaryReligionOf(level, god.id()).orElse(null);
         ReligionIdentity id = rel == null ? null : ReligionIdentity.get(rel.id());
         RiteSavedData data = RiteSavedData.get(level);
 
@@ -171,7 +168,7 @@ public final class DivineVision {
 
         ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
         if (player == null) return;
-        Religion rel = ReligionRegistry.get(religionId);
+        Religion rel = Religions.get(level, religionId);
         God god = rel == null ? null : GodRegistry.primaryGod(rel).orElse(null);
         if (god == null) return;
         ReligionIdentity id = ReligionIdentity.get(religionId);

@@ -11,7 +11,7 @@ import java.util.UUID;
 /**
  * Divine Layer V4 — <b>curses &amp; wrath</b>: the consequence side. Sacrilege drives
  * a <b>god's</b> favour DOWN into displeasure; displeasure escalates — omen → curse
- * ({@link Curses}, by the god's {@link ReligionIdentity.DeityDomain}) → wrath
+ * ({@link Curses}, by the god's {@link DeityDomain}) → wrath
  * (severe, non-fatal). The V1 earning acts climb favour back out — never permanent.
  *
  * <p>F1a sub-stage 3b — the <b>god</b> is the subject: the escalation ticks iterate
@@ -46,7 +46,7 @@ public final class DivineWrath {
         UUID pid = player.getUUID();
         String faith = RiteSavedData.get(level).getPlayerPiety(pid)
                 .flatMap(PietyComponent::primaryReligion).orElse(null);
-        Religion religion = faith == null ? null : ReligionRegistry.get(faith);
+        Religion religion = faith == null ? null : Religions.get(level, faith);
         if (religion == null) return;
 
         // F1a 4a — offense targets the SPECIFIC god(s) whose taboo was broken (not a

@@ -46,7 +46,7 @@ public final class PlayerReligionSnapshotBuilder {
         if (pietyOpt.isPresent()) {
             PietyComponent piety = pietyOpt.get();
             ownFaithId = piety.primaryReligion().orElse(null);
-            Optional<Religion> religion = piety.primaryReligion().flatMap(ReligionRegistry::find);
+            Optional<Religion> religion = piety.primaryReligion().flatMap(id -> Religions.find(level, id));
             religionName = religion.map(Religion::displayName).orElse("");
             // F1a 4a — the headline deity name is the primary god's (per-god rows are 4b).
             deityName = religion.map(r -> GodRegistry.primaryDeityName(r, "")).orElse("");
@@ -55,7 +55,7 @@ public final class PlayerReligionSnapshotBuilder {
             var beliefs = piety.beliefs();
             if (beliefs.size() > 1) {
                 for (var e : beliefs.entrySet()) {
-                    String fname = ReligionRegistry.find(e.getKey())
+                    String fname = Religions.find(level, e.getKey())
                             .map(Religion::displayName).orElse(e.getKey());
                     beliefSummary.add(fname + " — " + Math.round(e.getValue() * 100) + "%");
                 }
@@ -78,7 +78,7 @@ public final class PlayerReligionSnapshotBuilder {
                         ? BuildingFaith.resolveFaith(level, village, temple)
                         : temple.getPatronFaith();
                 if (faithId != null) {
-                    pledgeFaithName = ReligionRegistry.find(faithId)
+                    pledgeFaithName = Religions.find(level, faithId)
                             .map(Religion::displayName).orElse(faithId);
                 }
             }
@@ -88,7 +88,7 @@ public final class PlayerReligionSnapshotBuilder {
         int today = CalendarView.dayOfYear(level.getGameTime());
         List<CalendarRow> calendar = new ArrayList<>();
         for (CalendarView.Entry e : CalendarView.upcomingAcross(
-                ReligionRegistry.all(), level.getGameTime(), MAX_CALENDAR_ROWS)) {
+                Religions.all(level), level.getGameTime(), MAX_CALENDAR_ROWS)) {
             boolean own = ownFaithId != null && ownFaithId.equals(e.faithId());
             calendar.add(new CalendarRow(e.faithDisplay(), prettyLabel(e.dayLabel()),
                     e.dayOfYear(), e.daysAway(), own));
@@ -98,7 +98,7 @@ public final class PlayerReligionSnapshotBuilder {
         long now = level.getGameTime();
         String activeCalling = rites.getPlayerCalling(playerId)
                 .map(c -> {
-                    String fname = ReligionRegistry.find(c.religionId())
+                    String fname = Religions.find(level, c.religionId())
                             .map(Religion::displayName).orElse(c.religionId());
                     return fname + ": " + c.describe();
                 })
@@ -108,13 +108,13 @@ public final class PlayerReligionSnapshotBuilder {
         // The standing set: gods with a favour entry + the gods of believed religions.
         java.util.Set<String> standingGods = new java.util.LinkedHashSet<>();
         if (ownFaithId != null) {
-            ReligionRegistry.find(ownFaithId).ifPresent(r ->
+            Religions.find(level, ownFaithId).ifPresent(r ->
                     GodRegistry.godsFor(r).forEach(g -> standingGods.add(g.id())));  // primary first
         }
         rites.getPlayerFavour(playerId).ifPresent(f -> standingGods.addAll(f.all().keySet()));
         pietyOpt.ifPresent(p -> {
             for (String rid : p.beliefs().keySet()) {
-                ReligionRegistry.find(rid).ifPresent(r ->
+                Religions.find(level, rid).ifPresent(r ->
                         GodRegistry.godsFor(r).forEach(g -> standingGods.add(g.id())));
             }
         });

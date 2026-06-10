@@ -5,7 +5,6 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import tterrag1112.life_in_the_village.Npc.Letters.BookCategory;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Static religion record. Spec line 16.
@@ -27,8 +26,6 @@ import java.util.Optional;
  * @param sacredLocations          tag list — Phase 5 worldgen may
  *                                 elevate these block tags
  * @param calendar                 holy-day map
- * @param deity                    optional named deity (empty for
- *                                 abstract religions like The Loom)
  * @param preferredBookCategories  drives the temple library's book
  *                                 stocking pass when scribal +
  *                                 religion meet
@@ -44,7 +41,6 @@ public record Religion(
         List<Rite> rites,
         List<String> sacredLocations,
         ReligiousCalendar calendar,
-        Optional<String> deity,
         List<BookCategory> preferredBookCategories,
         List<String> godIds
 ) {
@@ -55,16 +51,17 @@ public record Religion(
         rites                    = rites                    == null ? List.of() : List.copyOf(rites);
         sacredLocations          = sacredLocations          == null ? List.of() : List.copyOf(sacredLocations);
         if (calendar == null) calendar = new ReligiousCalendar(java.util.Map.of());
-        if (deity == null) deity = Optional.empty();
         preferredBookCategories  = preferredBookCategories  == null ? List.of() : List.copyOf(preferredBookCategories);
         godIds                   = godIds                   == null ? List.of() : List.copyOf(godIds);
     }
 
     public boolean ritualises(Rite r) { return rites.contains(r); }
 
-    // Codec — now 9 fields (still under the 16-field RecordCodecBuilder ceiling).
+    // Codec — now 8 fields (still under the 16-field RecordCodecBuilder ceiling).
     // F1b's per-world fields will eat the remaining headroom; nest into a
-    // sub-record then if needed.
+    // sub-record then if needed. F1a cleanup dropped the legacy "deity" field —
+    // the deity identity now lives on the first-class God (see GodRegistry); a
+    // pre-cleanup save's stored "deity" key is simply ignored on load.
     public static final Codec<Religion> CODEC = RecordCodecBuilder.create(i -> i.group(
             Codec.STRING.fieldOf("id").forGetter(Religion::id),
             Codec.STRING.fieldOf("displayName").forGetter(Religion::displayName),
@@ -73,7 +70,6 @@ public record Religion(
             Codec.STRING.listOf().optionalFieldOf("sacredLocations", List.of()).forGetter(Religion::sacredLocations),
             ReligiousCalendar.CODEC.optionalFieldOf("calendar", new ReligiousCalendar(java.util.Map.of()))
                     .forGetter(Religion::calendar),
-            Codec.STRING.optionalFieldOf("deity").forGetter(Religion::deity),
             Codec.STRING.xmap(BookCategory::valueOf, BookCategory::name).listOf()
                     .optionalFieldOf("preferredBookCategories", List.of())
                     .forGetter(Religion::preferredBookCategories),

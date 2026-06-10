@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.DispleasureTier;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 
 /**
  * Divine Layer V4 — one <b>curse</b>: a per-deity, domain-flavoured misfortune a

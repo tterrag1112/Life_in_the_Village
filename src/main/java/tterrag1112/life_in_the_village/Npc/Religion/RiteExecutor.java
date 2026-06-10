@@ -275,7 +275,7 @@ public final class RiteExecutor {
         subject.getMemory().add(NpcMemory.create(MemoryType.OFFICIATED_BY,
                 List.of(priest.getUUID()), now, 70,
                 priest.getNpcName() + " officiated my coming-of-age"
-                        + riteFlavorSuffix(religionId, Rite.COMING_OF_AGE)));
+                        + riteFlavorSuffix(level, religionId, Rite.COMING_OF_AGE)));
         return RiteOutcome.SUCCESSFUL;
     }
 
@@ -285,7 +285,7 @@ public final class RiteExecutor {
         // marriage event already covers the +50, so this rite adds +10
         // blessing on top) — scaled by the officiating religion (R3a).
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.MARRIAGE);
-        String suffix = riteFlavorSuffix(religionId, Rite.MARRIAGE);
+        String suffix = riteFlavorSuffix(level, religionId, Rite.MARRIAGE);
         for (UUID participantId : rite.participantIds()) {
             TownspersonMob p = TownspersonMob.findByUUID(level, participantId).orElse(null);
             if (p == null) continue;
@@ -316,7 +316,7 @@ public final class RiteExecutor {
         // Spec line 120-121: lessens grief, pinned "remembered kindly"
         // memory for household + close friends — religion-scaled (R3a).
         RiteProfile profile = ReligionContent.profileFor(religionId, Rite.FUNERAL);
-        String suffix = riteFlavorSuffix(religionId, Rite.FUNERAL);
+        String suffix = riteFlavorSuffix(level, religionId, Rite.FUNERAL);
         for (UUID id : rite.participantIds()) {
             TownspersonMob p = TownspersonMob.findByUUID(level, id).orElse(null);
             if (p == null) continue;
@@ -373,7 +373,7 @@ public final class RiteExecutor {
                         tterrag1112.life_in_the_village.Npc.Knowledge.KnowledgeSource.WITNESS,
                         now,
                         "Heard a confession from " + confessor.getNpcName()
-                                + confessionTenetSuffix(religionId, confessor),
+                                + confessionTenetSuffix(level, religionId, confessor),
                         confessor.getUUID(),
                         true));
         return RiteOutcome.SUCCESSFUL;
@@ -631,16 +631,17 @@ public final class RiteExecutor {
 
     /** R3a — a rite's flavor line for a religion as a memory-text suffix, plus
      *  the deity invocation; empty when the religion doesn't distinguish it. */
-    private static String riteFlavorSuffix(String religionId, Rite rite) {
-        String invocation = ReligionContent.invocation(religionId);
+    private static String riteFlavorSuffix(ServerLevel level, String religionId, Rite rite) {
+        String invocation = ReligionContent.invocation(level, religionId);
         return ReligionContent.flavor(religionId, rite)
                 .map(f -> " — " + invocation + ": " + f)
                 .orElse(" in the sight of " + invocation);
     }
 
     /** R3a — a core-tenet suffix for the confession ledger note, if any. */
-    private static String confessionTenetSuffix(String religionId, TownspersonMob confessor) {
-        return ReligionContent.tenet(religionId, confessor.getRandom())
+    private static String confessionTenetSuffix(ServerLevel level, String religionId,
+                                                TownspersonMob confessor) {
+        return ReligionContent.tenet(level, religionId, confessor.getRandom())
                 .map(t -> " (" + t + ")")
                 .orElse("");
     }

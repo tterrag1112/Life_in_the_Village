@@ -1,10 +1,9 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Npc.Letters.BookCategory;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.HistoryEvent;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Taboo;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Virtue;
 import tterrag1112.life_in_the_village.Npc.Scribal.BookRecord;
 import tterrag1112.life_in_the_village.Npc.Scribal.ScribalItems;
 
@@ -21,8 +20,9 @@ import java.util.UUID;
  * player who opens a Sunstead scripture reads the Sun-Mother's lore in its own
  * words. Per-faith distinct, straight from the authored identity; page-capped.
  *
- * <p>The deity NAME stays the single source in {@link Religion#deity()} (D1
- * reconciliation); the rich layer comes from the identity. A faith without an
+ * <p>The deity NAME and attributes come from the religion's primary {@link God}
+ * (F1a); the cosmology / sacred history / practices come from the identity, and the
+ * tenets/commandments from the union of the gods' virtues/taboos. A faith without an
  * authored identity falls back to a coherent (shorter) body from its name +
  * core tenets — graceful, never empty.</p>
  */
@@ -36,34 +36,34 @@ public final class ScriptureFactory {
 
     /** A readable scripture WRITTEN_BOOK ItemStack for the faith (the high-value
      *  artifact a player can open + read), or empty for an unknown religion. */
-    public static Optional<ItemStack> scriptureStack(String religionId,
+    public static Optional<ItemStack> scriptureStack(ServerLevel level, String religionId,
                                                      Optional<UUID> copierId, long now) {
-        Religion religion = ReligionRegistry.get(religionId);
+        Religion religion = Religions.get(level, religionId);
         if (religion == null) return Optional.empty();
-        String body = body(religionId);
+        String body = body(level, religionId);
         return Optional.of(ScribalItems.book(
-                title(religionId), author(religion), body,
+                title(level, religionId), author(religion), body,
                 BookCategory.RELIGIOUS, topics(religionId),
                 copierId, Optional.empty(), now));
     }
 
     /** A catalogue {@link BookRecord} for the faith's scripture (metadata — the
      *  library catalogue stores records, the readable pages live on the stack). */
-    public static Optional<BookRecord> scriptureRecord(String religionId,
+    public static Optional<BookRecord> scriptureRecord(ServerLevel level, String religionId,
                                                        Optional<UUID> copierId, long now) {
-        Religion religion = ReligionRegistry.get(religionId);
+        Religion religion = Religions.get(level, religionId);
         if (religion == null) return Optional.empty();
         int pages = Math.max(1, Math.min(MAX_PAGES,
-                (body(religionId).length() + CHARS_PER_PAGE - 1) / CHARS_PER_PAGE));
+                (body(level, religionId).length() + CHARS_PER_PAGE - 1) / CHARS_PER_PAGE));
         return Optional.of(new BookRecord(
-                UUID.randomUUID(), title(religionId), author(religion),
+                UUID.randomUUID(), title(level, religionId), author(religion),
                 copierId, topics(religionId), Optional.empty(), pages, now, 1));
     }
 
     /** Faith-appropriate title — "The Book of <deity>" (or the faith name for a
      *  deity-less faith like the Loom). */
-    public static String title(String religionId) {
-        Religion r = ReligionRegistry.get(religionId);
+    public static String title(ServerLevel level, String religionId) {
+        Religion r = Religions.get(level, religionId);
         if (r == null) return "Scripture";
         // F1a 4a — primary god's name (religion display name fallback).
         return "The Book of " + GodRegistry.primaryDeityName(r, r.displayName());
@@ -79,8 +79,8 @@ public final class ScriptureFactory {
 
     /** The scripture body, composed from the authored {@link ReligionIdentity}
      *  (graceful fallback to name + tenets when unauthored). Page-capped. */
-    private static String body(String religionId) {
-        Religion religion = ReligionRegistry.get(religionId);
+    private static String body(ServerLevel level, String religionId) {
+        Religion religion = Religions.get(level, religionId);
         ReligionIdentity id = ReligionIdentity.get(religionId);
         StringBuilder sb = new StringBuilder();
 

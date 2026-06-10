@@ -2,9 +2,6 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Taboo;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Virtue;
 
 import java.util.List;
 import java.util.Locale;
@@ -12,23 +9,22 @@ import java.util.Optional;
 
 /**
  * Foundation 1 (F1a) — a first-class <b>God</b>: a divine identity separated from
- * the religion that venerates it. Today a {@link Religion} fuses exactly one deity
- * (a name string in {@link Religion#deity()} + the rich layer in
- * {@link ReligionIdentity}); the target model is a standalone God that a religion
- * references (one or many). This sub-stage only introduces the type + the registry
- * ({@link GodRegistry}); nothing existing is re-keyed yet.
+ * the religion that venerates it. A {@link Religion} references its god(s) by id
+ * ({@link Religion#godIds()}); a god is authored once, in {@link GodRegistry}, and
+ * may be shared across faiths.
  *
- * <p><b>Type reuse (deliberate).</b> Lives in {@code Npc.Religion} so it can reuse
- * the existing nested types {@link DeityDomain} / {@link Virtue} / {@link Taboo}
- * <i>as-is</i> — a later cleanup sub-stage relocates those onto {@code God}; moving
- * them now would churn consumers. The {@code virtues}/{@code taboos} here are
- * <i>the god's</i> demanded virtues / forbidden acts (mirrored from the religion's
- * {@link ReligionIdentity} for now; the god becomes the sole source in sub-stage 2).</p>
+ * <p><b>The authored source (F1a cleanup).</b> The god carries the full deity
+ * identity — name, {@link DeityDomain}, character, demands, rewards, the demanded
+ * {@link Virtue}s and forbidden {@link Taboo}s. {@link ReligionIdentity} keeps only
+ * the religion NARRATIVE (cosmology / sacred history / aesthetics / practices); the
+ * deity content was inverted onto the god and the old {@code Religion.deity()} /
+ * identity deity fields deleted. The deity TYPES ({@link DeityDomain}, {@link
+ * Virtue}, {@link Taboo}) are top-level in {@code Npc.Religion}.</p>
  *
  * @param name     the personal name ("the Sun-Mother"); <b>empty for an impersonal
- *                 god</b> (the Pattern) — the future home of {@link Religion#deity()}
- * @param virtues  the god's demanded virtues (reused {@link Virtue})
- * @param taboos   the god's forbidden acts (reused {@link Taboo})
+ *                 god</b> (the Pattern)
+ * @param virtues  the god's demanded virtues
+ * @param taboos   the god's forbidden acts
  */
 public record God(
         String id,

@@ -1,5 +1,6 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
+import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Crime.CrimeType;
 import tterrag1112.life_in_the_village.Npc.Mood.MoodTrigger;
@@ -47,9 +48,12 @@ public final class FaithJudgment {
     public static void judge(TownspersonMob actor, FaithConcept concept,
                              List<TownspersonMob> witnesses, long now) {
         if (actor == null || concept == null) return;
+        // F1b 1b — religions are per-world; the actor (and its witnesses) carry the
+        // level. Server-only judgment, so the level is a ServerLevel.
+        if (!(actor.level() instanceof ServerLevel level)) return;
         String faith = actor.getPiety().primaryReligion().orElse(null);
         if (faith == null) return;                       // unaffiliated — no faith judges it
-        Religion religion = ReligionRegistry.get(faith);
+        Religion religion = Religions.get(level, faith);
         if (religion == null) return;
 
         // F1a 4a — virtue/taboo recognition is the UNION across the religion's gods.
@@ -70,7 +74,7 @@ public final class FaithJudgment {
             if (w == null || w.getUUID().equals(actorId)) continue;
             String wFaith = w.getPiety().primaryReligion().orElse(null);
             if (wFaith == null) continue;                // atheist witness — indifferent
-            Religion wReligion = ReligionRegistry.get(wFaith);
+            Religion wReligion = Religions.get(level, wFaith);
             if (wReligion == null) continue;
             if (virtue && GodRegistry.anyGodHoldsVirtue(wReligion, concept)) {
                 w.getNpcRelationships().adjust(actorId, WITNESS_VIRTUE_REL, now,

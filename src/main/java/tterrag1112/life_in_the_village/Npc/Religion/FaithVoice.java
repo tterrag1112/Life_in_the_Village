@@ -2,8 +2,6 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 
 import net.minecraft.util.RandomSource;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.Virtue;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
 import java.util.ArrayList;
@@ -13,11 +11,11 @@ import java.util.Optional;
 /**
  * Religion Deepening D3b — the faith's <b>voice</b>: a single content-driven line
  * source that lets a clergy member or a devout adherent speak their religion. It
- * draws straight from the speaker's {@link ReligionIdentity} (D1) — the deity (name
- * from {@link Religion#deity()}, character/demands/rewards from the identity), the
- * cosmology's domain idiom, and the authored virtues — so a Sunstead priest invokes
- * the Sun-Mother and echoes honest labour, while a Tidecall priest blesses by the
- * tides and a Loom priest speaks of the Pattern with no deity name at all.
+ * draws straight from the speaker's {@link God} (F1a — its name, character, demands,
+ * rewards, and domain idiom) plus the religion's union of authored virtues — so a
+ * Sunstead priest invokes the Sun-Mother and echoes honest labour, while a Tidecall
+ * priest blesses by the tides and a Loom priest speaks of the Pattern with no deity
+ * name at all.
  *
  * <p><b>One weighted source, not an override.</b> {@link NpcDialogue} consults this
  * as one more pool alongside profession/trait/season lines; the frequency gating
@@ -59,9 +57,12 @@ public final class FaithVoice {
      */
     public static Optional<String> line(TownspersonMob npc, RandomSource rng) {
         if (!speaks(npc)) return Optional.empty();
+        // F1b 1b — religions are per-world; the NPC carries the (server) level.
+        if (!(npc.level() instanceof net.minecraft.server.level.ServerLevel level))
+            return Optional.empty();
         String faith = npc.getPiety().primaryReligion().orElse(null);
         if (faith == null) return Optional.empty();
-        Religion religion = ReligionRegistry.get(faith);
+        Religion religion = Religions.get(level, faith);
         if (religion == null) return Optional.empty();
         // F1a 4a — deity attributes (name / domain / demands / rewards) from the
         // PRIMARY god; "what the faith esteems" (the virtue pool) from the UNION.

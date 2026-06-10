@@ -9187,3 +9187,406 @@ orphan); single-god data shows as one god row, identical values.
    calling, observance, and the calendar list read as before.
 6. **No desync.** Confirm the screen opens cleanly (StreamCodec round-trips — no
    client disconnect) and both lists scroll.
+
+## F1a sub-stage 5 — cleanup: invert authoring onto God, delete the duplication (2026-06-09)
+
+This **completes F1a**. Through 1→4b the `God` was real but *derived*: `GodRegistry`
+built each god from the religion's `ReligionIdentity` (deity name/domain/character/
+demands/rewards + virtues/taboos) and `Religion.deity()`, so two sources of truth
+were kept deliberately in agreement. 4a proved the gate — the ONLY remaining readers
+of `Religion.deity()` / the identity deity fields were `GodRegistry.derive()` itself.
+This stage inverts the authoring (the god is now hand-authored, the source of truth),
+relocates the deity TYPES out of `ReligionIdentity`, and deletes the duplication in
+the same change (convert-then-delete).
+
+### Disposition (investigation pass)
+
+- **Authoring inversion.** `GodRegistry.ensureInit` no longer calls a `derive(godId,
+  religionId)` that reads `ReligionIdentity`; it registers four hand-authored gods
+  (`sunMother`/`thePattern`/`seaMother`/`forgeFather`) whose content is the verbatim
+  deity material that used to live on the identity. The reverse index
+  (`RELIGIONS_BY_GOD`) is still built from `ReligionRegistry.all()` + `godIds()`.
+- **Type relocation.** `DeityDomain`, `Virtue`, `Taboo` were nested in
+  `ReligionIdentity`. They are god concepts, so they became standalone top-level
+  records/enum in `Npc.Religion` (`DeityDomain.java`, `Virtue.java`, `Taboo.java`).
+  Top-level (vs. nesting on `God`) minimises reference churn — every consumer already
+  in-package now names them bare; the 11 files the bulk rename touched
+  (`God`, `GodRegistry`, `Miracle(s)`, `Curse(s)`, `DivineVision/Wrath/Theophany`,
+  `FaithVoice`, `ScriptureFactory`) only had `ReligionIdentity.` prefixes stripped.
+- **Deletion.** `Religion.deity()` (component + compact-ctor guard + codec
+  `optionalFieldOf("deity")`) deleted → `Religion` goes **9→8 codec fields**; the four
+  `ReligionRegistry` factory calls drop the deity arg. `ReligionIdentity` loses its
+  `Deity` record, the `deity`/`virtues`/`taboos` fields, and the nested
+  `DeityDomain`/`Virtue`/`Taboo` types; it is now a pure narrative record
+  `(religionId, cosmology, SacredHistory, Aesthetics, practices)`.
+
+### Tie-in audit
+
+1. **Upstream feeders.** `GodRegistry` authoring no longer feeds off `ReligionIdentity`
+   — it is the source. `ReligionRegistry.godIds()` still feeds the reverse index
+   (unchanged).
+2. **Downstream callers (grep of `Religion.deity()` / identity deity members).**
+   - `GodRegistry.derive()` — deleted (replaced by authored gods).
+   - **`NpcProfileSnapshotBuilder`** (line 173) — a STRAGGLER the 4a audit missed:
+     it still read `religion.flatMap(Religion::deity)` for the NPC profile's
+     `deityName`. The grep (not javac — the field still existed until this stage)
+     caught it, exactly as the cleanup-gate predicted. Re-pointed to
+     `GodRegistry.primaryDeityName(r, "")`, which uses `God.name()` so an impersonal
+     god (the Loom) yields the empty fallback — **behaviour-identical** to the old
+     `Optional<deity>.orElse("")`.
+   - `ReligionDebugCommand` (`/religion identity`) — already migrated in 4a to
+     `primaryGod` + `unionVirtues`/`unionTaboos`; reads only kept identity narrative.
+   - `FaithVoice`, `ScriptureFactory`, `FaithJudgment`, `DivineVision/Wrath/Theophany`,
+     `Miracle(s)`/`Curse(s)`, `PlayerReligionSnapshotBuilder` — all already god-keyed
+     from 3a–4b; only same-package imports cleaned here.
+3. **Sibling systems.** Persistence — `Religion.CODEC` drops a field; a pre-cleanup
+   save that stored a `"deity"` key simply ignores it on load (the other 8 fields are
+   all `optionalFieldOf`), and `Religion` is content, not saved per-world, so there is
+   no migration. `RiteSavedData` god-keyed favour/calling/theophany untouched.
+4. **Exhaustive switches.** No enum values added/removed (`DeityDomain` relocated
+   verbatim — same 4 constants); the `switch (domain)` in `God.displayName`,
+   `FaithVoice.domainGreeting`, `DivineTheophany.particlesFor`/`manifest`,
+   `Curses.forDomain` callers, etc. are unchanged and still exhaustive.
+
+### Simplification sweep
+
+- **Orphan deleted:** `GodRegistry.derive(godId, religionId)` (the last reader of the
+  identity deity duplication) — removed with the duplication it bridged.
+- **Duplication collapsed:** the deity content existed twice (authored on
+  `ReligionIdentity`, mirrored onto `God`). Now once, on `God`. `ReligionIdentity`
+  shrank from 8 record components-worth of deity+narrative to 5 narrative-only.
+- **Import noise:** the bulk `ReligionIdentity.{DeityDomain,Virtue,Taboo}`→bare rename
+  left redundant same-package imports across 9 files; all removed.
+- **Left intentionally (out of scope, flagged below):** `Religion.sacredLocations`
+  (dead field, not part of this stage); `Miracles`/`Curses` stay `DeityDomain`-keyed
+  data (`forDomain`) — the relocation of those tables onto `God` is a later stage.
+
+### Deviations from prompt
+
+- The prompt scoped the readers to "4a confirmed no readers remain except
+  `GodRegistry.derive()`." In fact **`NpcProfileSnapshotBuilder` was a second live
+  reader** of `Religion.deity()`. Fixed in scope (re-pointed to
+  `primaryDeityName`, behaviour-preserving). This is the grep-is-the-safety-net case
+  the cleanup-gate exists for; no scope expansion beyond the one-line re-point.
+- Stale javadoc that named the now-deleted `Religion.deity()` as a `{@link}` (in
+  `God`, `FaithVoice`, `ScriptureFactory`) was corrected to describe the inverted
+  authoring (dangling `{@link}` targets would warn under doclint). Historical
+  `{@code Religion.deity()}` mentions (code font, not links) left as accurate
+  past-tense notes.
+
+### Out-of-scope but flagged
+
+- **Relocating `Miracles`/`Curses` onto `God`** — they remain `DeityDomain`-keyed
+  data accessed via `forDomain`; the god is the subject but does not yet OWN the
+  table. A later stage (era-2 per-god miracle/curse sets) can move them.
+- **`Religion.sacredLocations`** — still a dead field; deliberately left (not this
+  stage's concern).
+- **F1b** — per-world religions / pantheons (multiple gods per faith). The
+  multi-god policy (union virtues/taboos, specific-god offense, primary-god headline)
+  is already centralised in `GodRegistry`, so F1b is data, not re-plumbing.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` cannot resolve `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current; no reset.] Static review: `Religion` is a clean
+8-field record/codec; `ReligionIdentity` is a 5-field narrative record with its
+`build()` arities matching; the three relocated types are valid top-level
+records/enum in-package; `GodRegistry` authors four gods with `FaithConcept` values
+that already existed (copied verbatim); no residual `Religion.deity()` /
+`ReligionIdentity.{Deity,DeityDomain,Virtue,Taboo}` references (grep-clean); the only
+`new Religion(` callers are the four updated factories; `.virtues()/.taboos()` reads
+are all on `God`.
+
+### Smoke test (user-runnable)
+
+1. **Gods author identically.** `/religion identity sunstead` — confirm the Deity
+   line still reads `the Sun-Mother` (domain SUN) with the same character/demands/
+   rewards, and the same two virtues + two taboos as before the cleanup.
+2. **Impersonal god intact.** `/religion identity the_loom` — confirm NO Deity line
+   value beyond the fallback (the Pattern is impersonal: `primaryDeityName` falls back
+   to the display name), cosmology/history/practices unchanged.
+3. **NPC profile deity name.** Open an NPC profile for a Sunstead adherent — confirm
+   the deity field reads `the Sun-Mother`; for a Loom adherent it reads blank (was
+   blank before — `Religion.deity()` was empty for the Loom).
+4. **Favour/miracles/visions unchanged.** Repeat any V1–V5 / 4b smoke step (e.g.
+   `/religion favour grant sun_mother 60`, open `/religion me`) — confirm identical
+   behaviour; the god content is authored from the same words, just sourced from
+   `GodRegistry` now.
+5. **Save compatibility.** Load a world saved before this stage — confirm religions
+   load cleanly (the dropped `"deity"` codec key is ignored) and faith behaviour is
+   unchanged.
+
+## F1b sub-stage 1a — stand up the per-world religion store (additive scaffolding) (2026-06-09)
+
+Opening step of F1b ("religions become per-world instances"). Pure additive
+scaffolding, like F1a-1: a per-world `ReligionSavedData` (seeded from the static
+templates) + a thin `Religions` facade exist and are verifiable, but **no caller is
+migrated** — every existing lookup still routes through the static `ReligionRegistry`.
+Sub-stage 1b does the caller migration under compiler/grep coverage.
+
+### Disposition (investigation)
+
+1. **SavedData idiom to mirror.** `RiteSavedData` (the existing separate religion
+   SavedData) is the template: a `static final SavedDataType<T> TYPE = new
+   SavedDataType<>("life_in_the_village_rites", T::new, RecordCodecBuilder…apply(i,
+   T::fromCodec))`, `static T get(ServerLevel) { return
+   level.getDataStorage().computeIfAbsent(TYPE); }`, `setDirty()` on mutation (it
+   exposes `markDirty()`). `VillageSavedData` uses the same 3-arg `SavedDataType` +
+   `computeIfAbsent(TYPE)`. **Decision: `ReligionSavedData` is a SEPARATE SavedData
+   (own storage name `life_in_the_village_religions`), NOT folded into
+   `VillageSavedData`** — religions are a distinct concern with their own lifecycle
+   (later dynamism founds/schisms them), and a separate store keeps that isolated, as
+   `RiteSavedData` already does for rites/piety.
+2. **`Religion.CODEC`** — round-trips the 8 post-F1a fields (id, displayName,
+   coreTenets, rites, sacredLocations, calendar, preferredBookCategories, godIds);
+   all list/optional fields `optionalFieldOf`. The store serializes
+   `Religion.CODEC.listOf()` and rebuilds the id-keyed map in `fromCodec` (the rites
+   idiom — avoids the key/`id()` duplication an `unboundedMap` would carry).
+3. **Template source** — `ReligionRegistry.all()` (the four seeded faiths
+   sunstead / the_loom / tidecall / forge_creed). The store copies these on seed.
+4. **Seed timing** — chose **lazy seed-in-`get` when empty** (templates are static,
+   available any tick; no dependence on the `WorldgenKingdomSeeder` first-tick hook).
+   `get()` calls `seedIfEmpty()`, which copies the templates ONLY when the map is
+   empty (a fresh world) and `setDirty()`s; a loaded world's restored set is never
+   re-seeded/clobbered.
+
+### What shipped
+
+- **`Npc/Religion/ReligionSavedData.java`** (new) — `SavedData` holding
+  `LinkedHashMap<String, Religion>` (stable order). `TYPE` =
+  `SavedDataType<>("life_in_the_village_religions", ReligionSavedData::new,
+  Religion.CODEC.listOf() codec)`. `get(level)` → `computeIfAbsent(TYPE)` +
+  `seedIfEmpty()`. Read surface `find(id)` / `get(id)` / `all()`; mutation entry
+  `put(Religion)` (replace-in-map by `id()` + `setDirty()`, no caller in 1a) +
+  `markDirty()`.
+- **`Npc/Religion/Religions.java`** (new) — thin facade: `find(level,id)`,
+  `get(level,id)`, `all(level)` → `ReligionSavedData.get(level).…`. The one home 1b's
+  call sites move onto.
+- **`/religion world list`** (in `ReligionDebugCommand`) — the ONLY consumer this
+  stage: lists the per-world store (id + displayName + godIds + count), labelled
+  distinct from the static `/religion list`, so the seed + reload-persistence are
+  verifiable in-world.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionRegistry.all()` (seed source — read-only, copied
+   into the store) and `Religion.CODEC` (persistence — read-only). Neither mutated.
+2. **Downstream callers.** **None besides the `/religion world list` readout** — this
+   is the whole point of 1a: the store has zero consumers until 1b migrates them.
+   Every `ReligionRegistry.get/find/all`, `dominantReligionFor`, the `GodRegistry`
+   reverse index, and `CalendarView.upcomingAcross(...)` still read the STATIC
+   registry, unchanged.
+3. **Sibling systems.** `RiteSavedData` — sibling SavedData; the new store has a
+   distinct storage name (`…_religions` vs `…_rites`) so they coexist cleanly in
+   separate `.dat` files. `GodRegistry` / the divine layer — untouched, still
+   static-registry-driven (its per-world reverse index is 1b).
+4. **Exhaustive switches.** None touched (no enum/sealed change). Confirmed.
+
+### Simplification Sweep
+
+- New classes + inbound callers: `ReligionSavedData` — 1 caller (`Religions` facade)
+  + reflective `TYPE` use; `Religions` — 1 caller (`/religion world list`). The
+  mutation `put`/`markDirty` have **zero** callers in 1a (the deliberate seam for
+  later stages).
+- **Noted, not acted on:** the store will let 1b retire the static `ReligionRegistry`
+  to TEMPLATE-only (its `get/find/all` accessors restricted, compiler-enforcing the
+  caller migration). Not done here — 1a is additive only.
+
+### Deviations from prompt
+
+- None. Built exactly as specified: separate string-keyed SavedData mirroring
+  `RiteSavedData`, lazy seed-when-empty, `Religions` facade, single `/religion world
+  list` consumer, no caller migration.
+- Minor authoring choice within spec: serialized `Religion.CODEC.listOf()` (rebuilt
+  to the map in `fromCodec`) rather than `unboundedMap(STRING, Religion.CODEC)` — the
+  prompt offered either; the list form avoids duplicating each id as both the map key
+  and `Religion.id()`, matching the `RiteSavedData` rites idiom.
+
+### Out-of-scope but flagged
+
+- **F1b sub-stage 1b** — migrate the ~49 lookup sites + `dominantReligionFor` + the
+  `GodRegistry` per-world reverse-index build + the `CalendarView.upcomingAcross(...)`
+  calendar enumeration onto `Religions`, then restrict the static `ReligionRegistry`
+  accessors to template-only (compiler-enforced coverage of the migration).
+- **F1b-2** — interreligious relations.
+- **Dynamism** (founding / schism / conversion) — later; this store's `put` +
+  only-when-empty seed are the seams it will use.
+- `ReligionIdentity` narrative stays static/template, resolved by id (per design — no
+  change here).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` cannot resolve `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current; no reset.] Static review: `ReligionSavedData`
+mirrors `RiteSavedData` field-for-field (3-arg `SavedDataType`, `RecordCodecBuilder`
++ `fromCodec` static, `computeIfAbsent(TYPE)` in `get`, `setDirty` on seed/`put`); the
+codec has one `optionalFieldOf` collection field (well under the 16-field ceiling);
+`Religions` is pure delegation; the command handler reads `Religions.all(level)` only.
+No existing caller touched (grep: the only new inbound references to the store are the
+facade and the readout).
+
+### Smoke test (user-runnable)
+
+1. **Seed on a fresh world.** New world → `/religion world list` — confirm it shows
+   the four religions (`sunstead`, `the_loom`, `tidecall`, `forge_creed`) with their
+   displayNames + godIds, count 4, identical to the static `/religion list`.
+2. **Static path unchanged.** `/religion gods`, `/religion list`, `/religion identity
+   sunstead`, and any V1–V5 favour/miracle flow — confirm all behave exactly as
+   before (nothing migrated; the store has no readers but the new readout).
+3. **Persistence across reload.** Save + quit + reload the world → `/religion world
+   list` — confirm the four religions still listed (the store round-tripped via
+   `Religion.CODEC`).
+4. **No re-seed clobber.** After reload (store non-empty), confirm the list is still
+   exactly four (seed runs only-when-empty; it does not append duplicates or reset a
+   saved set). A later non-template set would likewise survive reload unre-seeded.
+
+## F1b sub-stage 1b — migrate every religion lookup to the per-world store (2026-06-09)
+
+The big behaviour-preserving swap. 1a stood up `ReligionSavedData` + the `Religions`
+facade with no callers; 1b points **every real religion lookup** at the per-world
+store, then **locks the static `ReligionRegistry` accessors to template-only** so any
+straggler fails to compile. The world now owns its religions end-to-end; behaviour is
+identical (the seeded store equals the old static set). **This completes the
+per-world-ify (F1b-1).**
+
+### Disposition (caller inventory + plan)
+
+- **`get`/`find`/`all` sites (45, grep-audited).** 44 migrated to `Religions.*(level)`;
+  the 45th is the SEEDER (`ReligionSavedData.seedIfEmpty`), which stays on the static
+  catalog — now `ReligionRegistry.templates()`. Almost every site already had a
+  `ServerLevel` (the divine layer, rite scheduling/execution, building faith, temple +
+  player snapshot builders, event scheduler, commands are all server-side).
+- **Level-threading where a site lacked one** (each flagged):
+  - `FaithJudgment.judge(actor, …)` and `FaithVoice.line(npc, …)` — derive the
+    (server) level from the NPC entity (`actor.level() instanceof ServerLevel`);
+    witnesses share the actor's level. No caller-signature change (the entity carries
+    the level).
+  - `ScriptureFactory.scriptureStack/scriptureRecord/title/body` — gained a
+    `ServerLevel` first param; the 2 callers (`TempleProsperity`,
+    `MonkProductionBehavior`) thread their level.
+  - `ReligionContent.invocation/tenet` — gained `ServerLevel`; `RiteExecutor`'s
+    `riteFlavorSuffix`/`confessionTenetSuffix` thread level (all 5 `handleX` call
+    sites already carry it).
+  - `MiracleInvoker.godFor(Miracle)` → `godFor(ServerLevel, Miracle)`; both internal
+    callers (`status`/`cast`) have level.
+  - 3 command suggestion lambdas → `c.getSource().getLevel()`; 3 handlers
+    (`handleGods`/`handleIdentity`/`handleList`) gained `ServerLevel level =
+    src.getLevel();`.
+- **`GodRegistry` per-world links.** Deleted the static `RELIGIONS_BY_GOD` reverse
+  index (and its init-time build loop); `religionsVenerating`/`primaryReligionOf`
+  **gained a `ServerLevel`** and compute on demand from `Religions.all(level)`
+  (religions are few; it walks the in-memory store, not disk). `playerGods(level,pid)`
+  keeps its signature, resolves beliefs via `Religions.find(level, rid)`.
+  `godsFor`/`primaryGod` are **unchanged** — gods stay GLOBAL; they resolve a
+  religion's `godIds` against the global god catalog and need no level.
+- **`DivineFavour.tierFor`** threaded level (the favour-cap path): `tierForGod` →
+  `tierFor(level, …)` → `religionsVenerating(level, godId)`. The cap resolves
+  identically (best belief among venerating religions; single-god starters → the one
+  religion).
+- **`dominantReligionFor`** — unchanged public culture→default-id helper; its callers
+  resolve the returned id against the per-world store via the migrated lookups.
+- **`CalendarView.upcomingAcross(...)`** — arg swapped to `Religions.all(level)`.
+- **`ReligionIdentity.get` (narrative)** — NOT migrated; narrative stays
+  static/template, resolved by id (per the design).
+
+### The coverage lock (compiler proof)
+
+`ReligionRegistry.get/find/all` were renamed to a single package-private
+**`templates()`** (template-named, seeder-only). With the old public names gone, every
+straggler that still reached for the static registry **fails to compile** — the
+compiler proving the migration complete. The id constants and `dominantReligionFor`
+stay public (seed/config).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionSavedData`/`Religions` are now the lookup source;
+   the global god catalog (`GodRegistry.GODS`) is unchanged; `ReligionRegistry`
+   demoted to seed templates (read only by the seeder).
+2. **Downstream callers.** All 44 live `get/find/all` sites migrated (inventory above).
+   `GodRegistry.religionsVenerating`/`primaryReligionOf` now level-threaded; their only
+   callers (`DivineFavour.tierFor`, `DivineVision.deliver`) updated. The favour cap
+   (`tierForGod` → `religionsVenerating`) resolves identically. The calendar
+   enumeration + every debug command migrated.
+3. **Sibling systems.** The divine layer (favour / miracles / visions / wrath /
+   theophany) now reads religions per-world — behaviour identical (seeded set = old
+   static set). `ReligionIdentity` narrative still static. `RiteSavedData` unaffected
+   (separate store).
+4. **Exhaustive switches.** None touched (no enum change). Confirmed.
+
+### Simplification Sweep
+
+- **Stragglers the coverage lock surfaced (grep found them first, both METHOD
+  REFERENCES my `(`-suffixed grep initially skipped):**
+  `NpcProfileSnapshotBuilder` (`ReligionRegistry::find` → `Religions.find(level, …)`)
+  and `PietyComponent.attendsRite` (`ReligionRegistry::find`). This is exactly the
+  F1a-style hidden-reader case the dual grep-+-compiler mechanism exists for.
+- **Orphan deleted:** `PietyComponent.attendsRite(Rite)` had **zero callers** —
+  removed (rather than thread a level into a data component that shouldn't know the
+  world store; per-world rite-ritualisation goes through
+  `RiteScheduler.religionRitualises(level, …)`).
+- **Field removed (no orphan):** `GodRegistry.RELIGIONS_BY_GOD` static reverse index
+  (+ its init build loop) → replaced by on-demand computation.
+- **Accessors collapsed:** `ReligionRegistry` `get`/`find`/`all` → one package-private
+  `templates()` (the unused `find` and a symmetric `template(id)` dropped — no
+  callers).
+- **Touched classes:** `GodRegistry`, `DivineFavour`, `DivineVision`, `DivineWrath`,
+  `FaithJudgment`, `FaithVoice`, `FaithHistory`, `ScriptureFactory`, `ReligionContent`,
+  `MiracleInvoker`, `RiteScheduler`, `RiteExecutor`, `TempleProsperity`,
+  `TempleSnapshotBuilder`, `BuildingFaith`, `PlayerReligionSnapshotBuilder`,
+  `MonkProductionBehavior`, `PietyComponent`, `NpcProfileSnapshotBuilder`,
+  `VillageEventScheduler`, `ReligionDebugCommand`, `ReligionRegistry`,
+  `ReligionSavedData`.
+
+### Deviations from prompt
+
+- **Caller count.** The prompt estimated ~49 lookup sites; the actual `get/find/all`
+  inventory was 45 (44 live + the seeder), plus 2 method-reference stragglers the
+  `(`-form grep missed and the broadened grep/compiler caught. Same coverage outcome.
+- **`/religion list`** (the pre-existing command) now reads the per-world store too
+  (data-identical to before), so it and the 1a `/religion world list` show the same
+  set — acceptable; de-duping the two commands is out of scope.
+- Two helpers derive level from the NPC entity rather than gaining a param
+  (`FaithJudgment.judge`, `FaithVoice.line`) — lower churn, and the entity always
+  carries its (server) level for these server-only paths.
+
+### Out-of-scope but flagged
+
+- **F1b-2** — interreligious relations (KINDRED / NEUTRAL / RIVAL / HERETICAL, a
+  god-overlap baseline, per-world; `FaithReconciliation` + Kingdom-tension consumers).
+- **Dynamism** — founding / schism / conversion, using `ReligionSavedData.put` (the
+  mutation seam stood up in 1a, still caller-less).
+- **Official-religion-law → village-faith wiring** — deferred behaviour change;
+  `dominantReligionFor` stays culture-default for now.
+- **`ReligionIdentity` per-world** — narrative stays template (by design).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; `git reset --hard`
+to the F1b-1a remote tip restored all pushed work before this stage — no work lost.]
+Static review: final grep shows **zero** `ReligionRegistry.get/find/all` references in
+any form (`.`, spaced, `::`); the sole `templates()` reader is the seeder; every
+`Religions.*(level)` call site passes a `ServerLevel`; the level-threaded signatures'
+callers are all updated (grep-confirmed); gods stay global (`godsFor`/`primaryGod`
+unchanged).
+
+### Smoke test (user-runnable)
+
+1. **Everything still resolves (data-identical).** New world → rites still schedule
+   per faith (`/religion rite …`), NPC piety/beliefs resolve, building faith resolves
+   (`/religion temple`, `/religion shrine`), `/religion identity sunstead` reads as
+   before, `/religion list` == `/religion world list` (four faiths).
+2. **Divine layer unchanged.** `/religion favour grant sun_mother 60`, `/religion
+   miracle cast …`, `/religion sacrilege the_loom 80`, `/religion theophany favour
+   sun_mother` — all behave exactly as before; the favour CAP (`tierForGod` via
+   `religionsVenerating`) gives identical tiers/caps.
+3. **Player screen + calendar.** `/religion me` — per-god rows, calendar lists all
+   faiths (cross-faith `upcomingAcross` now per-world), pledge/calling read correctly.
+4. **Persistence.** Save + reload → all of the above identical; the per-world store
+   round-trips (`/religion world list` still four).
+5. **Coverage.** The build has no remaining static `ReligionRegistry.get/find/all`
+   runtime callers — compiler-clean after the accessor restriction (only the seeder
+   reads `templates()`).

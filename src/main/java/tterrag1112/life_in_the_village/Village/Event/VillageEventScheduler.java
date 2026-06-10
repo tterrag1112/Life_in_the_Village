@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Npc.Religion.Religion;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionContent;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
+import tterrag1112.life_in_the_village.Npc.Religion.Religions;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligiousCalendar;
 import tterrag1112.life_in_the_village.Npc.Religion.Rite;
 import tterrag1112.life_in_the_village.Npc.Religion.RiteScheduler;
@@ -195,7 +196,7 @@ public class VillageEventScheduler {
                                               VillageSavedData data, long currentTick,
                                               String religionId,
                                               tterrag1112.life_in_the_village.Village.Building venue) {
-        Religion religion = ReligionRegistry.get(religionId);
+        Religion religion = Religions.get(level, religionId);
         if (religion == null) return;
 
         int litDay = (int) ((currentTick / 24000L) % ReligiousCalendar.DAYS_PER_YEAR);
@@ -266,7 +267,7 @@ public class VillageEventScheduler {
                                                   VillageSavedData data, long currentTick,
                                                   String religionId,
                                                   tterrag1112.life_in_the_village.Village.Building venue) {
-        Religion religion = ReligionRegistry.get(religionId);
+        Religion religion = Religions.get(level, religionId);
         if (religion == null) return;
 
         VillageEvent.EventType type;
@@ -352,7 +353,7 @@ public class VillageEventScheduler {
                                               VillageSavedData data, long currentTick,
                                               String religionId,
                                               tterrag1112.life_in_the_village.Village.Building venue) {
-        Religion religion = ReligionRegistry.get(religionId);
+        Religion religion = Religions.get(level, religionId);
         if (religion == null) return;
 
         VillageEvent.EventType type = grandFestivalType(religionId);
@@ -372,7 +373,7 @@ public class VillageEventScheduler {
      *  principal day — used to suppress the generic holy-day blessing. */
     private static boolean isGrandFestivalDay(ServerLevel level, Village village,
                                               long currentTick) {
-        Religion religion = ReligionRegistry.get(
+        Religion religion = Religions.get(level,
                 ReligionContent.villageReligionId(level, village));
         if (religion == null) return false;
         String dayName = grandFestivalDayName(religion.id());

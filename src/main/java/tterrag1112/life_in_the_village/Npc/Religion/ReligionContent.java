@@ -62,8 +62,8 @@ public final class ReligionContent {
      * religion has one ("the Sun-Mother"); the faith's own name for an abstract
      * religion ("The Loom"). Consumes the formerly-dead {@code deity} field.
      */
-    public static String invocation(String religionId) {
-        Religion r = ReligionRegistry.get(religionId);
+    public static String invocation(ServerLevel level, String religionId) {
+        Religion r = Religions.get(level, religionId);
         if (r == null) return "the divine";
         // F1a 4a — the headline name is the PRIMARY god's name (religion display
         // name fallback for an impersonal/god-less faith), the old shape preserved.
@@ -72,8 +72,8 @@ public final class ReligionContent {
 
     /** A core tenet line for confession / sermon flavor, if the religion has
      *  any. Consumes the formerly-dead {@code coreTenets} field. */
-    public static Optional<String> tenet(String religionId, RandomSource rng) {
-        Religion r = ReligionRegistry.get(religionId);
+    public static Optional<String> tenet(ServerLevel level, String religionId, RandomSource rng) {
+        Religion r = Religions.get(level, religionId);
         if (r == null) return Optional.empty();
         List<String> tenets = r.coreTenets();
         if (tenets.isEmpty()) return Optional.empty();
