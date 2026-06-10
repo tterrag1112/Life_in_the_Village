@@ -43,11 +43,28 @@ public final class Intercession {
 
     /** Performs an intercession at the saint's grave the player is standing at. */
     public static Result pray(ServerLevel level, ServerPlayer player, long now) {
-        SaintsSavedData saints = SaintsSavedData.get(level);
         BlockPos pos = player.blockPosition();
-        SaintsSavedData.Saint saint = saints.nearestSaintGrave(pos, PRAY_RADIUS).orElse(null);
+        SaintsSavedData.Saint saint = SaintsSavedData.get(level)
+                .nearestSaintGrave(pos, PRAY_RADIUS).orElse(null);
         if (saint == null) return new Result(false, "No saint's grave is near. Stand at a grave to pray.");
+        return prayTo(level, player, saint, now);
+    }
 
+    /** SR4 — portable intercession via a relic: pray to {@code saintId}'s saint anywhere
+     *  (the relic is a connection to them). Same gate/cooldown core as the grave prayer. */
+    public static Result prayWithRelic(ServerLevel level, ServerPlayer player, UUID saintId, long now) {
+        SaintsSavedData.Saint saint = SaintsSavedData.get(level).saint(saintId).orElse(null);
+        if (saint == null) return new Result(false, "The relic's saint is unknown here.");
+        return prayTo(level, player, saint, now);
+    }
+
+    /** The shared prayer core — gate (FAITHFUL+), per-saint/day cooldown, the favour
+     *  grant (at the saint's grave, so sacred-amplified), the lesser blessing, tending
+     *  the grave imprint, and Venerable veneration/elevation. Used by BOTH the grave
+     *  command and the relic right-click — one prayer implementation. */
+    public static Result prayTo(ServerLevel level, ServerPlayer player,
+                                SaintsSavedData.Saint saint, long now) {
+        SaintsSavedData saints = SaintsSavedData.get(level);
         UUID pid = player.getUUID();
         String godId = saint.godId();
         God god = GodRegistry.get(godId);

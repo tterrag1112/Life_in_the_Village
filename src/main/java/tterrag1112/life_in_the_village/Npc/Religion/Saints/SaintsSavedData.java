@@ -88,6 +88,12 @@ public class SaintsSavedData extends SavedData {
             return new Saint(saintId, name, religionId, godId, virtue, epitaph, martyr,
                     canonized, deathTick, gravePos, saintDay, relicId, v);
         }
+
+        /** A copy of this saint with {@code relicId} set (SR4 — minted on canonization). */
+        public Saint withRelicId(Optional<String> id) {
+            return new Saint(saintId, name, religionId, godId, virtue, epitaph, martyr,
+                    canonized, deathTick, gravePos, saintDay, id, veneration);
+        }
     }
 
     public static final SavedDataType<SaintsSavedData> TYPE = new SavedDataType<>(

@@ -356,11 +356,12 @@ public final class ReligionDebugCommand {
         var canonized = saints.canonizedSaints();
         sb.append(String.format(Locale.ROOT, "%n§e--- Canonized (%d) ---", canonized.size()));
         for (var s : canonized) {
-            sb.append(String.format(Locale.ROOT, "%n  §6%s§7 — %s of §f%s§7, virtue %s, saint's day %d%s",
+            sb.append(String.format(Locale.ROOT, "%n  §6%s§7 — %s of §f%s§7, virtue %s, saint's day %d%s%s",
                     s.name(), s.martyr() ? "Martyr" : "Saint",
                     tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.find(s.godId())
                             .map(gg -> gg.displayName()).orElse(s.godId()),
-                    s.virtue().name(), s.saintDay(), s.martyr() ? " §c(martyr)" : ""));
+                    s.virtue().name(), s.saintDay(), s.martyr() ? " §c(martyr)" : "",
+                    s.relicId().isPresent() ? " §5[relic]" : ""));
         }
         var venerables = saints.venerables();
         if (!venerables.isEmpty()) {

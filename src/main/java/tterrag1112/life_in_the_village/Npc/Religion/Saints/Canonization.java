@@ -164,13 +164,16 @@ public final class Canonization {
                 canonized, deathTick, gravePos, saintDay, Optional.empty(), 0);
     }
 
-    /** The four reuse tie-ins (one routine — both auto-canonize and elevation call it). */
+    /** The reuse tie-ins (one routine — both auto-canonize and elevation call it). */
     private static void applyTieIns(ServerLevel level, SaintsSavedData.Saint s, long now) {
         // 1. Inscribe the grave epitaph (the formerly-unused Grave.epitaph).
         GraveyardSavedData.get(level).inscribeEpitaph(s.saintId(), s.epitaph());
         // 2. Durable consecrated imprint at the grave (permanent — does not fade).
         SacredSpaceSavedData.get(level)
                 .addPermanentImprint(s.godId(), s.gravePos(), s.deathTick(), SAINT_GRAVE_STRENGTH);
+        // 2b. SR4 — mint the saint's relic (one per saint): set the relicId seam +
+        //     enshrine it at the grave (best-effort spawn when the chunk is loaded).
+        mintRelic(level, s);
         // 3. Add the saint's day to the faith's calendar — the first real per-world
         //    religion mutation: copy the religion, add the day, put it back (no clobber).
         addSaintDay(level, s);
@@ -182,6 +185,28 @@ public final class Canonization {
                     Map.of("name", s.name(), "faith", s.religionId(),
                             "martyr", String.valueOf(s.martyr()), "day", String.valueOf(s.saintDay())),
                     List.of(s.saintId()));
+        }
+    }
+
+    /** SR4 — mints the saint's relic (one per saint): records the {@code relicId} seam
+     *  on the saint, then best-effort spawns the relic item at the grave (the first
+     *  reliquary) when the chunk is loaded. The grave is already permanently sacred. */
+    private static void mintRelic(ServerLevel level, SaintsSavedData.Saint s) {
+        if (s.relicId().isPresent()) return;                // already minted (idempotent)
+        SaintsSavedData.Saint withRelic = s.withRelicId(java.util.Optional.of(s.saintId().toString()));
+        SaintsSavedData.get(level).putSaint(withRelic);
+        net.minecraft.world.item.ItemStack relic = new net.minecraft.world.item.ItemStack(
+                tterrag1112.life_in_the_village.Items.ModItems.RELIC.get());
+        relic.set(tterrag1112.life_in_the_village.Components.ModDataComponents.RELIC_DATA.get(),
+                new RelicData(s.saintId(), s.name(), s.godId()));
+        BlockPos at = s.gravePos().above();
+        if (level.isLoaded(at)) {
+            net.minecraft.world.entity.item.ItemEntity drop =
+                    new net.minecraft.world.entity.item.ItemEntity(level,
+                            at.getX() + 0.5, at.getY() + 0.2, at.getZ() + 0.5, relic);
+            drop.setUnlimitedLifetime();                    // an enshrined relic does not despawn
+            drop.setDeltaMovement(0, 0, 0);
+            level.addFreshEntity(drop);
         }
     }
 

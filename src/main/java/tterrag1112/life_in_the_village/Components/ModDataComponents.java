@@ -63,6 +63,14 @@ public class ModDataComponents {
                             .persistent(tterrag1112.life_in_the_village.Items.StallLeaseTerms.CODEC)
                             .networkSynchronized(tterrag1112.life_in_the_village.Items.StallLeaseTerms.STREAM_CODEC));
 
+    /** SR4 — a saint's relic identity (saintId / name / patron godId) on a RELIC stack. */
+    public static final DeferredHolder<DataComponentType<?>,
+            DataComponentType<tterrag1112.life_in_the_village.Npc.Religion.Saints.RelicData>>
+            RELIC_DATA = register("relic_data",
+                    builder -> builder
+                            .persistent(tterrag1112.life_in_the_village.Npc.Religion.Saints.RelicData.CODEC)
+                            .networkSynchronized(tterrag1112.life_in_the_village.Npc.Religion.Saints.RelicData.STREAM_CODEC));
+
     private static <T>DeferredHolder<DataComponentType<?>, DataComponentType<T>> register(String name, UnaryOperator<DataComponentType.Builder<T>> builderOperator) {
 
         return DATA_COMPONENT_TYPES.register(name, () -> builderOperator.apply(DataComponentType.builder()).build());

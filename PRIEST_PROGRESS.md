@@ -10659,3 +10659,125 @@ auto-added); the blessing `DeityDomain` switch is 4-arm exhaustive.
    Venerable is canonized (saint's day / chronicle / durable grave appear, same as SR2).
 5. **No farming + persistence.** Confirm favour doesn't runaway (the daily cooldown
    holds); save+reload and confirm veneration + cooldowns persist.
+
+## Saints & Relics SR4 — relics (2026-06-10)
+
+The final holy-layer stage: a saint's <b>relic</b> — a real, holdable item carrying a
+fragment of the saint's holiness. <b>Carried</b>, it grants a small standing with the
+saint's god; <b>right-clicked</b>, it prays anywhere (portable intercession);
+<b>used on a block</b>, it enshrines a permanent sacred site. Being a true item, it can
+be sought, given, taken, and moved — the "fought over" flavour falls out of its
+tangibility. Fills the `relicId` seam. **This completes the Saints & Relics holy
+layer** (living saints → canonized roster → intercession → relics).
+
+### Disposition (investigation)
+
+- **Item pattern:** `JobContractItem`/`StallLeaseItem` carry a record component
+  (`*.CODEC` persistent + `*.STREAM_CODEC` via `ByteBufCodecs.fromCodecWithRegistries`)
+  registered in `ModDataComponents`; the item registers in `ModItems.ITEMS`
+  (`registerItem(name, Ctor::new, props)`). `use` returns `InteractionResult` in this
+  build; `useOn(UseOnContext)` likewise.
+- **Mint seam:** `Canonization.applyTieIns` — every canonization path (SR2 auto/clergy,
+  SR3 grassroots) runs it, so minting there mints once for all paths.
+- **Carried fold:** SR1 `SaintFactor.amplifierFor(level, beingId, godId)` — the carried
+  bonus folds in there, so it composes with the favour/miracle hooks automatically.
+- **Prayer reuse:** SR3 `Intercession.pray` — factored so the grave command and the
+  relic right-click share one core.
+- **Enshrine reuse:** SR2 permanent `Imprint` via `SacredSpaceSavedData.addPermanentImprint`.
+
+### What shipped
+
+- **`RelicData`** (new component record: `saintId`, `saintName`, `godId`) +
+  **`RELIC_DATA`** `DataComponentType` (persistent + synced).
+- **`RelicItem`** (new, registered as `ModItems.RELIC`, `stacksTo(1).fireResistant()`):
+  tooltip (St. <name> / holy to <god>); `use` (air) → portable intercession via
+  `Intercession.prayWithRelic`; `useOn` (block) → enshrine a permanent imprint at the
+  target.
+- **Mint on canonization:** `Canonization.mintRelic` (in `applyTieIns`) sets
+  `Saint.relicId` (= the saintId string, one relic per saint) and best-effort spawns the
+  relic `ItemEntity` at the grave with `setUnlimitedLifetime()` (the first reliquary;
+  the grave is already permanently sacred from SR2).
+- **Carried benefit:** `SaintFactor` now multiplies in `RELIC_CARRY_AMPLIFIER` (1.1)
+  when an online player carries a relic of that god — bounded, composing with the
+  living-saint 1.25 and the sacred space/time amplifiers.
+- **Prayer core factored:** `Intercession.prayTo(level, player, saint, now)` is the one
+  prayer body; `pray` (grave command) and `prayWithRelic` (relic) both call it — no
+  forked prayer logic.
+- **Surfacing:** the relic tooltip; `/religion saints` marks a saint with `[relic]`.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `Canonization.applyTieIns` (mint), `SaintsSavedData`/
+   `Saint.relicId`, `ModItems`/`ModDataComponents` (registration). Confirmed.
+2. **Downstream callers.** Carried fold (`SaintFactor` → the favour/miracle hooks that
+   already call it — no new hook); right-click intercession (the shared
+   `Intercession.prayTo`); enshrine (`addPermanentImprint` → flows into `sacrednessAt`).
+3. **Sibling systems.** SR3 intercession — the `pray` refactor preserves the grave-
+   prayer behaviour (same body, now via `prayTo`); the relic prayer is the same
+   gate/cooldown (no new power). The sacred layer — an enshrined imprint composes
+   additively into `sacrednessAt` like the grave's (no double-count). SR1 `SaintFactor`
+   — the carried bonus is bounded (1.1) and multiplies cleanly.
+4. **Exhaustive switches.** No new enum — the relic reuses `FavourAct.PRAYER` (via
+   `prayTo`); the blessing's `DeityDomain` switch (in `Intercession`) already covers all
+   arms. Nothing to update.
+
+### Simplification Sweep
+
+- **One mint point** (`mintRelic` inside the single `applyTieIns`); **one prayer core**
+  (`Intercession.prayTo`, shared by grave + relic); **one enshrine routine** (the SR2
+  permanent imprint). The carried bonus rides the existing `SaintFactor` (no parallel
+  favour path).
+- **Touched classes:** `RelicData` (new), `RelicItem` (new), `ModDataComponents`,
+  `ModItems`, `Canonization` (mint), `Intercession` (factor `prayTo` + `prayWithRelic`),
+  `SaintFactor` (carried), `SaintsSavedData` (`withRelicId`), `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **`RelicData` stores `godId` (not domain)** — the domain/virtue is resolved from the
+  god at runtime (tooltip + the blessing), avoiding redundant stored data.
+- **Enshrine does NOT consume the relic and has no cooldown** — deliberate per the
+  prompt ("moving it later doesn't un-bless"; "a relic carried to a new shrine spreads
+  sacredness"). Bounded because the sacred amplifier itself is capped (1.5×), so
+  multiple sacred sites don't create unbounded favour.
+- **Relic spawn at the grave is best-effort** (chunk-load gated, like the SR2 headstone
+  marker); `relicId` is set regardless, and the grave is already sacred. A relic that
+  failed to spawn (unloaded chunk) simply isn't in the world — no re-mint path here.
+- **Carried benefit folded into `SaintFactor`** (resolves the online player + scans the
+  main inventory) — no new favour hook; it inherits the favour + miracle composition for
+  free.
+
+### Out-of-scope but flagged
+
+- **Future tails:** a player canonization CEREMONY; NPC favour/theophany (to unify the
+  saint paths); **relic quests / theft** (the item's movability is the flavour; deeper
+  relic gameplay belongs to the quest base); a bless-others saint AURA.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the SR3 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep**: `RelicData` mirrors `JobContractTerms` (CODEC +
+`fromCodecWithRegistries` STREAM_CODEC); `RELIC_DATA`/`RELIC` register on the existing
+mod-event-bus `DeferredRegister`s (already wired in `Life_in_the_village`); `RelicItem`'s
+`appendHoverText`/`use`/`useOn` signatures match the build's items (`JobContractItem`/
+`PriceBoardItem`); the carried-relic scan returns 1.0 for NPCs (no player) and is bounded;
+`Saint` is now constructed only via `withVeneration`/`withRelicId`/`buildSaint` (all 13
+args). One NeoForge API to watch on the user's build: `ItemEntity.setUnlimitedLifetime()`
+(the enshrined relic's no-despawn) — flagged for a quick fix if the name differs here.
+
+### Smoke test (user-runnable)
+
+1. **Mint + enshrine.** Canonize a saint (SR2/SR3) → a relic item appears at the grave,
+   `Saint.relicId` is set, `/religion saints` shows `[relic]`.
+2. **Carried benefit.** Pick up the relic → favour/miracles with the saint's god are
+   slightly eased (×1.1, composing with sacred space/time and any living-saint ease);
+   drop it → the bonus is gone.
+3. **Portable prayer.** Right-click the relic far from the grave → a portable
+   intercession (favour + a domain blessing), on the SAME per-saint/day cooldown as the
+   grave prayer (`/religion pray`).
+4. **Enshrine.** Use the relic on a block elsewhere → `/religion sacred <god>` there reads
+   MAJOR-sacred (a permanent imprint); the relic stays in hand (movable, re-usable).
+5. **Tangible + bounded.** Drop / pick up / give the relic freely; confirm no runaway
+   favour (cooldown holds; carried + sacred amplifiers are capped). Save+reload → the
+   relic component, `relicId`, and the enshrined imprint persist.
