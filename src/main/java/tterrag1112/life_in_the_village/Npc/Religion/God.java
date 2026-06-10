@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpaceRule;
 
 import java.util.List;
 import java.util.Locale;
@@ -21,10 +22,13 @@ import java.util.Optional;
  * identity deity fields deleted. The deity TYPES ({@link DeityDomain}, {@link
  * Virtue}, {@link Taboo}) are top-level in {@code Npc.Religion}.</p>
  *
- * @param name     the personal name ("the Sun-Mother"); <b>empty for an impersonal
- *                 god</b> (the Pattern)
- * @param virtues  the god's demanded virtues
- * @param taboos   the god's forbidden acts
+ * @param name        the personal name ("the Sun-Mother"); <b>empty for an impersonal
+ *                    god</b> (the Pattern)
+ * @param virtues     the god's demanded virtues
+ * @param taboos      the god's forbidden acts
+ * @param sacredSpace Sacred Space S1a — the god's natural sacred-space rules (empty =
+ *                    no natural sacred space). Hand-authored in {@link GodRegistry};
+ *                    deliberately OUTSIDE {@link #CODEC} (see its note).
  */
 public record God(
         String id,
@@ -34,13 +38,15 @@ public record God(
         String demands,
         String rewards,
         List<Virtue> virtues,
-        List<Taboo> taboos
+        List<Taboo> taboos,
+        List<SacredSpaceRule> sacredSpace
 ) {
     public God {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("god id required");
-        name    = name    == null ? Optional.empty() : name;
-        virtues = virtues == null ? List.of() : List.copyOf(virtues);
-        taboos  = taboos  == null ? List.of() : List.copyOf(taboos);
+        name        = name        == null ? Optional.empty() : name;
+        virtues     = virtues     == null ? List.of() : List.copyOf(virtues);
+        taboos      = taboos      == null ? List.of() : List.copyOf(taboos);
+        sacredSpace = sacredSpace == null ? List.of() : List.copyOf(sacredSpace);
     }
 
     /** The personal name, or a domain-sensible fallback for an impersonal god. */
@@ -57,8 +63,11 @@ public record God(
     public boolean isImpersonal() { return name.isEmpty(); }
 
     // ── Codec (forward-compat for later content-pack gods; mirrors Religion.CODEC).
-    //    8 fields — well under the 16-field RecordCodecBuilder ceiling; gods will
-    //    later gain a sacred-space rule / miracle set / holy days / oaths. ──────
+    //    8 persisted fields — well under the 16-field ceiling. The S1a `sacredSpace`
+    //    rule list is hand-authored + global (gods are never deserialized per-world),
+    //    so it is DELIBERATELY OUTSIDE the codec: the sealed SacredSpaceRule would need
+    //    a dispatch codec (biome/structure holders, tags, …) for zero runtime gain.
+    //    Decoded gods load with an empty sacredSpace; authored gods carry the real one. ──
 
     private static final Codec<DeityDomain> DOMAIN_CODEC = Codec.STRING.xmap(
             s -> DeityDomain.valueOf(s.toUpperCase(Locale.ROOT)), DeityDomain::name);
@@ -82,5 +91,6 @@ public record God(
             Codec.STRING.optionalFieldOf("rewards", "").forGetter(God::rewards),
             VIRTUE_CODEC.listOf().optionalFieldOf("virtues", List.of()).forGetter(God::virtues),
             TABOO_CODEC.listOf().optionalFieldOf("taboos", List.of()).forGetter(God::taboos)
-    ).apply(i, God::new));
+    ).apply(i, (id, name, domain, character, demands, rewards, virtues, taboos) ->
+            new God(id, name, domain, character, demands, rewards, virtues, taboos, List.of())));
 }
