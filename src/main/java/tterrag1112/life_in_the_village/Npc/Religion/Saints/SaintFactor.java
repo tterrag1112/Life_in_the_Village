@@ -46,7 +46,9 @@ public final class SaintFactor {
     private static float relicCarryFactor(ServerLevel level, UUID beingId, String godId) {
         ServerPlayer player = level.getServer().getPlayerList().getPlayer(beingId);
         if (player == null) return 1.0f;
-        for (ItemStack stack : player.getInventory().items) {
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack stack = inv.getItem(i);
             if (stack.isEmpty() || !stack.is(ModItems.RELIC.get())) continue;
             RelicData data = stack.get(ModDataComponents.RELIC_DATA.get());
             if (data != null && godId.equals(data.godId())) return RELIC_CARRY_AMPLIFIER;
