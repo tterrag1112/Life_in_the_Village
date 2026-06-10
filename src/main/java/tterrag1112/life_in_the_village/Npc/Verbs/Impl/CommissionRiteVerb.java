@@ -114,7 +114,7 @@ public final class CommissionRiteVerb implements PlayerVerb {
             tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.awardForReligion(
                     ctx.level(), playerId, faith,
                     tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.COMMISSION_RITE,
-                    ctx.level().getGameTime());
+                    ctx.level().getGameTime(), ctx.player().blockPosition());  // S1b — sacred at the commission site
         }
 
         ctx.npc().getRelationships().adjust(playerId,

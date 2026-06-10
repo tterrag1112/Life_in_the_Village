@@ -65,6 +65,15 @@ public final class SacredSpace {
         return SacrednessTier.classify(sacrednessAt(level, godId, pos));
     }
 
+    /** S1b — the sacred amplifier ({@link SacrednessTier#amplifier()}) for {@code godId}
+     *  at {@code pos}, or <b>1.0 when {@code pos == null}</b> (a non-positional grant —
+     *  today's numbers, unchanged). The one entry the favour + miracle paths call so
+     *  the tier→multiplier mapping is never duplicated. */
+    public static float amplifierAt(ServerLevel level, String godId, BlockPos pos) {
+        if (pos == null) return 1.0f;
+        return tierAt(level, godId, pos).amplifier();
+    }
+
     /**
      * The full breakdown (total + per-source contributions). The single fold home —
      * both {@link #sacrednessAt} and the readout go through here, so the natural /

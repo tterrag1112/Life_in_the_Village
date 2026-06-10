@@ -79,7 +79,7 @@ public final class AttendRiteVerb implements PlayerVerb {
         tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.awardForReligion(
                 ctx.level(), playerId, targetFaith,
                 tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.ATTEND_RITE,
-                ctx.level().getGameTime());
+                ctx.level().getGameTime(), ctx.player().blockPosition());  // S1b — sacred at the rite venue
 
         // R9d payoff — the public act of devotion warms co-religionists present.
         int warmed = PietyPayoff.applyCoReligionistRegard(ctx.level(), ctx.player(),

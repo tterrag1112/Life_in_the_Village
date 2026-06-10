@@ -21,4 +21,15 @@ public enum SacrednessTier {
         if (potency <= 0f) return NONE;
         return potency < MAJOR_AT ? MINOR : MAJOR;
     }
+
+    /** Sacred Space S1b — the shared <b>amplifier</b> (tier → multiplier) the favour
+     *  grant and the miracle gate both apply on sacred ground: NONE 1.0 (today's
+     *  numbers), MINOR 1.25, MAJOR 1.5. The one tunable home for the sacred bonus. */
+    public float amplifier() {
+        return switch (this) {
+            case NONE  -> 1.0f;
+            case MINOR -> 1.25f;
+            case MAJOR -> 1.5f;
+        };
+    }
 }

@@ -44,6 +44,15 @@ public final class DivineTheophany {
     private static final long  COOLDOWN = 168000L;
     private static final int   CHECK_INTERVAL = 200;
 
+    /** S1b — sacred ground EASES the favour-extreme threshold (a theophany is likelier
+     *  at the god's sacred place): the threshold shifts inward by this many favour
+     *  points by sacredness tier. {@link #MAX_SACRED_EASE} bounds the perf-guard
+     *  pre-check (never query sacredness unless the player is within this of the
+     *  extreme). */
+    private static final float SACRED_EASE_MINOR = 8f;
+    private static final float SACRED_EASE_MAJOR = 15f;
+    private static final float MAX_SACRED_EASE   = 15f;
+
     // ── Trigger (per-player tick; rare + milestone-bounded) ──────────────────
 
     public static void tick(ServerPlayer player) {
@@ -55,17 +64,36 @@ public final class DivineTheophany {
 
         for (God god : GodRegistry.playerGods(level, pid)) {
             float fav = DivineFavour.current(level, pid, god.id(), now);
-            if (fav >= FAVOUR_PEAK
-                    && DivineFavour.tierForGod(level, pid, god.id()) == PietyTier.PIOUS) {
-                if (now - data.getTheophanyTick(pid, god.id() + "|favour") >= COOLDOWN) {
-                    fireFavour(level, player, god, now);
-                }
-            } else if (fav <= WRATH_DEPTH) {
-                if (now - data.getTheophanyTick(pid, god.id() + "|wrath") >= COOLDOWN) {
-                    fireWrath(level, player, god, now);
-                }
+
+            // Favour pole (PIOUS, peak favour). Perf guard: the sacredness query
+            // (possibly a structure lookup) runs ONLY after the cheap pre-checks pass
+            // — near the (eased) peak, PIOUS, off cooldown — never unconditionally.
+            if (fav >= FAVOUR_PEAK - MAX_SACRED_EASE
+                    && DivineFavour.tierForGod(level, pid, god.id()) == PietyTier.PIOUS
+                    && now - data.getTheophanyTick(pid, god.id() + "|favour") >= COOLDOWN) {
+                float effPeak = FAVOUR_PEAK - sacredEase(level, player, god);
+                if (fav >= effPeak) { fireFavour(level, player, god, now); continue; }
+            }
+
+            // Wrath pole. Same perf guard against the depth threshold.
+            if (fav <= WRATH_DEPTH + MAX_SACRED_EASE
+                    && now - data.getTheophanyTick(pid, god.id() + "|wrath") >= COOLDOWN) {
+                float effDepth = WRATH_DEPTH + sacredEase(level, player, god);
+                if (fav <= effDepth) fireWrath(level, player, god, now);
             }
         }
+    }
+
+    /** Favour-points the player's sacredness to {@code god} eases the extreme by
+     *  ({@code 0} off sacred ground → unchanged thresholds). Called only behind the
+     *  tick's cheap pre-checks (perf guard). */
+    private static float sacredEase(ServerLevel level, ServerPlayer player, God god) {
+        return switch (tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace
+                .tierAt(level, god.id(), player.blockPosition())) {
+            case NONE  -> 0f;
+            case MINOR -> SACRED_EASE_MINOR;
+            case MAJOR -> SACRED_EASE_MAJOR;
+        };
     }
 
     // ── The two manifestations (public so the debug command can force them) ──

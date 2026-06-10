@@ -9862,3 +9862,135 @@ are standard 1.21.
    built bonus only (else NONE away from its buildings).
 6. **No effect change.** Confirm favour/miracle/theophany behaviour is identical to
    before (nothing reads the query but the readout).
+
+## Sacred Space S1b — wire the effects (favour / miracle / theophany) (2026-06-10)
+
+S1a built the `SacredSpace.sacrednessAt` query + the per-god rules (no effects). S1b
+makes sacred ground **do something**: a favour grant made in sacred space is
+amplified, miracles come easier there, and a theophany is likelier at a god's sacred
+place. Intentional **behaviour change**, bounded by `SacrednessTier` (tunable);
+NONE / null-position reproduces today's exact numbers. **Completes the sacred-SPACE
+effects.**
+
+### Disposition (investigation)
+
+- **Query (S1a):** `SacredSpace.sacrednessAt/tierAt`, `SacrednessTier {NONE,MINOR,MAJOR}`,
+  per-god resolution. S1b adds the shared `SacrednessTier.amplifier()` (tier→multiplier)
+  + `SacredSpace.amplifierAt(level, godId, pos)` (null-safe).
+- **Favour path:** the multiplier applies in `DivineFavour.awardConcept` after the
+  alignment weight. **No position was in scope** — S1b threads a nullable `BlockPos`
+  via OVERLOADS (existing signatures delegate with `null`). The favour-grant callers
+  that route through `awardConcept` are exactly four (RiteExecutor grants no favour —
+  the grants live in the player-act paths): `MakeOfferingVerb` (OFFERING),
+  `AttendRiteVerb` (ATTEND_RITE), `CommissionRiteVerb` (COMMISSION_RITE) → the
+  player's position; `Tithing` (TITHE) → the temple building's origin (the tithe's
+  venue; the player isn't physically present for the recurring auto-tithe). The V3
+  calling bonus (`addCappedForReligion`) and V4 sacrilege (`offend`) do NOT pass
+  through `awardConcept` → no site, unchanged (a null-location grant is identity).
+- **Miracle gate:** `MiracleInvoker.status`/`cast` — `player.blockPosition()` in scope.
+- **Theophany:** `DivineTheophany.tick` (per-player, every `CHECK_INTERVAL=200`; per-god
+  favour extreme + cooldown). Player pos in scope; the S1a `StructureRule` cost flag
+  means the sacredness query must be guarded behind the cheap pre-checks.
+
+### What shipped
+
+- **Shared sacred-factor helper (one home):** `SacrednessTier.amplifier()` → NONE 1.0,
+  MINOR 1.25, MAJOR 1.5; `SacredSpace.amplifierAt(level, godId, pos)` returns 1.0 when
+  `pos == null`. The favour AND miracle paths both call `amplifierAt` — the
+  tier→multiplier mapping is never duplicated.
+- **Favour (DivineFavour):** added `BlockPos`-carrying OVERLOADS of `award` /
+  `awardVirtue` / `awardForReligion`; the legacy signatures delegate with `null`.
+  `awardConcept` now multiplies the grant by `amplifierAt(level, godId, pos)` after the
+  alignment weight (composes with the 1.5× virtue bonus — two distinct bonuses) and
+  still clamps to the piety cap (sacred amplifies, never bypasses the cap). Four
+  callers updated to pass position (above).
+- **Miracle (MiracleInvoker):** in `status` AND `cast`, the access threshold
+  (`minFavour`) is checked against `favour × amplifierAt(...)` so a near-threshold
+  miracle becomes castable on sacred ground; the **tier gate and the real `cost` spend
+  are unchanged** (sacred eases, never bypasses). `cast` appends a flavour note when
+  the ground is sacred.
+- **Theophany (DivineTheophany):** sacred ground eases the favour-extreme thresholds —
+  the favour-peak drops by `sacredEase` (MINOR 8 / MAJOR 15) and the wrath-depth rises
+  likewise. **Perf guard:** `sacrednessAt` runs ONLY after the cheap pre-checks pass
+  (within `MAX_SACRED_EASE=15` of the extreme, PIOUS for the favour pole, off cooldown)
+  — never unconditionally per tick per player. NONE/non-sacred keeps the exact ±90
+  thresholds.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `SacredSpace.amplifierAt`/`tierAt` (S1a) + the threaded
+   `BlockPos`. Read-only.
+2. **Downstream callers.** Favour grant path (+ its 4 position-aware callers),
+   `MiracleInvoker.status`/`cast`, `DivineTheophany.tick`. **NONE / null = today's exact
+   numbers** (amplifier 1.0; theophany thresholds ±90). Verified the 4 favour callers
+   explicitly (a missed one is a silent no-bonus, not a crash).
+3. **Sibling systems.** Composes cleanly: the sacred multiplier rides on top of the
+   3a alignment bonus + the piety cap; the miracle sacred ease rides on top of the 3b
+   tier gate + cooldown (cost/spend untouched); the theophany ease rides on the
+   existing cooldown/milestone (no double-fire — favour pole `continue`s; the poles are
+   mutually exclusive at the eased thresholds).
+4. **Exhaustive switches.** New `switch (SacrednessTier)` in `SacrednessTier.amplifier`
+   and `DivineTheophany.sacredEase` cover all three arms. No existing enum changed.
+
+### Simplification Sweep
+
+- **One sacred-factor helper** (`SacrednessTier.amplifier()` + `SacredSpace.amplifierAt`)
+  shared by favour + miracle — not duplicated. Theophany uses an additive points ease
+  (a different effect shape, not a multiplier), so it's a separate small mapping, not a
+  duplicate.
+- **No dead old-path:** the favour overloads delegate (legacy 5-arg → 6-arg with
+  `null`); the private `awardConcept` is the single grant body (no parallel path left).
+- **Touched classes:** `SacrednessTier`, `SacredSpace`, `DivineFavour`, `MiracleInvoker`,
+  `DivineTheophany`, `MakeOfferingVerb`, `AttendRiteVerb`, `CommissionRiteVerb`,
+  `Tithing`.
+
+### Deviations from prompt
+
+- **Miracle easing applies to `minFavour` only**, not the spent `cost` (the prompt said
+  "multiply the effective favour read by the gate"): boosting the cost check too would
+  let the gate pass while the real spend fails. Easing the ACCESS threshold and paying
+  the real cost from real favour is the consistent reading of "eases, never bypasses".
+- **Tithe site = the temple origin** (not player pos): the recurring auto-tithe fires
+  with the player anywhere, so the temple it flows to is the meaningful sacred site.
+- Tier-eased theophany uses additive favour-point shifts (MINOR 8 / MAJOR 15) rather
+  than a multiplier — cleaner for a threshold than scaling it.
+
+### Out-of-scope but flagged
+
+- **S2** — sacred TIME / holy-day bonuses (piety-gated; the "highly pious only" gate
+  belongs there, not to sacred space).
+- **S3** — decaying theophany **imprints** (a new BlockPos-keyed SavedData) folded as
+  the third `sacrednessAt` source (the commented seam in `SacredSpace.explain`).
+- **Future** — holy-city / sacred-kingdom contributor, worldgen shrine-spawn.
+- `addCappedForReligion` (calling bonus) + `offend` (sacrilege) stay non-positional by
+  design — no sacred amplification on the calling bonus or on displeasure.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the S1a tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** (the F1b two-line-straggler lesson): all four
+`DivineFavour.awardForReligion` call sites now pass the 6th `BlockPos` arg; no external
+`award`/`awardVirtue`/`awardConcept` caller exists on a stale signature; the favour
+overloads delegate (legacy callers compile unchanged); `MiracleInvoker` imports
+`SacredSpace`; `DivineTheophany` references it by FQN; the amplifier switch and the
+theophany ease switch are 3-arm exhaustive; NONE/null reproduces the prior numbers.
+
+### Smoke test (user-runnable)
+
+1. **Favour scales with the readout's tier.** Offer to the Sea-Mother in open ocean
+   (`/religion sacred sea_mother` MINOR) vs on an ocean monument (MAJOR) — the favour
+   gain is ~1.25× vs ~1.5× the flat-ground base; on non-sacred ground it equals today's
+   base (unchanged), and still clamps at the piety cap.
+2. **Miracle eases on sacred ground.** On a mountaintop (Forge-Father sacred), a
+   near-`minFavour` miracle that read LOCKED on flat ground becomes AVAILABLE
+   (`/religion miracle list` reflects it) and casts; the tier gate and the favour spent
+   are unchanged; off sacred ground it's locked as before.
+3. **Theophany likelier in sacred space.** Drive Sun-Mother favour into the 75–90 band
+   under open sky at midday (her sacred space) and confirm a glory theophany can fire
+   there that would NOT underground/at night (where the threshold stays 90).
+4. **Perf guard.** Confirm no per-tick structure-lookup spam / FPS dip — the theophany
+   tick only queries sacredness for a near-extreme, off-cooldown player.
+5. **Null-location unchanged.** A sacrilege `offend` (no site) and the V3 calling bonus
+   behave exactly as before (no sacred factor).

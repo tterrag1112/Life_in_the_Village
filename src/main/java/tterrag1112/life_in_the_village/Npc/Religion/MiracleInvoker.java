@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -42,7 +43,11 @@ public final class MiracleInvoker {
         PietyTier tier = DivineFavour.tierForGod(level, pid, god.id());
         if (tier.ordinal() < m.minTier().ordinal()) return Status.LOCKED_TIER;
         float favour = DivineFavour.current(level, pid, god.id(), now);
-        if (favour < m.minFavour() || favour < m.cost()) return Status.LOCKED_FAVOUR;
+        // S1b — sacred ground EASES the access threshold (minFavour) by the god's
+        // sacredness here; the tier gate and the real cost are unchanged (sacred
+        // space eases, it never bypasses the gate or the cap).
+        float effFavour = favour * SacredSpace.amplifierAt(level, god.id(), player.blockPosition());
+        if (effFavour < m.minFavour() || favour < m.cost()) return Status.LOCKED_FAVOUR;
         return Status.AVAILABLE;
     }
 
@@ -68,7 +73,10 @@ public final class MiracleInvoker {
                     + m.minTier().displayName() + ").");
         }
         float favour = DivineFavour.current(level, pid, god.id(), now);
-        if (favour < m.minFavour() || favour < m.cost()) {
+        // S1b — sacred ground eases the access threshold (minFavour); the cost is
+        // still paid from REAL favour, so sacred space never bypasses the spend.
+        float effFavour = favour * SacredSpace.amplifierAt(level, god.id(), player.blockPosition());
+        if (effFavour < m.minFavour() || favour < m.cost()) {
             return new Result(false, "Not enough favour for " + m.displayName()
                     + " (need " + Math.round(Math.max(m.minFavour(), m.cost()))
                     + ", have " + Math.round(favour) + ").");
@@ -81,7 +89,8 @@ public final class MiracleInvoker {
         // Apply the favour-scaled effect, then arm the cooldown.
         m.effect().apply(level, player, favour);
         arm(pid, m.id(), now + m.cooldownTicks());
-        return new Result(true, m.displayName() + " — granted.");
+        return new Result(true, m.displayName() + " — granted."
+                + (effFavour > favour ? " The ground is sacred to " + god.displayName() + "." : ""));
     }
 
     // ── Cooldown bookkeeping ─────────────────────────────────────────────────

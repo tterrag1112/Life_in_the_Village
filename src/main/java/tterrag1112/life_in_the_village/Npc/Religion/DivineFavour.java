@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
+import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace;
 
 import java.util.UUID;
 
@@ -97,12 +99,21 @@ public final class DivineFavour {
     // =========================================================================
 
     /** Awards {@code act} to every god the religion venerates + fires the V3 calling
-     *  hook (the calling is a religion-keyed task). */
+     *  hook (the calling is a religion-keyed task). Non-positional — today's numbers. */
     public static void awardForReligion(ServerLevel level, UUID playerId,
                                         String religionId, FavourAct act, long now) {
+        awardForReligion(level, playerId, religionId, act, now, null);
+    }
+
+    /** S1b — as {@link #awardForReligion(ServerLevel, UUID, String, FavourAct, long)},
+     *  but the grant is amplified by each god's sacredness at {@code pos} (null =
+     *  no site = unchanged). */
+    public static void awardForReligion(ServerLevel level, UUID playerId,
+                                        String religionId, FavourAct act, long now,
+                                        BlockPos pos) {
         Religion r = Religions.get(level, religionId);
         if (r == null) return;
-        for (God g : GodRegistry.godsFor(r)) award(level, playerId, g.id(), act, now);
+        for (God g : GodRegistry.godsFor(r)) award(level, playerId, g.id(), act, now, pos);
         // Divine Layer V3 — an act may fulfil a standing divine calling (religion-
         // keyed); the bonus uses addCappedForReligion (no calling re-trigger).
         DivineVision.onFavourAct(level, playerId, religionId, act, now);
@@ -140,28 +151,45 @@ public final class DivineFavour {
     // =========================================================================
 
     /** Grants favour with {@code godId} for {@code act}, demand-weighted by the GOD's
-     *  virtues, clamped to the god's piety-tier cap. */
+     *  virtues, clamped to the god's piety-tier cap. Non-positional — today's numbers. */
     public static void award(ServerLevel level, UUID playerId, String godId,
                              FavourAct act, long now) {
-        awardConcept(level, playerId, godId, act, act.concept, now);
+        award(level, playerId, godId, act, now, null);
+    }
+
+    /** S1b — as {@link #award(ServerLevel, UUID, String, FavourAct, long)} but
+     *  amplified by the god's sacredness at {@code pos} (null = unchanged). */
+    public static void award(ServerLevel level, UUID playerId, String godId,
+                             FavourAct act, long now, BlockPos pos) {
+        awardConcept(level, playerId, godId, act, act.concept, now, pos);
     }
 
     /** Grants {@link FavourAct#VIRTUE} weighted by {@code concept} to {@code godId}. */
     public static void awardVirtue(ServerLevel level, UUID playerId, String godId,
                                    FaithConcept concept, long now) {
-        awardConcept(level, playerId, godId, FavourAct.VIRTUE, concept, now);
+        awardVirtue(level, playerId, godId, concept, now, null);
+    }
+
+    /** S1b — sacred-amplified virtue grant. */
+    public static void awardVirtue(ServerLevel level, UUID playerId, String godId,
+                                   FaithConcept concept, long now, BlockPos pos) {
+        awardConcept(level, playerId, godId, FavourAct.VIRTUE, concept, now, pos);
     }
 
     private static void awardConcept(ServerLevel level, UUID playerId, String godId,
-                                     FavourAct act, FaithConcept concept, long now) {
+                                     FavourAct act, FaithConcept concept, long now,
+                                     BlockPos pos) {
         if (godId == null) return;
         RiteSavedData data = RiteSavedData.get(level);
         float cap = cap(tierFor(level, data, playerId, godId));
         if (cap <= 0f) return;                              // no standing → can't hold favour
         float weight = aligned(godId, concept) ? ALIGNED_BONUS : 1f;
+        // S1b — sacred ground amplifies the grant (1.0 when pos is null → unchanged).
+        // Composes with the alignment weight (two distinct bonuses, by design).
+        float sacred = SacredSpace.amplifierAt(level, godId, pos);
         // Lower bound is the displeasure floor (not 0): a repenting, displeased
         // player's act climbs GRADUALLY out of the negative, not instantly to 0.
-        float next = clamp(current(level, playerId, godId, now) + act.base * weight,
+        float next = clamp(current(level, playerId, godId, now) + act.base * weight * sacred,
                 DISPLEASURE_FLOOR, cap);
         data.getOrCreatePlayerFavour(playerId).set(godId, next, now);
         data.markDirty();
