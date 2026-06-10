@@ -2,7 +2,10 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BiomeTags;
+import net.minecraft.world.level.levelgen.structure.BuiltinStructures;
 import org.slf4j.Logger;
+import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpaceRule;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -236,7 +239,9 @@ public final class GodRegistry {
                         new Taboo(FaithConcept.IDLENESS,
                                 "To shirk the day's work is to spurn the light that gives it."),
                         new Taboo(FaithConcept.GREED,
-                                "To hoard the harvest while a neighbour hungers is to insult the giver.")));
+                                "To hoard the harvest while a neighbour hungers is to insult the giver.")),
+                // S1a — sacred where her light reaches: open sky in daylight (dynamic).
+                List.of(new SacredSpaceRule.SkyRule(true, true, 1.0f)));
     }
 
     private static God thePattern() {
@@ -254,7 +259,13 @@ public final class GodRegistry {
                         new Taboo(FaithConcept.DECEIT,
                                 "A lie is a knot in the weave; it snares more than the one who tied it."),
                         new Taboo(FaithConcept.DISCORD,
-                                "To set thread against thread is to tear the cloth that holds you too.")));
+                                "To set thread against thread is to tear the cloth that holds you too.")),
+                // S1a — concentric rings from the world origin, extra-sacred at a
+                // stronghold (the two stack).
+                List.of(
+                        new SacredSpaceRule.CoordinateRule(256, 8, 1.0f),
+                        new SacredSpaceRule.StructureRule(
+                                List.of(BuiltinStructures.STRONGHOLD), 1.0f)));
     }
 
     private static God seaMother() {
@@ -272,7 +283,16 @@ public final class GodRegistry {
                         new Taboo(FaithConcept.RECKLESSNESS,
                                 "To dare the deep heedlessly is to spit in the Sea-Mother's face."),
                         new Taboo(FaithConcept.SACRILEGE,
-                                "To foul the shore or mock the drowned is to break faith with the deep.")));
+                                "To foul the shore or mock the drowned is to break faith with the deep.")),
+                // S1a — sacred over ocean + coast, DOUBLY sacred at an ocean monument
+                // or ruins (biome + structure stack).
+                List.of(
+                        new SacredSpaceRule.BiomeRule(
+                                List.of(BiomeTags.IS_OCEAN, BiomeTags.IS_BEACH), 1.0f),
+                        new SacredSpaceRule.StructureRule(
+                                List.of(BuiltinStructures.OCEAN_MONUMENT,
+                                        BuiltinStructures.OCEAN_RUIN_COLD,
+                                        BuiltinStructures.OCEAN_RUIN_WARM), 1.0f)));
     }
 
     private static God forgeFather() {
@@ -292,6 +312,12 @@ public final class GodRegistry {
                         new Taboo(FaithConcept.COWARDICE,
                                 "To abandon kin in the breach is to break the line and one's own name with it."),
                         new Taboo(FaithConcept.SACRILEGE,
-                                "To dishonour the ancestors' graves is to spurn the iron at your back.")));
+                                "To dishonour the ancestors' graves is to spurn the iron at your back.")),
+                // S1a — the high places: above the mountain line, extra-sacred when
+                // that height is also a mountain biome (altitude + biome stack).
+                List.of(
+                        new SacredSpaceRule.AltitudeRule(150, Integer.MAX_VALUE, 1.0f),
+                        new SacredSpaceRule.BiomeRule(
+                                List.of(BiomeTags.IS_MOUNTAIN), 1.0f)));
     }
 }

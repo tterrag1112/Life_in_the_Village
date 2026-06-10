@@ -9718,3 +9718,147 @@ threads the level; pair keys are canonical (sorted, "|"-joined).
    mismatch (−3, unchanged from before).
 6. **No regression at NEUTRAL.** With no shared gods and no overrides (the shipped
    default), every drift/tension number equals pre-F1b-2.
+
+## Sacred Space S1a — the SacredSpaceRule model + per-god authoring + the sacredness query (2026-06-10)
+
+The first content layer on the gods-split foundation. S1a builds the VOCABULARY of
+sacred space and the QUERY that reads it — **no effects** (favour/miracle/theophany
+bonuses are S1b). After S1a you can stand anywhere and read how sacred the spot is to
+each god via `/religion sacred`. Additive scaffolding; nothing existing changes.
+
+### Disposition (investigation)
+
+- **`God`** is the authoring home (hand-authored + global in `GodRegistry`); it gains
+  the rule list.
+- **`BuildingFaith`** supplies the built source: `resolveFaith(level, village, b)` →
+  faith → (via `Religions.get` + `GodRegistry.primaryGod`) the god; `isReligiousBuilding`
+  covers TEMPLE/CHAPEL/SHRINE/MONASTERY/ABBEY. Building position via
+  `b.getShape().getOrigin()`; the village at a pos via `VillageSavedData.getVillageAt`.
+- **Vanilla APIs:** `level.getBiome(pos).is(TagKey)`, `level.canSeeSky(pos)`,
+  `level.isDay()`, `pos.getY()`, `level.structureManager().getStructureWithPieceAt(pos,
+  ResourceKey<Structure>)`, `new PosUtil(pos).horizontalDistanceTo(BlockPos)`.
+
+### Model + decisions
+
+- **`SacredSpaceRule`** (new sealed interface, `Npc/Religion/Sacred/`) — each variant a
+  record with `float potencyAt(level, pos)` (0 = not sacred) + a `label()`. A potency,
+  not a boolean, so a god's sacred space is a LIST whose contributions **sum** and
+  sacredness STACKS. The sealed type is the extension point. Variants built (only what
+  the four starters need): **`BiomeRule`** (biome tags), **`AltitudeRule`** (Y band),
+  **`CoordinateRule`** (concentric rings from world origin), **`SkyRule`** (dynamic:
+  open sky / daytime), **`StructureRule`** (vanilla structures via the structure
+  manager). **Skipped** (stated): `DimensionRule` / `ProximityRule` — no starter
+  consumer; the sealed type makes adding them later one record + one `permits` entry
+  (honours "new primitives only when a concrete consumer needs them").
+- **`God.sacredSpace`** — added as a 9th record component (default empty), **outside
+  the persisted codec** (the codec's `.apply` supplies `List.of()`). Stated choice:
+  gods are hand-authored + global (never deserialized per-world), so a dispatch codec
+  for the sealed rule (biome/structure holders, tags) would be pure plumbing for zero
+  runtime gain. Decoded gods load empty; authored gods carry the real list.
+- **`SacrednessTier`** (new enum) `NONE/MINOR/MAJOR` + `classify(potency)` (MAJOR_AT =
+  1.5): one base rule (~1.0) → MINOR; two stacked (~2.0) → MAJOR; the lesser built
+  bonus (0.5) → MINOR. So S1b reads a tier, not a hard number.
+- **`SacredSpace.sacrednessAt/tierAt/explain`** (new) — the QUERY and single fold home:
+  (1) natural = sum of the god's rule contributions; (2) built = a same-faith
+  religious building within `BUILT_RADIUS` (48) of pos adds the lesser `BUILT_POTENCY`
+  (0.5), resolved via `BuildingFaith` over the village containing pos; (3) a **clean
+  commented seam** for the S3 theophany-imprint source. `explain` returns a per-source
+  `Breakdown` the readout prints; `sacrednessAt` = `explain().total()` (no duplication).
+
+### Per-god authoring (in `GodRegistry`)
+
+- **Sun-Mother (SUN)** → `SkyRule(openSky + day, 1.0)` — sacred where her light reaches
+  (dynamic).
+- **Sea-Mother (SEA)** → `BiomeRule([IS_OCEAN, IS_BEACH], 1.0)` **+**
+  `StructureRule([OCEAN_MONUMENT, OCEAN_RUIN_COLD, OCEAN_RUIN_WARM], 1.0)` — doubly
+  sacred at the sites (biome + structure stack).
+- **First Forge-Father (FORGE)** → `AltitudeRule(150…MAX, 1.0)` **+**
+  `BiomeRule([IS_MOUNTAIN], 1.0)` — extra-sacred high in mountains (altitude + biome
+  stack).
+- **The Pattern / Loom (FATE)** → `CoordinateRule(spacing 256, band 8, 1.0)` **+**
+  `StructureRule([STRONGHOLD], 1.0)` — extra-sacred at strongholds.
+
+### Readout
+
+`/religion sacred [god]` — at the player's position, per god (or one), prints the
+summed potency, the tier (colour-coded), and each contributing source/rule. The ONLY
+consumer of `SacredSpace` this stage.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `God` (gains `sacredSpace`), `BuildingFaith` + `VillageSavedData`
+   (built source), vanilla world APIs (biome/sky/heightmap/structure manager) — all
+   read-only inputs.
+2. **Downstream callers.** **None besides the `/religion sacred` readout** — S1a wires
+   no effects; the favour/miracle/theophany consumers are S1b.
+3. **Sibling systems.** Divine layer untouched (no effect reads the query yet);
+   `Religion.sacredLocations` still dead (not touched, per scope).
+4. **Exhaustive switches.** New `SacrednessTier` switch in the readout covers all three
+   arms; `God.displayName`'s `DeityDomain` switch unchanged. No existing enum changed.
+
+### Simplification Sweep
+
+- **One home for the rule** (`SacredSpaceRule` + its variants) and **one for the query**
+  (`SacredSpace.explain`, which `sacrednessAt`/`tierAt`/the readout all call) — no
+  biome/altitude/structure logic duplicated across gods or consumers.
+- **New classes + callers:** `SacredSpaceRule` (5 variants), `SacrednessTier`,
+  `SacredSpace` — all readout-only this stage. **S3 imprint seam** noted as a commented
+  fold-source in `SacredSpace.explain` (no storage added).
+- **Cost flagged for S1b:** `StructureRule` (structure-manager query) is the priciest
+  rule; the built fold scans the containing village. S1b throttles/caches on hot paths.
+
+### Deviations from prompt
+
+- **`DimensionRule` skipped** (the prompt allowed either) — no starter consumer; the
+  sealed type makes it a cheap later addition. `ProximityRule` likewise deferred (the
+  Sea-Mother uses biome+structure, not block proximity).
+- **Built source scope:** considers the village CONTAINING pos (via `getVillageAt`) —
+  cheap and correct for "stand near a temple"; a later stage can widen to nearby
+  villages if needed (flagged).
+- **Fix-up rider (separate commit):** two line-split `ReligionRegistry.find` calls in
+  `NpcProfileSnapshotBuilder` — F1b-1b stragglers the single-line grep missed and the
+  compiler-coverage lock would have caught (the user's local build surfaced them; my
+  sandbox can't run javac). Re-pointed to `Religions.find(level, …)`. Lesson logged:
+  back the grep audit with a multi-line sweep when the compiler can't run here.
+
+### Out-of-scope but flagged
+
+- **S1b** — wire the favour (+ position threading) / miracle / theophany effects to
+  `SacredSpace.sacrednessAt`/`tierAt`; throttle/cache the structure query on the
+  per-player theophany tick.
+- **S2** — sacred time / holy days.
+- **S3** — decaying theophany **imprints** (a new BlockPos-keyed SavedData) as the
+  third fold-source (the commented seam in `explain`).
+- **Future** — holy-city / sacred-kingdom contributor, worldgen shrine-spawn.
+- `Religion.sacredLocations` stays dead (sacred space is per-god now).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git
+reset --hard` to the F1b-2 remote tip restored all pushed work — no loss.] Static
+review: `God` is a 9-component record with an 8-field codec (`.apply` supplies an empty
+`sacredSpace`); the four authored gods pass valid `BiomeTags`/`BuiltinStructures`
+constants; the sealed `SacredSpaceRule` permits exactly its five nested records;
+`SacredSpace.explain` is the single fold; the readout is the only query consumer; all
+new vanilla API calls (`getBiome().is`, `canSeeSky`, `isDay`, `getStructureWithPieceAt`)
+are standard 1.21.
+
+### Smoke test (user-runnable)
+
+1. **Sea biome + structure stack.** Stand in open ocean → `/religion sacred sea_mother`
+   reads MINOR (~1.0, "biome"); swim onto an ocean monument → ~2.0 MAJOR ("biome" +
+   "structure").
+2. **Sun dynamic sky.** Under open sky at midday → `/religion sacred sun_mother` is
+   sacred ("sky"); go underground or wait for night → NONE (re-queried live).
+3. **Forge altitude (+ mountain).** On a tall peak → `/religion sacred forge_father`
+   sacred ("altitude"), doubled if it's a mountain biome ("altitude" + "biome").
+4. **Loom rings + stronghold.** Near an origin ring or at a stronghold →
+   `/religion sacred the_pattern` sacred ("rings" and/or "structure"); extra at a
+   stronghold on a ring.
+5. **Built source.** Stand within ~48 blocks of a temple/shrine of a faith → that
+   faith's god gains a lesser "built" +0.5; a god with no rule reads its building's
+   built bonus only (else NONE away from its buildings).
+6. **No effect change.** Confirm favour/miracle/theophany behaviour is identical to
+   before (nothing reads the query but the readout).

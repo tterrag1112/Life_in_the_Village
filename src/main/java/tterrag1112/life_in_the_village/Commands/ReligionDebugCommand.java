@@ -164,6 +164,19 @@ public final class ReligionDebugCommand {
                 // religions (each pair + KINDRED/NEUTRAL, marking any override).
                 .then(Commands.literal("relations")
                         .executes(ReligionDebugCommand::handleRelations))
+
+                // Sacred Space S1a — report the sacredness at the player's position
+                // per god (total potency + tier + contributing rules/sources).
+                .then(Commands.literal("sacred")
+                        .executes(ctx -> handleSacred(ctx, null))
+                        .then(Commands.argument("godId", StringArgumentType.word())
+                                .suggests((c, b) -> {
+                                    for (var g : tterrag1112.life_in_the_village.Npc.Religion
+                                            .GodRegistry.all()) b.suggest(g.id());
+                                    return b.buildFuture();
+                                })
+                                .executes(ctx -> handleSacred(ctx,
+                                        StringArgumentType.getString(ctx, "godId")))))
         );
     }
 
@@ -246,6 +259,54 @@ public final class ReligionDebugCommand {
         }
         sb.append("\n§8(KINDRED = shares ≥1 god; NEUTRAL = disjoint; RIVAL/HERETICAL "
                 + "are override-only — no writers yet)");
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // ── /religion sacred [god] (Sacred Space S1a) ────────────────────────────
+
+    /** Reports the sacredness at the executing player's position — for one god, or
+     *  every god — as the summed potency, its tier, and which rules/sources fired.
+     *  The ONLY consumer of {@code SacredSpace} this stage (no effects wired). */
+    private static int handleSacred(CommandContext<CommandSourceStack> ctx, String godId) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        net.minecraft.core.BlockPos pos = player.blockPosition();
+
+        java.util.List<tterrag1112.life_in_the_village.Npc.Religion.God> gods;
+        if (godId != null) {
+            var g = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.get(godId);
+            if (g == null) {
+                src.sendFailure(Component.literal("Unknown god " + godId
+                        + " (try sun_mother / the_pattern / sea_mother / forge_father)"));
+                return 0;
+            }
+            gods = java.util.List.of(g);
+        } else {
+            gods = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.all();
+        }
+
+        StringBuilder sb = new StringBuilder(String.format(Locale.ROOT,
+                "§e=== Sacredness at (%d, %d, %d) ===", pos.getX(), pos.getY(), pos.getZ()));
+        for (var g : gods) {
+            var bd = tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace
+                    .explain(level, g.id(), pos);
+            var tier = tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacrednessTier
+                    .classify(bd.total());
+            String colour = switch (tier) {
+                case NONE  -> "§7";
+                case MINOR -> "§a";
+                case MAJOR -> "§6";
+            };
+            sb.append(String.format(Locale.ROOT, "%n§6%-12s %s%s§7 (%.1f)",
+                    g.id(), colour, tier, bd.total()));
+            for (var c : bd.contributions()) {
+                sb.append(String.format(Locale.ROOT, "%n  §8• %s §7+%.1f", c.source(), c.potency()));
+            }
+        }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
         return 1;
