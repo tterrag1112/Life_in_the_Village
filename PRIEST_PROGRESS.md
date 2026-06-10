@@ -10781,3 +10781,126 @@ args). One NeoForge API to watch on the user's build: `ItemEntity.setUnlimitedLi
 5. **Tangible + bounded.** Drop / pick up / give the relic freely; confirm no runaway
    favour (cooldown holds; carried + sacred amplifiers are capped). Save+reload → the
    relic component, `relicId`, and the enshrined imprint persist.
+
+## F2 — F2a-1: the quest engine (base + pluggable objective + one proving kind) (2026-06-10)
+
+The first foundation stage of the unified quest base. F2a-1 builds the ENGINE — the
+quest model, the pluggable `Objective` (fixing the mod's biggest quest gap: completion
+is currently hardcoded per type across separate listeners), a per-player store, and the
+full lifecycle — proven end-to-end by ONE religious objective kind. Additive: the legacy
+guild quest system is untouched (it re-seats onto this base in F2b).
+
+### Disposition (investigation)
+
+- **Offering source:** `MakeOfferingVerb` makes the offering + `awardForReligion(...
+  OFFERING...)` with `ctx.player()` (ServerPlayer) + `ctx.level()` (ServerLevel) in
+  scope — the one `QuestEvents.notify` source.
+- **SavedData idiom:** `RiteSavedData`/`SacredSpaceSavedData` → new `QuestSavedData`
+  (per-player; `unboundedMap(playerId, Quest.CODEC.listOf())`).
+- **Reward hooks:** `DivineFavour.addCapped` (favour, within standing);
+  `BuiltInRegistries.ITEM` + `player.getInventory().add` (items). ServerPlayer + level in
+  scope at completion (the notify carries the player).
+- **Guild Quest:** `Guilds.Adventurer.Quest` — NOT touched; the new base is a separate
+  package (`Quests/`), re-seated in F2b.
+
+### What shipped (the engine, in a new `Quests/` package)
+
+- **`Quest`** record `(questId, giver, title, description, objectives [ordered N],
+  status, rewards, scope, deadlineTick)` + codec + `allComplete`/`withObjectives`/
+  `withStatus`. `Quest.Scope{PLAYER}`. F2a-1 completion = ALL objectives done (no
+  sequential gating — the list supports N, gating is later).
+- **`Objective`** — the extension point: a sealed interface (one kind in F2a-1:
+  `MakeOffering(godId, current, target)`) with `matches(QuestContext)` / `advanced()` /
+  `isComplete()` / `describe()` and a **dispatch codec** (`Codec.STRING.dispatch("type",
+  …)`). Adding a kind = a `permits` entry + a `MAP_CODEC` arm; no engine change.
+- **`QuestEventKind{OFFERING}`** + **`QuestContext(kind, godId, religionId)`** — the
+  notify payload (the source resolves the god so the matcher needs no world lookup).
+- **`QuestReward`** — sealed + dispatch-coded: `Favour(godId, amount)` (via `addCapped`)
+  and `Items(itemId, count)` (registry lookup → inventory/drop).
+- **`QuestGiver(Type{DIVINE,GUILD,NPC,KINGDOM}, id)`**; **`QuestStatus{OFFERED, ACTIVE,
+  COMPLETED, FAILED, ABANDONED}`**.
+- **`QuestSavedData`** — per-player quests (`questsOf`/`active`/`add`/`replace`).
+- **`QuestEvents.notify(player, ctx)`** — **THE single completion path**: advance every
+  matching objective on the player's active quests; on `allComplete` → COMPLETED + grant
+  rewards + feedback; replace + markDirty. The whole point — one hook, many kinds,
+  replacing the per-type-listener anti-pattern.
+- **Source wired:** `MakeOfferingVerb` calls `QuestEvents.notify(player,
+  QuestContext.offering(primaryGodOf(religion), religionId))` after the offering —
+  side-effect-free on the offering itself.
+- **`QuestIssuer.grantOfferingQuest`** (the deity-issuance stub) + **`/quest`** command
+  (`grant <god> [count]` → issues the proving quest; bare `/quest` → lists active quests
+  with objective progress + completed count).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The offering act (the one `notify` source); `DivineFavour`
+   (favour reward); `BuiltInRegistries.ITEM` (item reward). Confirmed.
+2. **Downstream callers.** `QuestSavedData` (store), the reward grant, the `/quest`
+   readout. **The guild quest system is not referenced** by any `Quests/` class (only a
+   javadoc cross-reference).
+3. **Sibling systems.** The legacy guild `Quest` — separate + untouched (F2b re-seats).
+   The religion offering/favour systems — the offering now ALSO notifies the quest
+   engine, but the notify is purely additive (it reads the player's quests; the offering
+   behaviour is unchanged).
+4. **Exhaustive switches.** The new enums (`QuestStatus`/`QuestEventKind`/
+   `QuestGiver.Type`/`Quest.Scope`) have no exhaustive consumer switch — the dispatch
+   codecs switch over STRING type-tags (with a default), not the enums; grep confirms the
+   `case ABANDONED`/`switch(status)` hits are over OTHER status enums (guild quest, village
+   event), not these.
+
+### Simplification Sweep
+
+- **One completion path** (`QuestEvents.notify`) — explicitly the replacement for the
+  per-type listeners; no parallel completion route introduced. **One store**
+  (`QuestSavedData`). **One objective extension point** (the sealed `Objective` + dispatch
+  codec). **One issuance stub** (`QuestIssuer`).
+- **New classes:** `Quest`, `Objective`, `QuestReward`, `QuestGiver`, `QuestStatus`,
+  `QuestEventKind`, `QuestContext`, `QuestSavedData`, `QuestEvents`, `QuestIssuer`,
+  `QuestCommand`. Touched: `MakeOfferingVerb` (1 notify call), `ModModEvents` (command
+  registration).
+
+### Deviations from prompt
+
+- **`/quest grant` targets the executing player** (self), not an arbitrary `<player>` —
+  simpler for proving; an `EntityArgument.player()` target is a trivial later add.
+- **The debug grant issues the quest directly as ACTIVE** — the `OFFERED` state exists in
+  the lifecycle (for real issuance/acceptance later), but the proving command skips to
+  ACTIVE so the notify loop is immediately exercisable.
+- **Favour reward via `addCapped`** (capped to the player's standing) — a quest reward
+  never bypasses the piety cap.
+
+### Out-of-scope but flagged
+
+- **F2a-2** — the other three religious objective kinds (pilgrimage-to-sacred-site,
+  recover/return-relic, perform-rites) + V3-calling graduation + rich givers
+  (deity/saint/clergy) + the giver-standing / player-career layer.
+- **F2b** — re-seat the legacy guild quest system onto this base (behaviour-preserving,
+  F1b-style coverage migration).
+- **Later** — grand/staged (sequential-gated) quests + a quest journal UI + Request-board
+  / pilgrimage convergence.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the SR4 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** + the exhaustive-switch sweep (clean — no consumer
+switch over the new enums): the dispatch codecs follow the vanilla `Codec.STRING.dispatch`
+pattern (`MAP_CODEC` map-codec arms keyed by a constant `TYPE` tag); `Quest.CODEC` is 9
+fields (under the cap); the offering `notify` is wired with the player/level in scope; the
+guild system is unreferenced. One generics watch-item on the user's build: the
+`Codec.STRING.dispatch("type", Objective::type, …)` target-typed to `Codec<Objective>` —
+the standard dispatch inference; a `Codec<Objective>` witness fixes it if inference
+balks here.
+
+### Smoke test (user-runnable)
+
+1. **Issue + track.** `/quest grant sun_mother 3` → `/quest` shows "Offerings to the
+   Sun-Mother" ACTIVE with `0/3`.
+2. **Advance.** Make an offering to a Sunstead temple → `/quest` shows `1/3`; three
+   offerings → the quest completes, the favour reward is granted, a "Quest complete"
+   message fires, and it leaves the active list (Completed: 1).
+3. **Non-match.** An offering to a DIFFERENT god (or a tithe) does NOT advance it.
+4. **No behaviour change.** The offering itself behaves exactly as before (the notify is
+   side-effect-free on it); the guild quest system is entirely unaffected.
+5. **Persistence.** Save+reload → active + completed quests persist (codec round-trip).
