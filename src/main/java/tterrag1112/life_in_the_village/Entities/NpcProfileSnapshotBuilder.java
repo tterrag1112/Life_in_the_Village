@@ -181,8 +181,8 @@ public final class NpcProfileSnapshotBuilder {
         var beliefs = piety.beliefs();
         if (beliefs.size() > 1) {
             for (var e : beliefs.entrySet()) {
-                String fname = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
-                        .find(e.getKey())
+                String fname = tterrag1112.life_in_the_village.Npc.Religion.Religions
+                        .find(level, e.getKey())
                         .map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName)
                         .orElse(e.getKey());
                 beliefSummary.add(fname + " — " + Math.round(e.getValue() * 100) + "%");
@@ -202,8 +202,8 @@ public final class NpcProfileSnapshotBuilder {
         if (isClergy && buildingOpt.isPresent() && villageOpt.isPresent()) {
             String f = tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith
                     .resolveFaith(level, villageOpt.get(), buildingOpt.get());
-            if (f != null) staffedFaith = tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry
-                    .find(f).map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName)
+            if (f != null) staffedFaith = tterrag1112.life_in_the_village.Npc.Religion.Religions
+                    .find(level, f).map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName)
                     .orElse(f);
         }
         boolean isUnserved = villageOpt.isPresent()
