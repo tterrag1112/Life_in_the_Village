@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace;
+import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -43,10 +44,12 @@ public final class MiracleInvoker {
         PietyTier tier = DivineFavour.tierForGod(level, pid, god.id());
         if (tier.ordinal() < m.minTier().ordinal()) return Status.LOCKED_TIER;
         float favour = DivineFavour.current(level, pid, god.id(), now);
-        // S1b — sacred ground EASES the access threshold (minFavour) by the god's
-        // sacredness here; the tier gate and the real cost are unchanged (sacred
-        // space eases, it never bypasses the gate or the cap).
-        float effFavour = favour * SacredSpace.amplifierAt(level, god.id(), player.blockPosition());
+        // S1b/S2 — sacred SPACE and a holy DAY both EASE the access threshold
+        // (minFavour), compounding; the tier gate and the real cost are unchanged
+        // (they ease, never bypass the gate or the cap).
+        float effFavour = favour
+                * SacredSpace.amplifierAt(level, god.id(), player.blockPosition())
+                * SacredTime.holyDayFactor(level, pid, god.id(), now);
         if (effFavour < m.minFavour() || favour < m.cost()) return Status.LOCKED_FAVOUR;
         return Status.AVAILABLE;
     }
@@ -73,9 +76,12 @@ public final class MiracleInvoker {
                     + m.minTier().displayName() + ").");
         }
         float favour = DivineFavour.current(level, pid, god.id(), now);
-        // S1b — sacred ground eases the access threshold (minFavour); the cost is
-        // still paid from REAL favour, so sacred space never bypasses the spend.
-        float effFavour = favour * SacredSpace.amplifierAt(level, god.id(), player.blockPosition());
+        // S1b/S2 — sacred SPACE and a holy DAY ease the access threshold (minFavour),
+        // compounding; the cost is still paid from REAL favour, so neither bypasses
+        // the spend.
+        float effFavour = favour
+                * SacredSpace.amplifierAt(level, god.id(), player.blockPosition())
+                * SacredTime.holyDayFactor(level, pid, god.id(), now);
         if (effFavour < m.minFavour() || favour < m.cost()) {
             return new Result(false, "Not enough favour for " + m.displayName()
                     + " (need " + Math.round(Math.max(m.minFavour(), m.cost()))
@@ -89,8 +95,12 @@ public final class MiracleInvoker {
         // Apply the favour-scaled effect, then arm the cooldown.
         m.effect().apply(level, player, favour);
         arm(pid, m.id(), now + m.cooldownTicks());
-        return new Result(true, m.displayName() + " — granted."
-                + (effFavour > favour ? " The ground is sacred to " + god.displayName() + "." : ""));
+        // Flavour when sacred space and/or a holy day eased this casting.
+        boolean holy = SacredTime.holyDayFactor(level, pid, god.id(), now) > 1f;
+        String eased = effFavour <= favour ? ""
+                : holy ? " " + god.displayName() + " is near on this holy day."
+                       : " The ground is sacred to " + god.displayName() + ".";
+        return new Result(true, m.displayName() + " — granted." + eased);
     }
 
     // ── Cooldown bookkeeping ─────────────────────────────────────────────────

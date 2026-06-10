@@ -53,6 +53,15 @@ public final class DivineTheophany {
     private static final float SACRED_EASE_MAJOR = 15f;
     private static final float MAX_SACRED_EASE   = 15f;
 
+    /** S2 — a holy day eases the favour-extreme threshold further (stacking with the
+     *  sacred-space ease) for the DEVOUT+/PIOUS believer: derived from the (cheap)
+     *  holy-day factor so a PIOUS holy-day shifts the extreme by {@link #MAX_HOLY_EASE},
+     *  a DEVOUT one by half. The holy check is a calendar lookup (no structure query),
+     *  so it is evaluated FIRST and can fire on its own without ever touching the
+     *  structure-backed sacred-space query. */
+    private static final float HOLY_EASE_SCALE = 15f;   // (factor − 1) × scale → PIOUS 15, DEVOUT 7.5
+    private static final float MAX_HOLY_EASE    = 15f;
+
     // ── Trigger (per-player tick; rare + milestone-bounded) ──────────────────
 
     public static void tick(ServerPlayer player) {
@@ -65,23 +74,41 @@ public final class DivineTheophany {
         for (God god : GodRegistry.playerGods(level, pid)) {
             float fav = DivineFavour.current(level, pid, god.id(), now);
 
-            // Favour pole (PIOUS, peak favour). Perf guard: the sacredness query
-            // (possibly a structure lookup) runs ONLY after the cheap pre-checks pass
-            // — near the (eased) peak, PIOUS, off cooldown — never unconditionally.
-            if (fav >= FAVOUR_PEAK - MAX_SACRED_EASE
+            // Favour pole (PIOUS, peak favour). Perf guard: the structure-backed
+            // sacredness query runs ONLY behind the cheap pre-checks AND only when the
+            // (cheap) holy-day ease alone hasn't already crossed the threshold and
+            // sacred space could still close the gap — never unconditionally per tick.
+            if (fav >= FAVOUR_PEAK - MAX_SACRED_EASE - MAX_HOLY_EASE
                     && DivineFavour.tierForGod(level, pid, god.id()) == PietyTier.PIOUS
                     && now - data.getTheophanyTick(pid, god.id() + "|favour") >= COOLDOWN) {
-                float effPeak = FAVOUR_PEAK - sacredEase(level, player, god);
-                if (fav >= effPeak) { fireFavour(level, player, god, now); continue; }
+                float ease = holyEase(level, pid, god, now);            // cheap calendar lookup
+                if (fav < FAVOUR_PEAK - ease
+                        && fav >= FAVOUR_PEAK - ease - MAX_SACRED_EASE)
+                    ease += sacredEase(level, player, god);             // (the structure query)
+                if (fav >= FAVOUR_PEAK - ease) { fireFavour(level, player, god, now); continue; }
             }
 
-            // Wrath pole. Same perf guard against the depth threshold.
-            if (fav <= WRATH_DEPTH + MAX_SACRED_EASE
+            // Wrath pole. Same staged perf guard against the depth threshold.
+            if (fav <= WRATH_DEPTH + MAX_SACRED_EASE + MAX_HOLY_EASE
                     && now - data.getTheophanyTick(pid, god.id() + "|wrath") >= COOLDOWN) {
-                float effDepth = WRATH_DEPTH + sacredEase(level, player, god);
-                if (fav <= effDepth) fireWrath(level, player, god, now);
+                float ease = holyEase(level, pid, god, now);
+                if (fav > WRATH_DEPTH + ease
+                        && fav <= WRATH_DEPTH + ease + MAX_SACRED_EASE)
+                    ease += sacredEase(level, player, god);
+                if (fav <= WRATH_DEPTH + ease) fireWrath(level, player, god, now);
             }
         }
+    }
+
+    /** Favour-points a holy day eases the extreme by (0 off a holy day / below DEVOUT).
+     *  Cheap (calendar × belief × the god's piety tier) — no structure query — so it
+     *  is evaluated before {@link #sacredEase}. Derived from {@link
+     *  tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime#holyDayFactor}
+     *  so the holy-day bonus has one home. */
+    private static float holyEase(ServerLevel level, UUID pid, God god, long now) {
+        float factor = tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime
+                .holyDayFactor(level, pid, god.id(), now);
+        return (factor - 1f) * HOLY_EASE_SCALE;
     }
 
     /** Favour-points the player's sacredness to {@code god} eases the extreme by

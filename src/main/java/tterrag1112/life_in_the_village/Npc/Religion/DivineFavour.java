@@ -3,6 +3,7 @@ package tterrag1112.life_in_the_village.Npc.Religion;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace;
+import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime;
 
 import java.util.UUID;
 
@@ -187,9 +188,12 @@ public final class DivineFavour {
         // S1b — sacred ground amplifies the grant (1.0 when pos is null → unchanged).
         // Composes with the alignment weight (two distinct bonuses, by design).
         float sacred = SacredSpace.amplifierAt(level, godId, pos);
+        // S2 — a holy day amplifies it further for the DEVOUT+ (1.0 otherwise). Sacred
+        // SPACE × sacred TIME compound multiplicatively; both stay within the cap below.
+        float holy = SacredTime.holyDayFactor(level, playerId, godId, now);
         // Lower bound is the displeasure floor (not 0): a repenting, displeased
         // player's act climbs GRADUALLY out of the negative, not instantly to 0.
-        float next = clamp(current(level, playerId, godId, now) + act.base * weight * sacred,
+        float next = clamp(current(level, playerId, godId, now) + act.base * weight * sacred * holy,
                 DISPLEASURE_FLOOR, cap);
         data.getOrCreatePlayerFavour(playerId).set(godId, next, now);
         data.markDirty();

@@ -9994,3 +9994,131 @@ theophany ease switch are 3-arm exhaustive; NONE/null reproduces the prior numbe
    tick only queries sacredness for a near-extreme, off-cooldown player.
 5. **Null-location unchanged.** A sacrilege `offend` (no site) and the V3 calling bonus
    behave exactly as before (no sacred factor).
+
+## Sacred Time S2 — holy-day bonuses (2026-06-10)
+
+The temporal mirror of sacred space. On a faith's **holy day**, its devout gain
+heightened favour, eased miracles, and a likelier theophany; a rite at a sacred place
+ON a holy day is the peak of contact (space × time compound). The deliberate contrast
+with sacred SPACE — which any believer feels — is that sacred TIME rewards the
+**highly pious** (no bonus below DEVOUT). Bounded, piety-tier-keyed; a non-holy-day or
+sub-DEVOUT player sees today's exact numbers. **Completes sacred TIME.**
+
+### Disposition (investigation)
+
+- **Holy-day query:** `ReligiousCalendar.isHolyDay(dayOfYear)` over the per-religion
+  holy-day map; `CalendarView.dayOfYear(gameTime)` on the `% 365` axis. Holy days live
+  on the RELIGION; favour/miracle/theophany are per-GOD → resolution: today is a holy
+  day for god G (for this player) iff a religion the player BELIEVES IN that VENERATES
+  G has a holy day today (`GodRegistry.religionsVenerating(level, godId)` ∩
+  `piety.beliefs()` ∩ `calendar().isHolyDay`).
+- **Piety gate:** `DivineFavour.tierForGod(level, playerId, godId)` → `PietyTier`
+  {UNAFFILIATED, FAITHFUL, DEVOUT, PIOUS}. Gate at DEVOUT.
+- **Hook points (S1b):** the space amplifier lives in `DivineFavour.awardConcept`
+  (per-god, has level/playerId/godId/now), `MiracleInvoker.status`/`cast`, and
+  `DivineTheophany.tick`. The time factor composes (multiplies) with it at each.
+
+### What shipped
+
+- **`SacredTime`** (new, `Npc/Religion/Sacred/`) — the single home, mirroring
+  `SacredSpace`'s amplifier shape:
+  - `isHolyDay(level, pid, godId, now)` — the pure calendar × belief × veneration
+    resolution (no tier gate), public so the theophany ease + the readout share it.
+  - `holyDayFactor(level, pid, godId, now)` → 1.0 off a holy day OR below DEVOUT;
+    **DEVOUT 1.5, PIOUS 2.0** (`factorForTier`, a 4-arm `PietyTier` switch).
+- **Favour** — `awardConcept` now multiplies the grant by
+  `SacredTime.holyDayFactor` alongside the S1b space amplifier:
+  `base × align × space × time`, still clamped to the piety cap (amplifies within
+  standing, never bypasses). All award paths inherit it (one site).
+- **Miracle** — `status` + `cast` fold the holy-day factor into the effective favour
+  the `minFavour` gate reads, compounding with the space amplifier; the tier gate and
+  the real `cost` spend are unchanged. `cast`'s eased-flavour line distinguishes a
+  holy-day ease from a sacred-ground one.
+- **Theophany** — a holy day eases the favour-extreme threshold further (stacking with
+  the S1b sacred-space ease), derived from `holyDayFactor` (PIOUS 15 / DEVOUT 7.5
+  points). **Perf discipline kept + tightened:** the holy ease is a CHEAP calendar
+  lookup evaluated first; the structure-backed `sacredEase` runs only behind the cheap
+  pre-checks AND only in a bounded 15-wide band where sacred space could still close
+  the gap (so a non-holy day keeps the S1b 75–90 structure-query band; a holy day adds
+  a 60–75 band only). NONE/off-holy keeps the exact ±90 thresholds.
+- **Surfacing** — `/religion favour view` flags `☀ HOLY DAY` on each god whose holy day
+  is today (a believed venerating faith); a light, contained text addition (no GUI/
+  packet change).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligiousCalendar.isHolyDay` + `CalendarView.dayOfYear`
+   (holy day), `GodRegistry.religionsVenerating` (god→religions), `tierForGod` (gate),
+   `PietyComponent.beliefs` — all read-only.
+2. **Downstream callers.** Favour (`awardConcept`), `MiracleInvoker.status`/`cast`,
+   `DivineTheophany.tick`, the readout. **Non-holy-day / sub-DEVOUT = `holyDayFactor`
+   1.0 = today's exact numbers** (favour grant, miracle gate, ±90 theophany).
+3. **Sibling systems.** Composes with S1b sacred space MULTIPLICATIVELY (space × time)
+   — no double-count: space reads position, time reads the calendar, distinct inputs.
+   The favour cap still bounds the compound; the miracle tier gate + cost and the
+   theophany cooldown/milestone are untouched (no double-fire).
+4. **Exhaustive switches.** `SacredTime.factorForTier` covers all four `PietyTier`
+   arms; the theophany derives its ease from the factor (no separate tier switch). No
+   existing enum changed.
+
+### Simplification Sweep
+
+- **One home:** `SacredTime.holyDayFactor` (the bonus) over `SacredTime.isHolyDay` (the
+  god→religion resolution); favour, miracle, AND theophany all call `holyDayFactor`
+  (theophany derives its additive ease from it), and the readout calls `isHolyDay`. No
+  per-consumer reimplementation of the calendar/belief/veneration check.
+- **No dead path** — the time factor rides the existing S1b sites (no parallel grant/
+  gate path).
+- **Touched classes:** `SacredTime` (new), `DivineFavour`, `MiracleInvoker`,
+  `DivineTheophany`, `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **Favour time factor applied in `awardConcept`** (the per-god grant body), not at
+  `awardForReligion`: `awardConcept` already has level/playerId/godId/now and is the
+  single site where the space amplifier lives, so both bonuses compose in one place
+  and every award path inherits it uniformly. The general `holyDayFactor(godId)`
+  resolution (believed venerating religion has a holy day) makes the specific
+  `religionId` unnecessary.
+- **Theophany ease derived from `holyDayFactor`** ((factor−1)×scale) rather than a
+  second tier switch — keeps the holy-day bonus's one home and mirrors how S1b's
+  `sacredEase` is a small local mapping.
+- **Surfacing via `/religion favour view`** (a per-god flag) rather than the GUI
+  calendar — lightest contained change, no packet/screen churn (the prompt allowed
+  "a line in the /religion readout").
+
+### Out-of-scope but flagged
+
+- **S3** — decaying theophany **imprints** (a new BlockPos-keyed SavedData) as the
+  third `sacrednessAt` fold-source (`SacredSpace.explain`'s commented seam).
+- **Future** — NPC holy-day observance / festivals (this is the player-side
+  favour/miracle/theophany bonus only), holy-city contributor, worldgen shrine-spawn.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the S1b tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** (the F1b lesson): every `SacredTime` reference
+resolves (4 `holyDayFactor` call sites + 1 `isHolyDay` readout + the theophany FQN
+use); `factorForTier` is a 4-arm `PietyTier` switch; non-holy/sub-DEVOUT reproduces the
+prior numbers; the theophany structure-query band is unchanged on non-holy days.
+
+### Smoke test (user-runnable)
+
+1. **Favour scales with tier on a holy day.** On a Sunstead holy day (`/time set` to
+   its day-of-year), a PIOUS Sunstead player's offering grants ~2× the base; a DEVOUT
+   one ~1.5×; a FAITHFUL one sees NO holy-day bonus; a non-holy day grants today's base
+   (and all still clamp at the piety cap).
+2. **Miracle eases for the devout on a holy day.** A near-`minFavour` Sun-Mother
+   miracle that read locked becomes AVAILABLE/ castable for a DEVOUT+ player on the
+   holy day (`/religion miracle list` reflects it); the tier gate + cost are unchanged;
+   a sub-DEVOUT player is unaffected.
+3. **Space × time compound.** Stand in the Sun-Mother's sacred space (open sky, day) ON
+   her holy day as a PIOUS player — favour compounds (space × time, e.g. ~1.25–1.5 ×
+   2.0) and a theophany is at its likeliest (both eases stack).
+4. **Surfacing.** `/religion favour view` shows `☀ HOLY DAY` against the right god on
+   its holy day.
+5. **No regression / perf.** A sub-DEVOUT player, a non-believer, and any non-holy day
+   behave exactly as before; confirm no per-tick structure-lookup spam (the holy check
+   is a cheap calendar lookup; the sacred query stays behind the staged guard).
