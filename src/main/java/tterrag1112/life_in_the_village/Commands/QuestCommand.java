@@ -49,7 +49,58 @@ public final class QuestCommand {
                                         .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
                                                 .executes(ctx -> handleGrant(ctx,
                                                         StringArgumentType.getString(ctx, "kind"),
-                                                        IntegerArgumentType.getInteger(ctx, "count"))))))));
+                                                        IntegerArgumentType.getInteger(ctx, "count")))))))
+                // F2b-1 — issue a guild-kind quest: /quest guild <kind> <target> [count] [difficulty]
+                .then(Commands.literal("guild")
+                        .then(Commands.argument("kind", StringArgumentType.word())
+                                .suggests((c, b) -> {
+                                    for (String k : QuestIssuer.GUILD_KINDS) b.suggest(k);
+                                    return b.buildFuture();
+                                })
+                                .then(Commands.argument("target", StringArgumentType.string())
+                                        .executes(ctx -> handleGuild(ctx, 3, "EASY"))
+                                        .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
+                                                .executes(ctx -> handleGuild(ctx,
+                                                        IntegerArgumentType.getInteger(ctx, "count"), "EASY"))
+                                                .then(Commands.argument("difficulty", StringArgumentType.word())
+                                                        .executes(ctx -> handleGuild(ctx,
+                                                                IntegerArgumentType.getInteger(ctx, "count"),
+                                                                StringArgumentType.getString(ctx, "difficulty"))))))))
+                // F2b-1 — the poll / turn-in evaluation (completes satisfied poll quests).
+                .then(Commands.literal("turnin").executes(QuestCommand::handleTurnin))
+                .then(Commands.literal("check").executes(QuestCommand::handleTurnin)));
+    }
+
+    private static int handleGuild(CommandContext<CommandSourceStack> ctx, int count, String diffName) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        ServerPlayer player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String kind = StringArgumentType.getString(ctx, "kind");
+        String target = StringArgumentType.getString(ctx, "target");
+        tterrag1112.life_in_the_village.Quests.QuestDifficulty diff;
+        try { diff = tterrag1112.life_in_the_village.Quests.QuestDifficulty
+                .valueOf(diffName.toUpperCase(java.util.Locale.ROOT)); }
+        catch (IllegalArgumentException e) { diff = tterrag1112.life_in_the_village.Quests.QuestDifficulty.EASY; }
+        Quest q = QuestIssuer.grantGuild(level, player, kind, target, count, diff);
+        if (q == null) {
+            src.sendFailure(Component.literal("Unknown guild kind '" + kind
+                    + "' (hunt / gather / deliver / explore / escort)"));
+            return 0;
+        }
+        Quest issued = q;
+        src.sendSuccess(() -> Component.literal("§aIssued: " + issued.title()
+                + " [" + issued.difficulty() + "]"), false);
+        return 1;
+    }
+
+    private static int handleTurnin(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerPlayer player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        tterrag1112.life_in_the_village.Quests.QuestEvents.evaluate(player);
+        src.sendSuccess(() -> Component.literal("§7Turn-in evaluated."), false);
+        return 1;
     }
 
     private static int handleGrant(CommandContext<CommandSourceStack> ctx, String kind, int count) {

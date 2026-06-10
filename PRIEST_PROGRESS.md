@@ -11144,3 +11144,136 @@ codecs' target-typing.
    favour are unaffected (complementary).
 5. **Persistence.** Save+reload → the active divine quest + the standing/rank persist
    (and a pre-F2a-3 save loads cleanly, its "playerCalling" key ignored).
+
+## F2 — F2b-1: add the guild quest vocabulary to the base (additive) (2026-06-10)
+
+The first half of the guild re-seat: teach the F2 quest base the guild vocabulary — the
+guild objective kinds, the coin/XP reward kinds, and the difficulty/rank metadata —
+WITHOUT re-pointing the guild system (the legacy guild quests keep running on their own
+`Quest` class until F2b-2). Provable via `/quest`. Additive. **Includes one sanctioned
+engine addition (flagged): the poll / condition-check completion path.**
+
+### Disposition (investigation)
+
+- **F2 engine extension points:** `Objective` (sealed + dispatch codec), `QuestEvents
+  .notify` (event path), `Quest` completion. The poll path slots in as an
+  `Objective.isSatisfied(level, player)` (poll kinds) + a quest-level `allSatisfied` +
+  a `QuestEvents.evaluate` (turn-in) — funneling to the SAME completion routine as
+  `notify`, leaving the event path unchanged.
+- **Legacy guild detection:** `QuestProgressEvents.onMobDeath` (player HUNT kill count),
+  turn-in checks (GATHER/DELIVER/EXPLORE/ESCORT), `PartyQuestTracker`. These stay on the
+  legacy system; F2b-1 mirrors only the KINDS + an additive mob-death `notify` for the
+  new `Hunt` (both observe the same kill).
+- **Reward hooks:** coins minted from `CurrencyValue` denominations into
+  `ModItems.DENIER*` (player inventory); `PlayerGuildData.get(level).addXp(playerId, xp)`.
+- **Metadata enums:** the legacy `Quest.QuestDifficulty` (EASY…LEGENDARY, with a
+  `GuildRank` min-rank gate) + the top-level `GuildRank` ladder.
+
+### What shipped
+
+- **The poll path (the sanctioned engine addition):** `EvalMode{EVENT, POLL}`;
+  `Objective.mode()` (EVENT default) + `Objective.isSatisfied(level, player)` (default =
+  `isComplete()`; poll kinds override with a live check); `Quest.allSatisfied(level,
+  player)`; `QuestEvents.evaluate(player)` (the turn-in path) + the factored
+  `QuestEvents.complete(...)` (the ONE completion routine, shared by event + poll).
+  Event objectives keep `notify` + `allComplete` exactly as before.
+- **Guild `Objective` kinds** (dispatch arms, inline `MAP_CODEC`): `Hunt(mobId,…)`
+  (EVENT, MOB_DEATH notify), `Escort(targetMob, destination)` (EVENT, ESCORT_ARRIVED —
+  source deferred to F2b-2), `Gather(itemId, target)` (POLL, holds N), `Deliver(itemId,
+  villageId)` (POLL, in-village + holds), `Explore(biomeId)` (POLL, in-biome). Poll
+  helpers (inventory count / in-village / current-biome) live once on the interface.
+- **`QuestEventKind`** +MOB_DEATH, +ESCORT_ARRIVED; **`QuestContext`** gained a generic
+  `subject` field (mob id) + `mobDeath` factory.
+- **`QuestReward`** +`Coins(bronze)` (minted into inventory) +`Xp(xp)` (guild XP; no-op
+  for a non-member; the party multiplier + rank-up are F2b-2).
+- **`Quest` metadata:** optional `difficulty` (new base `QuestDifficulty`, mirroring the
+  legacy names + `GuildRank` gate + base reward magnitudes) + `rankRequirement`
+  (`Optional<GuildRank>`) — both `optionalFieldOf`; unset (NONE / empty) for religious
+  quests. (`Quest` 9→11 record fields, still under the codec cap.)
+- **The one event source wired:** `QuestEventHooks` (a SEPARATE `@EventBusSubscriber`
+  mob-death handler, additive — the legacy `QuestProgressEvents` is untouched; both
+  observe the kill) → `Hunt` notify.
+- **`/quest` test surface:** `/quest guild <kind> <target> [count] [difficulty]` (issues
+  GUILD-giver quests with Coins+Xp from the difficulty) + `/quest turnin` (= `/quest
+  check`) → `QuestEvents.evaluate` (the poll completion).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The mob-death event (`Hunt` notify), inventory/village/biome
+   state (the poll checks), `CurrencyValue`/`ModItems` (coins) + `PlayerGuildData.addXp`
+   (XP). Confirmed.
+2. **Downstream callers.** `QuestEvents` now has BOTH an event path (`notify`, unchanged)
+   and a poll path (`evaluate`); the new kinds + rewards + metadata; `/quest guild` +
+   `/quest turnin`. **The legacy guild system is not referenced** by the new code (the
+   only guild-package symbols touched are READ: `GuildRank`, `PlayerGuildData.addXp`,
+   `QuestDifficulty` values mirrored — none mutated; `git diff` of `Guilds/*` is empty).
+3. **Sibling systems.** The legacy guild quests are untouched (the added mob-death notify
+   is a separate handler — legacy HUNT still works; different stores, no interference).
+   The religious quests are unaffected (and could opt into a poll objective later — the
+   poll path is general). The F2a-3 standing accrual still runs in `complete` (now shared
+   by both paths).
+4. **Exhaustive switches.** New `EvalMode`/`QuestDifficulty` + the guild objective/reward
+   kinds have NO exhaustive consumer switch (matchers use `==`; `mode()`/`isSatisfied`
+   are virtual-dispatch, not switched; dispatch codecs switch STRING tags with a
+   default). Grep-clean.
+
+### Simplification Sweep
+
+- **The poll path is ONE clean general capability** — `EvalMode` + `isSatisfied` +
+  `evaluate` + the shared `complete` — not duplicated per kind; event-vs-poll lives in
+  the objective (its `mode`/`isSatisfied`), and the engine just calls the right
+  evaluation. No second completion routine (event + poll both funnel to `complete`).
+- **New classes:** `EvalMode`, `QuestDifficulty`, `QuestEventHooks`. **New arms:** 5
+  `Objective` kinds, 2 `QuestReward` kinds, 2 `QuestEventKind` values, the `Quest`
+  metadata + `allSatisfied`/`evaluate`/`complete`. **Touched (engine):** `Objective`,
+  `Quest`, `QuestEvents`, `QuestContext`, `QuestEventKind`, `QuestReward`, `QuestIssuer`,
+  `QuestCommand`. **Guild package: untouched.**
+
+### Deviations from prompt
+
+- **`Escort` is defined (EVENT, ESCORT_ARRIVED) but has no source this stage** — the
+  escort mechanic (the NPC arriving) is F2b-2; F2b-1 carries the kind + codec for
+  vocabulary completeness. So the F2b-1-provable kinds are `Hunt` (event/mob-death) +
+  `Gather`/`Deliver`/`Explore` (poll/turn-in). (Noted honestly per the constraint.)
+- **`Deliver`'s poll check is "in the target village holding the item"** (not consuming
+  it) — the consuming turn-in flow is F2b-2; F2b-1's poll is the satisfaction check.
+- **`Coins` mints denominations directly** into the player's inventory (rather than via
+  `CoinHelper.giveCoins`, which takes a `SimpleContainer`) — the player-facing basic
+  grant; the guild's purse-aware payout + party multiplier are F2b-2.
+
+### Out-of-scope but flagged
+
+- **F2b-2** — re-seat the player guild quests onto the base: `QuestGenerator`→F2 issuance
+  (GUILD giver, difficulty/rank), `PlayerGuildData`→F2 store, `GuildScreen`/
+  `GuildActionPacket`→F2 accept/turn-in (+ party multiplier + rank-up), the player
+  listeners→`notify`, the escort source, and **narrow the legacy `Quest` to
+  adventurer-only** (F1b-style coverage migration).
+- **Later** — adventurer NPC-group quests stay legacy (scope A); staged/grand quests;
+  quest journal UI.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the F2a-3 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** + the exhaustive-switch sweep (clean): `Quest` is 11
+record fields with all `new Quest(` callers (only `QuestIssuer` + the `withX` helpers)
+updated; the `Guilds/*` package is `git diff`-empty (untouched); the new dispatch arms
+use the proven inline `MAP_CODEC`; the poll path funnels to the one `complete`. Two
+NeoForge watch-items on the user's build: `Holder.unwrapKey()` (biome id) and the
+`@EventBusSubscriber` default bus (mirrors the working legacy `QuestProgressEvents`).
+
+### Smoke test (user-runnable)
+
+1. **Hunt (event).** `/quest guild hunt minecraft:zombie 3 EASY` → kill 3 zombies →
+   live progress + auto-completes (event), Coins+Xp granted.
+2. **Gather (poll).** `/quest guild gather minecraft:wheat 10` → with 10 wheat in
+   inventory, `/quest turnin` → completes; without them, turn-in does nothing.
+3. **Deliver / Explore (poll).** `/quest guild deliver minecraft:bread` (in a village,
+   holding bread) → `/quest turnin` completes; `/quest guild explore minecraft:desert`
+   (standing in a desert) → `/quest turnin` completes.
+4. **Rewards + gate.** Confirm the Coins+Xp land on completion; confirm the quest carries
+   its difficulty + rank requirement (`/quest` shows `[EASY]`).
+5. **Legacy untouched.** Confirm the legacy guild board still accepts/turns-in/HUNT-
+   detects exactly as before (separate system). Save+reload → the new quests persist.

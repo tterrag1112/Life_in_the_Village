@@ -17,5 +17,9 @@ public enum QuestEventKind {
     /** F2a-2 — the player enshrined a relic of a god's faith. */
     ENSHRINE,
     /** F2a-2 — the player attended or commissioned a rite of a faith. */
-    RITE
+    RITE,
+    /** F2b-1 — the player killed a mob (the guild Hunt objective; event-mode). */
+    MOB_DEATH,
+    /** F2b-1 — an escorted target reached its destination (event-mode; source F2b-2). */
+    ESCORT_ARRIVED
 }

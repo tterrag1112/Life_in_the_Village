@@ -11,17 +11,22 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.slf4j.Logger;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
+import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Npc.Religion.DivineFavour;
 import tterrag1112.life_in_the_village.Npc.Religion.DivineVision;
 import tterrag1112.life_in_the_village.Npc.Religion.God;
 import tterrag1112.life_in_the_village.Npc.Religion.GodRegistry;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
 /**
  * F2a-1 — a quest reward granted on completion. Sealed + dispatch-coded (like
- * {@link Objective}); F2a-1 ships {@link Favour} (favour with a god) and {@link Items};
- * F2a-3 adds {@link Vision} (a god-voiced confirmation line, for graduated callings).
+ * {@link Objective}); F2a-1 ships {@link Favour} + {@link Items}, F2a-3 adds
+ * {@link Vision}, F2b-1 adds {@link Coins} + {@link Xp} (the guild reward vocabulary).
  */
-public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Items, QuestReward.Vision {
+public sealed interface QuestReward
+        permits QuestReward.Favour, QuestReward.Items, QuestReward.Vision,
+                QuestReward.Coins, QuestReward.Xp {
 
     String type();
 
@@ -34,6 +39,8 @@ public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Item
         case Favour.TYPE -> Favour.MAP_CODEC;
         case Items.TYPE  -> Items.MAP_CODEC;
         case Vision.TYPE -> Vision.MAP_CODEC;
+        case Coins.TYPE  -> Coins.MAP_CODEC;
+        case Xp.TYPE     -> Xp.MAP_CODEC;
         default -> throw new IllegalStateException("Unknown reward type: " + t);
     });
 
@@ -99,6 +106,55 @@ public sealed interface QuestReward permits QuestReward.Favour, QuestReward.Item
         }
 
         public String describe() { return "a vision from " + godId; }
+    }
+
+    /** F2b-1 — {@code bronze} coins, minted into the player's inventory (the guild's
+     *  basic coin reward; the party multiplier is F2b-2's turn-in flow). */
+    record Coins(long bronze) implements QuestReward {
+        public static final String TYPE = "coins";
+        public static final MapCodec<Coins> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                Codec.LONG.fieldOf("bronze").forGetter(Coins::bronze)
+        ).apply(i, Coins::new));
+
+        public String type() { return TYPE; }
+
+        public void grant(ServerLevel level, ServerPlayer player, long now) {
+            long rem = bronze;
+            int gold = (int) (rem / CurrencyValue.GOLD_VALUE);   rem %= CurrencyValue.GOLD_VALUE;
+            int silver = (int) (rem / CurrencyValue.SILVER_VALUE); rem %= CurrencyValue.SILVER_VALUE;
+            int copper = (int) rem;
+            giveStack(player, ModItems.DENIER_OR.get(), gold);
+            giveStack(player, ModItems.DENIER_ARGENT.get(), silver);
+            giveStack(player, ModItems.DENIER.get(), copper);
+        }
+
+        private static void giveStack(ServerPlayer player, Item coin, int count) {
+            while (count > 0) {
+                int n = Math.min(count, 64);
+                ItemStack stack = new ItemStack(coin, n);
+                if (!player.getInventory().add(stack)) player.drop(stack, false);
+                count -= n;
+            }
+        }
+
+        public String describe() { return bronze + " bronze"; }
+    }
+
+    /** F2b-1 — {@code xp} guild XP (no-op if the player isn't a guild member; the rank-up
+     *  trigger is F2b-2's turn-in flow). */
+    record Xp(int xp) implements QuestReward {
+        public static final String TYPE = "xp";
+        public static final MapCodec<Xp> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                Codec.INT.fieldOf("xp").forGetter(Xp::xp)
+        ).apply(i, Xp::new));
+
+        public String type() { return TYPE; }
+
+        public void grant(ServerLevel level, ServerPlayer player, long now) {
+            PlayerGuildData.get(level).addXp(player.getUUID(), xp);
+        }
+
+        public String describe() { return "+" + xp + " guild XP"; }
     }
 
     Logger LOGGER = LogUtils.getLogger();

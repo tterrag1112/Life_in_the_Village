@@ -54,7 +54,7 @@ public final class QuestIssuer {
                 QuestStatus.ACTIVE,
                 List.of(new QuestReward.Favour(godId, 20f)),
                 Quest.Scope.PLAYER,
-                0L);
+                0L, QuestDifficulty.NONE, java.util.Optional.empty());
         QuestSavedData.get(level).add(player.getUUID(), quest);
         return quest;
     }
@@ -105,8 +105,57 @@ public final class QuestIssuer {
                 List.of(new QuestReward.Favour(gid, callingReward),
                         new QuestReward.Vision(gid, confirmation)),
                 Quest.Scope.PLAYER,
-                0L);
+                0L, QuestDifficulty.NONE, java.util.Optional.empty());
         QuestSavedData.get(level).add(player.getUUID(), quest);
         return quest;
+    }
+
+    /** F2b-1 debug — the guild objective kinds the test command can issue. */
+    public static final String[] GUILD_KINDS = { "hunt", "gather", "deliver", "explore", "escort" };
+
+    /**
+     * F2b-1 — issue a GUILD-kind test quest (hunt/gather/deliver/explore/escort) with a
+     * {@code difficulty} (its {@link GuildRank} accept-gate + coin/XP rewards from the
+     * difficulty). The target (mob/item/biome) is a registry id; deliver/escort use the
+     * player's current village as the destination. Proves the guild vocabulary on the
+     * base before the F2b-2 re-seat.
+     */
+    public static Quest grantGuild(ServerLevel level, ServerPlayer player,
+                                   String kind, String target, int count,
+                                   QuestDifficulty difficulty) {
+        QuestDifficulty diff = difficulty == null ? QuestDifficulty.EASY : difficulty;
+        int n = Math.max(1, count);
+        Objective objective;
+        String title;
+        switch (kind == null ? "" : kind) {
+            case "hunt"    -> { objective = new Objective.Hunt(target, 0, n);
+                                title = "Hunt " + n + "× " + target; }
+            case "gather"  -> { objective = new Objective.Gather(target, n);
+                                title = "Gather " + n + "× " + target; }
+            case "deliver" -> { objective = new Objective.Deliver(target, currentVillageId(level, player));
+                                title = "Deliver " + target; }
+            case "explore" -> { objective = new Objective.Explore(target);
+                                title = "Explore " + target; }
+            case "escort"  -> { objective = new Objective.Escort("", target, false);
+                                title = "Escort to " + target; }
+            default -> { return null; }
+        }
+        Quest quest = new Quest(
+                java.util.UUID.randomUUID(),
+                new QuestGiver(QuestGiver.Type.GUILD, kind),
+                title, title + ".",
+                List.of(objective),
+                QuestStatus.ACTIVE,
+                List.of(new QuestReward.Coins(diff.baseCoinReward()), new QuestReward.Xp(diff.baseXp())),
+                Quest.Scope.PLAYER,
+                0L, diff, java.util.Optional.of(diff.minRank()));
+        QuestSavedData.get(level).add(player.getUUID(), quest);
+        return quest;
+    }
+
+    private static String currentVillageId(ServerLevel level, ServerPlayer player) {
+        return tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level)
+                .getVillageAt(player.blockPosition())
+                .map(v -> v.getId().toString()).orElse("");
     }
 }
