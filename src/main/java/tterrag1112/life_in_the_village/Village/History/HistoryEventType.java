@@ -57,6 +57,10 @@ public enum HistoryEventType {
      *  the religious origins are never pruned. */
     SACRED_HISTORY           (HistoryImportance.MAJOR),
 
+    /** SR2 — a deceased believer canonized a saint of their faith. MAJOR so the
+     *  faith's saints are never pruned from the chronicle. */
+    SAINT_CANONIZED          (HistoryImportance.MAJOR),
+
     // ── Village-wide ──────────────────────────────────────────────────────
     FESTIVAL_HELD            (HistoryImportance.MINOR),
     PLAGUE_OUTBREAK          (HistoryImportance.MAJOR),

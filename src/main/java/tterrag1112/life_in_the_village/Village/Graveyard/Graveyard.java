@@ -53,6 +53,19 @@ public final class Graveyard {
         return graves.stream().filter(g -> g.deceasedId().equals(deceasedId)).findFirst();
     }
 
+    /** SR2 — inscribe {@code deceasedId}'s grave epitaph (replace the immutable record).
+     *  Returns true when the grave was found + inscribed. */
+    public boolean inscribe(UUID deceasedId, String epitaph) {
+        for (int i = 0; i < graves.size(); i++) {
+            Grave g = graves.get(i);
+            if (g.deceasedId().equals(deceasedId)) {
+                graves.set(i, new Grave(g.deceasedId(), g.name(), g.deathTick(), g.slot(), epitaph));
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Buries {@code deceasedId} at a free slot, or — when the cemetery is full —
      * reuses the oldest grave's slot (capacity-bounded). Returns the new grave,

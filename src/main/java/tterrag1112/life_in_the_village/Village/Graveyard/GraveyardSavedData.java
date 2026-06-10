@@ -86,4 +86,22 @@ public class GraveyardSavedData extends SavedData {
         if (grave.isPresent()) setDirty();
         return grave;
     }
+
+    /** The grave of {@code deceasedId} in ANY village graveyard (graveyards are few). */
+    public Optional<Grave> graveOf(UUID deceasedId) {
+        if (deceasedId == null) return Optional.empty();
+        for (Graveyard g : graveyards.values()) {
+            Optional<Grave> grave = g.graveOf(deceasedId);
+            if (grave.isPresent()) return grave;
+        }
+        return Optional.empty();
+    }
+
+    /** SR2 — inscribe {@code deceasedId}'s grave epitaph wherever it is buried. */
+    public boolean inscribeEpitaph(UUID deceasedId, String epitaph) {
+        for (Graveyard g : graveyards.values()) {
+            if (g.inscribe(deceasedId, epitaph)) { setDirty(); return true; }
+        }
+        return false;
+    }
 }

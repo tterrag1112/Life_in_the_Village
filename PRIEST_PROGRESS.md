@@ -10393,3 +10393,146 @@ scan).
 5. **No regression / perf.** A non-saint player and NPC see today's exact numbers;
    confirm no per-tick spam (the saint multiplier is an O(1) map read; the NPC sweep is
    daily, the player review on the 200-tick theophany cadence).
+
+## Saints & Relics SR2 — canonized (deceased) saints (2026-06-10)
+
+The second saint tier: the roster of the venerated dead. A living saint who dies is
+auto-canonized; a martyr is canonized for dying for the faith; an exceptionally
+virtuous NPC becomes a "Venerable" a high priest later elevates. Canonization inscribes
+the grave, makes it lasting holy ground, gives the faith a new saint's day, and
+chronicles it — all by REUSING the sacred-site, calendar, and chronicle machinery.
+
+### Disposition (investigation)
+
+- **Death pipeline:** `TownspersonMob.onNpcDeath(LivingDeathEvent)` → `DeathArc.onNpcDeath`
+  buries via `GraveyardSavedData.bury` (grave slot = `gravePos`). Death cause was NOT
+  retained — `event.getSource().getEntity()` (the killer) is now captured + threaded so
+  martyrdom is classifiable.
+- **SR1 store:** `SaintsSavedData` (living roster) — extended with the canonized `Saint`
+  roster (the room SR1 left).
+- **Qualification reads:** `Saints.livingSaintGod` (path 1), `getPiety().primaryTier()`
+  (DEVOUT/PIOUS), `getRetirementState().mentoredInPast()` (virtue signal),
+  `BuildingFaith.hasSeatedPriestOfFaith` (clergy gate).
+- **Reuse points:** `Grave.epitaph` (+ a new `inscribe`); `SacredSpaceSavedData`
+  imprint (made durable); `ReligionSavedData.get/put` + `ReligiousCalendar` (saint's
+  day); `VillageHistoryLog.record` + a new `HistoryEventType.SAINT_CANONIZED`.
+
+### Model + what shipped
+
+- **`SaintsSavedData.Saint`** (new record) `(saintId, name, religionId, godId, virtue
+  [FaithConcept], epitaph, martyr, canonized, deathTick, gravePos, saintDay, relicId
+  [SR4 seam, empty])` — a `canonized=false` record is a pending **Venerable**. Second
+  codec list beside the living roster; accessors `canonizedSaints`/`venerables`/
+  `saintsOf`/`saintAtGrave`/`putSaint`.
+- **`Canonization`** (new) — the ONE entry point + the three paths + the shared tie-in
+  routine:
+  - `onNpcDeath(level, deceased, killer, now)` (after burial): **path 1** living saint →
+    auto (moved off the living roster); **path 2** martyr (DEVOUT+ slain by another
+    living entity) → auto; **path 3** Venerable (PIOUS, or DEVOUT + a mentorship
+    legacy) → recorded.
+  - `dailyVenerableSweep` — a high priest of the faith (`hasSeatedPriestOfFaith` in any
+    village) elevates pending Venerables. From `RiteScheduler.dailyTick`.
+  - `applyTieIns` — the ONE reuse routine (auto-canonize and elevation both call it):
+    inscribe epitaph → durable imprint → saint's day → chronicle.
+- **Durable grave imprint:** `SacredSpaceSavedData.Imprint` gained a `permanent` flag
+  (optionalFieldOf, pre-SR2 saves load false); `currentStrength` returns the anchor
+  strength with no decay/prune when permanent; `addPermanentImprint` is the saint-grave
+  writer (the shrine-slow / rite-refresh still raise it). The decaying theophany imprint
+  is unchanged (permanent=false).
+- **Saint's day — the FIRST real `ReligionSavedData.put`:** `addSaintDay` fetches the
+  per-world religion, copies its calendar + adds `"St. <name>'s Day" → saintDay` (the
+  death-day's day-of-year, or the next free day), rebuilds the `Religion` preserving
+  every other field (godIds, rites, …), and `put`s it. `SacredTime` then applies the
+  holy-day bonus on that day automatically.
+- **Chronicle:** `SAINT_CANONIZED` (new `HistoryEventType`, MAJOR → never pruned) in the
+  village holding the grave.
+- **Epitaph:** the formerly-unused `Grave.epitaph` is inscribed ("Here lies <name>,
+  Saint/Martyr of <God>.") via new `Graveyard.inscribe` / `GraveyardSavedData
+  .inscribeEpitaph`.
+- **Surfacing:** `/religion saints` now also lists the canonized roster (name, martyr?,
+  god, virtue, saint's day) + pending Venerables. The grave reads sacred in
+  `/religion sacred` via the imprint.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `LivingDeathEvent` (death + the now-captured killer), SR1
+   `Saints` living roster, piety tier + `mentoredInPast`, clergy lookup. Confirmed.
+2. **Downstream callers.** `SaintsSavedData` (roster), `Graveyard` (epitaph),
+   `SacredSpaceSavedData` (permanent imprint → flows through `sacrednessAt` and every
+   sacred effect), `ReligionSavedData.put` (saint's day → `SacredTime`),
+   `VillageHistoryLog` (chronicle). Each runs through the single `applyTieIns`.
+3. **Sibling systems.** The saint's-day `put` rebuilds the `Religion` field-for-field
+   (only the calendar changes) — godIds/rites/preferredBookCategories intact, and the
+   relation OVERRIDES live in `ReligionSavedData`'s separate map (untouched). The
+   permanent imprint composes additively into `sacrednessAt` with natural/built/theophany
+   (no double-count — it's just another imprint summed by god + distance).
+4. **Exhaustive switches.** **Grepped every `switch` — none is over `HistoryEventType`**
+   (the matches were `goal.type()`/`rite.type()`/`effect.type()`/etc., distinct enums);
+   `HistoryEventType` uses a per-value `defaultImportance()` field, not a consumer
+   switch. `SAINT_CANONIZED` needs no arm updates.
+
+### Simplification Sweep
+
+- **One canonization entry** (`Canonization.onNpcDeath`) feeding the three paths; **one
+  tie-in routine** (`applyTieIns`) so the auto and elevation paths don't each
+  re-implement epitaph+imprint+day+chronicle.
+- **Durable imprint did NOT fork the store** — a `permanent` flag on the existing
+  `Imprint` + one branch in `currentStrength`, reusing `addImprint`'s body.
+- **Touched classes:** `SaintsSavedData`, `Canonization` (new), `SacredSpaceSavedData`,
+  `Graveyard`, `GraveyardSavedData`, `HistoryEventType`, `TownspersonMob` (death hook),
+  `RiteScheduler` (sweep), `ReligionDebugCommand` (readout).
+
+### Deviations from prompt
+
+- **Canonization is NPC-only.** A player living saint who "dies" merely respawns — they
+  don't permanently die, get a grave, or canonize; their living-saint status (SR1) is
+  their summit. (The prompt's smoke test names a player, but canonizing a respawning
+  player is incoherent — the dead roster is for the truly dead.)
+- **Martyr bar = the conservative base** ("violent death of a DEVOUT+ believer slain by
+  another entity"). The "stronger if near a sacred site / by a rival faith" weighting is
+  a tuning refinement deferred (it would LOWER the bar; kept conservative so martyrdom
+  stays rare).
+- **Venerable virtue signal** = PIOUS, or DEVOUT + a mentorship legacy
+  (`mentoredInPast`). "Widely positively remembered" (memory polarity) left as a future
+  signal — `mentoredInPast` is a clean, stored proxy.
+
+### Out-of-scope but flagged
+
+- **SR3** — intercession: pray at a saint's grave → cooldowned favour / minor miracle,
+  refreshing the grave imprint; the veneration loop that can later auto-elevate
+  Venerables or drive a player-driven canonization ceremony.
+- **SR4** — relics (a saint's relic item); `relicId` stays empty.
+- **Deferred** — player-driven canonization ceremony / UI; NPC favour/theophany to unify
+  the saint paths; the richer martyr/Venerable signals (sacred-site/rival-faith
+  weighting, memory polarity).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the SR1 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** (the F1b lesson — and it mattered: the two
+`Canonization` call sites are FQN-split across lines, invisible to the single-line grep,
+confirmed present by the plain grep): the `Saint` codec is 12 fields (under the cap);
+`Imprint` is now 6 fields (the `permanent` optionalFieldOf keeps pre-SR2 saves loading);
+the saint's-day `put` rebuilds all 8 `Religion` fields (no clobber); `SAINT_CANONIZED`
+hits no exhaustive switch; `addImprint`'s existing 4-arg caller still resolves via the
+delegating overload.
+
+### Smoke test (user-runnable)
+
+1. **Living saint → auto-canonize.** Make an NPC a living saint (SR1: sustained PIOUS),
+   then kill it → `/religion saints` lists it under Canonized; `/religion sacred <god>`
+   at its grave reads sacred and DOESN'T fade over days; the grave epitaph is inscribed;
+   the faith gains a saint's day (verify a `SacredTime` holy-day bonus applies on that
+   day-of-year); a `SAINT_CANONIZED` chronicle entry exists.
+2. **Martyr.** Kill a DEVOUT+ non-saint NPC by another entity → auto-canonized as a
+   Martyr.
+3. **Venerable → elevation.** Let a PIOUS (or DEVOUT + mentor) NPC die of old age →
+   recorded as a Venerable; with a seated priest of its faith present, a daily sweep
+   canonizes it.
+4. **Nobody.** An ordinary (sub-DEVOUT, non-saint) NPC death canonizes no one.
+5. **`put` integrity + persistence.** Confirm the saint's-day `put` left the religion's
+   rites/godIds/relations intact (`/religion world list`, `/religion relations`);
+   save+reload and confirm the roster + saint's day + permanent grave imprint persist.

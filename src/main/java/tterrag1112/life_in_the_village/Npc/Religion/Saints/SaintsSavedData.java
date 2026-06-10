@@ -2,13 +2,16 @@ package tterrag1112.life_in_the_village.Npc.Religion.Saints;
 
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import tterrag1112.life_in_the_village.Npc.Religion.FaithConcept;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -49,23 +52,58 @@ public class SaintsSavedData extends SavedData {
         ).apply(i, LivingSaint::new));
     }
 
+    private static final Codec<FaithConcept> CONCEPT_CODEC = Codec.STRING.xmap(
+            s -> FaithConcept.valueOf(s.toUpperCase(Locale.ROOT)), FaithConcept::name);
+
+    /**
+     * SR2 — a canonized (deceased) saint, OR a {@code canonized=false} <b>Venerable</b>
+     * candidate awaiting a high priest's elevation. {@code saintDay} is the calendar
+     * day-of-year added on canonization (−1 while a Venerable). {@code relicId} is the
+     * SR4 seam (always empty here).
+     */
+    public record Saint(UUID saintId, String name, String religionId, String godId,
+                        FaithConcept virtue, String epitaph, boolean martyr, boolean canonized,
+                        long deathTick, BlockPos gravePos, int saintDay, Optional<String> relicId) {
+        public static final Codec<Saint> CODEC = RecordCodecBuilder.create(i -> i.group(
+                UUID_STRING.fieldOf("saintId").forGetter(Saint::saintId),
+                Codec.STRING.fieldOf("name").forGetter(Saint::name),
+                Codec.STRING.fieldOf("religionId").forGetter(Saint::religionId),
+                Codec.STRING.fieldOf("godId").forGetter(Saint::godId),
+                CONCEPT_CODEC.fieldOf("virtue").forGetter(Saint::virtue),
+                Codec.STRING.optionalFieldOf("epitaph", "").forGetter(Saint::epitaph),
+                Codec.BOOL.optionalFieldOf("martyr", false).forGetter(Saint::martyr),
+                Codec.BOOL.optionalFieldOf("canonized", true).forGetter(Saint::canonized),
+                Codec.LONG.fieldOf("deathTick").forGetter(Saint::deathTick),
+                BlockPos.CODEC.fieldOf("gravePos").forGetter(Saint::gravePos),
+                Codec.INT.optionalFieldOf("saintDay", -1).forGetter(Saint::saintDay),
+                Codec.STRING.optionalFieldOf("relicId").forGetter(Saint::relicId)
+        ).apply(i, Saint::new));
+    }
+
     public static final SavedDataType<SaintsSavedData> TYPE = new SavedDataType<>(
             STORAGE,
             SaintsSavedData::new,
             RecordCodecBuilder.create(i -> i.group(
                     LivingSaint.CODEC.listOf().optionalFieldOf("livingSaints", List.of())
-                            .forGetter(d -> new ArrayList<>(d.living.values()))
+                            .forGetter(d -> new ArrayList<>(d.living.values())),
+                    Saint.CODEC.listOf().optionalFieldOf("saints", List.of())
+                            .forGetter(d -> new ArrayList<>(d.saints.values()))
             ).apply(i, SaintsSavedData::fromCodec)));
 
     /** beingId → its living-saint status (a being is the Holy of at most one god). */
     private final Map<UUID, LivingSaint> living = new LinkedHashMap<>();
+    /** saintId → its canonized record OR a pending Venerable ({@code canonized=false}). */
+    private final Map<UUID, Saint> saints = new LinkedHashMap<>();
 
     public SaintsSavedData() {}
 
-    private static SaintsSavedData fromCodec(List<LivingSaint> loaded) {
+    private static SaintsSavedData fromCodec(List<LivingSaint> loaded, List<Saint> loadedSaints) {
         SaintsSavedData d = new SaintsSavedData();
         if (loaded != null) for (LivingSaint s : loaded) {
             if (s != null) d.living.put(s.beingId(), s);
+        }
+        if (loadedSaints != null) for (Saint s : loadedSaints) {
+            if (s != null) d.saints.put(s.saintId(), s);
         }
         return d;
     }
@@ -115,6 +153,52 @@ public class SaintsSavedData extends SavedData {
     /** Revokes {@code beingId}'s living-saint status (lapse / apostasy). */
     public void remove(UUID beingId) {
         if (beingId != null && living.remove(beingId) != null) setDirty();
+    }
+
+    // ── Canonized roster + Venerable candidates (SR2) ────────────────────────
+
+    /** The saint record for {@code saintId} (canonized OR pending Venerable), or empty. */
+    public Optional<Saint> saint(UUID saintId) {
+        return saintId == null ? Optional.empty() : Optional.ofNullable(saints.get(saintId));
+    }
+
+    /** Every CANONIZED saint (excludes pending Venerables). */
+    public List<Saint> canonizedSaints() {
+        List<Saint> out = new ArrayList<>();
+        for (Saint s : saints.values()) if (s.canonized()) out.add(s);
+        return out;
+    }
+
+    /** Pending Venerable candidates (not yet elevated). */
+    public List<Saint> venerables() {
+        List<Saint> out = new ArrayList<>();
+        for (Saint s : saints.values()) if (!s.canonized()) out.add(s);
+        return out;
+    }
+
+    /** Canonized saints of {@code religionId}. */
+    public List<Saint> saintsOf(String religionId) {
+        List<Saint> out = new ArrayList<>();
+        if (religionId != null) for (Saint s : saints.values()) {
+            if (s.canonized() && s.religionId().equals(religionId)) out.add(s);
+        }
+        return out;
+    }
+
+    /** The canonized saint whose grave is at {@code pos}, if any. */
+    public Optional<Saint> saintAtGrave(BlockPos pos) {
+        if (pos == null) return Optional.empty();
+        for (Saint s : saints.values()) {
+            if (s.canonized() && pos.equals(s.gravePos())) return Optional.of(s);
+        }
+        return Optional.empty();
+    }
+
+    /** Records or replaces a saint record (canonized or Venerable) + persists. */
+    public void putSaint(Saint s) {
+        if (s == null) return;
+        saints.put(s.saintId(), s);
+        setDirty();
     }
 
     public void markDirty() { setDirty(); }

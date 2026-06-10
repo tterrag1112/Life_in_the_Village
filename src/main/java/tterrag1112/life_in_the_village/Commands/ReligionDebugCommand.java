@@ -348,6 +348,24 @@ public final class ReligionDebugCommand {
                         s.beingId(), s.isPlayer() ? "player" : "npc", days));
             }
         }
+        // SR2 — the canonized (deceased) roster + pending Venerables.
+        var canonized = saints.canonizedSaints();
+        sb.append(String.format(Locale.ROOT, "%n§e--- Canonized (%d) ---", canonized.size()));
+        for (var s : canonized) {
+            sb.append(String.format(Locale.ROOT, "%n  §6%s§7 — %s of §f%s§7, virtue %s, saint's day %d%s",
+                    s.name(), s.martyr() ? "Martyr" : "Saint",
+                    tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.find(s.godId())
+                            .map(gg -> gg.displayName()).orElse(s.godId()),
+                    s.virtue().name(), s.saintDay(), s.martyr() ? " §c(martyr)" : ""));
+        }
+        var venerables = saints.venerables();
+        if (!venerables.isEmpty()) {
+            sb.append(String.format(Locale.ROOT, "%n§e--- Venerable (awaiting a high priest) (%d) ---",
+                    venerables.size()));
+            for (var s : venerables) {
+                sb.append(String.format(Locale.ROOT, "%n  §7%s — Venerable of %s", s.name(), s.religionId()));
+            }
+        }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
         return 1;
