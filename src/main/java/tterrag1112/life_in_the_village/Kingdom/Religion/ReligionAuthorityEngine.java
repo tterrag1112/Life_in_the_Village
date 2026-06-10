@@ -14,6 +14,8 @@ import tterrag1112.life_in_the_village.Kingdom.Laws.KingdomLawState;
 import tterrag1112.life_in_the_village.Kingdom.Provinces.Province;
 import tterrag1112.life_in_the_village.Kingdom.Rebellion.CollapseEngine;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Religion.RelationStance;
+import tterrag1112.life_in_the_village.Npc.Religion.Relations;
 import tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry;
 
 import java.util.ArrayList;
@@ -74,7 +76,7 @@ public final class ReligionAuthorityEngine {
     public static void dailyTick(ServerLevel level, VillageSavedData data, long tick) {
         for (Kingdom kingdom : new ArrayList<>(data.getAllKingdoms())) {
             if (kingdom.hasModifierWithId(CollapseEngine.COLLAPSED_MODIFIER_ID)) continue;
-            applyReligiousTension(kingdom, tick);
+            applyReligiousTension(level, kingdom, tick);
         }
     }
 
@@ -98,7 +100,7 @@ public final class ReligionAuthorityEngine {
      * declared official religion. Tension clears when official
      * religion matches OR a conversion campaign completes.
      */
-    public static void applyReligiousTension(Kingdom kingdom, long tick) {
+    public static void applyReligiousTension(ServerLevel level, Kingdom kingdom, long tick) {
         Optional<String> officialOpt = officialReligion(kingdom);
         if (officialOpt.isEmpty()) {
             // No official religion → no tension. Sweep any old tension modifiers.
@@ -133,6 +135,15 @@ public final class ReligionAuthorityEngine {
         var culture = CultureResolver.ofKingdom(kingdom);
         String dominant = ReligionRegistry.dominantReligionFor(culture.displayName());
         boolean mismatch = !dominant.equalsIgnoreCase(official);
+        // F1b-2 — the mismatch tension is modulated by the STANCE between the official
+        // religion and the province's faith: a KINDRED (shared-god) official faith is
+        // easier to accept (lighter dip), NEUTRAL keeps today's −3, and RIVAL/HERETICAL
+        // (override-only, later) bite harder. NEUTRAL preserves the current number, so
+        // only an already-mismatched, shared-god pairing visibly changes this stage.
+        int dip = mismatch
+                ? Math.round(TENSION_STABILITY_DIP
+                        * tensionMultiplier(Relations.relation(level, official, dominant)))
+                : 0;
         for (Province p : kingdom.getProvinces()) {
             String tag = TENSION_MODIFIER_PREFIX + p.id();
             // Active conversion campaigns suppress tension.
@@ -141,18 +152,32 @@ public final class ReligionAuthorityEngine {
                 kingdom.removeModifier(tag);
                 continue;
             }
-            if (mismatch) {
+            if (mismatch && dip != 0) {
                 if (!kingdom.hasModifierWithId(tag)) {
                     kingdom.addModifier(KingdomModifier.expiring(
                             tag,
                             "Religious tension in " + p.name(),
-                            TENSION_STABILITY_DIP, 0,
+                            dip, 0,
                             tick, 24000L * 30));
                 }
             } else {
                 kingdom.removeModifier(tag);
             }
         }
+    }
+
+    /** F1b-2 — tension-dip multiplier by the official↔province stance. NEUTRAL is
+     *  1.0 (the dip stays the current −3, so behaviour is unchanged absent a shared
+     *  god or override); KINDRED eases it, RIVAL/HERETICAL (override-only) worsen it.
+     *  Resulting dips at {@code TENSION_STABILITY_DIP=-3}: KINDRED −1, NEUTRAL −3,
+     *  RIVAL −4, HERETICAL −6. */
+    private static float tensionMultiplier(RelationStance stance) {
+        return switch (stance) {
+            case KINDRED   -> 0.5f;
+            case NEUTRAL   -> 1.0f;
+            case RIVAL     -> 1.5f;
+            case HERETICAL -> 2.0f;
+        };
     }
 
     /**

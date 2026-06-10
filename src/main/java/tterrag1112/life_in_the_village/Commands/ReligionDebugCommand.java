@@ -159,6 +159,11 @@ public final class ReligionDebugCommand {
                 .then(Commands.literal("world")
                         .then(Commands.literal("list")
                                 .executes(ReligionDebugCommand::handleWorldList)))
+
+                // F1b 2 — the interreligious stance matrix across the per-world
+                // religions (each pair + KINDRED/NEUTRAL, marking any override).
+                .then(Commands.literal("relations")
+                        .executes(ReligionDebugCommand::handleRelations))
         );
     }
 
@@ -206,6 +211,41 @@ public final class ReligionDebugCommand {
         }
         sb.append("\n§8(per-world store — seeded from the static templates; ")
                 .append("F1b-1b migrates callers off the static registry)");
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // ── /religion relations (F1b 2) ─────────────────────────────────────────
+
+    /** Prints the interreligious stance matrix across the per-world religions: each
+     *  distinct pair + its stance (KINDRED/NEUTRAL derived from god overlap, or an
+     *  explicit override), flagging which entries are overridden. Read-only. */
+    private static int handleRelations(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var store = new java.util.ArrayList<>(
+                tterrag1112.life_in_the_village.Npc.Religion.Religions.all(level));
+        var data = tterrag1112.life_in_the_village.Npc.Religion.ReligionSavedData.get(level);
+        StringBuilder sb = new StringBuilder("§e=== Interreligious relations ===");
+        for (int a = 0; a < store.size(); a++) {
+            for (int b = a + 1; b < store.size(); b++) {
+                String idA = store.get(a).id();
+                String idB = store.get(b).id();
+                var stance = tterrag1112.life_in_the_village.Npc.Religion.Relations
+                        .relation(level, idA, idB);
+                boolean overridden = data.relationOverride(idA, idB).isPresent();
+                String colour = stance == tterrag1112.life_in_the_village.Npc.Religion
+                        .RelationStance.KINDRED ? "§a"
+                        : stance == tterrag1112.life_in_the_village.Npc.Religion
+                                .RelationStance.NEUTRAL ? "§7" : "§c";
+                sb.append(String.format(Locale.ROOT, "%n§6%-12s §7↔ §6%-12s %s%s%s",
+                        idA, idB, colour, stance,
+                        overridden ? " §8(override)" : ""));
+            }
+        }
+        sb.append("\n§8(KINDRED = shares ≥1 god; NEUTRAL = disjoint; RIVAL/HERETICAL "
+                + "are override-only — no writers yet)");
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
         return 1;
