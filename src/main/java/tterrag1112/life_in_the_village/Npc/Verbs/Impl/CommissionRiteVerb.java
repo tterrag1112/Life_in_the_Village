@@ -115,6 +115,13 @@ public final class CommissionRiteVerb implements PlayerVerb {
                     ctx.level(), playerId, faith,
                     tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.COMMISSION_RITE,
                     ctx.level().getGameTime(), ctx.player().blockPosition());  // S1b — sacred at the commission site
+
+            // F2a-2 — commissioning a rite advances any PerformRites objective for the god.
+            String commissionedGod = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                    .primaryGod(tterrag1112.life_in_the_village.Npc.Religion.Religions.get(ctx.level(), faith))
+                    .map(tterrag1112.life_in_the_village.Npc.Religion.God::id).orElse(null);
+            tterrag1112.life_in_the_village.Quests.QuestEvents.notify(ctx.player(),
+                    tterrag1112.life_in_the_village.Quests.QuestContext.rite(commissionedGod, faith));
         }
 
         ctx.npc().getRelationships().adjust(playerId,

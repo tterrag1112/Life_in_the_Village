@@ -10904,3 +10904,116 @@ balks here.
 4. **No behaviour change.** The offering itself behaves exactly as before (the notify is
    side-effect-free on it); the guild quest system is entirely unaffected.
 5. **Persistence.** Save+reload → active + completed quests persist (codec round-trip).
+
+## F2 — F2a-2: the three remaining religious objective kinds (2026-06-10)
+
+F2a-1 proved the quest engine with one kind. F2a-2 fills out the religious objective
+vocabulary — pilgrimage, enshrine-a-relic, perform-rites — each a new `Objective` kind +
+a `notify` call on an existing religious action. **The engine core was NOT touched**
+(git-diff-clean on `QuestEvents`/`Quest`/`QuestReward`/`QuestSavedData`) — the proof the
+F2a-1 "kind = permit + codec arm + notify source" design holds. Still additive (guild
+quests untouched); issuance stays the `/quest grant` debug path.
+
+### Disposition (investigation)
+
+- **Engine extension points (confirmed from F2a-1):** `Objective` (sealed `permits` +
+  dispatch-codec arm), `QuestEventKind`, `QuestEvents.notify` (the one path),
+  `QuestContext`. A kind needs only these + a notify source.
+- **Notify sources + their god context:**
+  - `Intercession.prayTo` (the SR3/SR4 shared prayer core) — the god = `saint.godId()`;
+    a prayer at the god's saint grave IS reaching its sacred ground → `VISIT_SITE`.
+  - `RelicItem.useOn` enshrine — the god = `RelicData.godId` → `ENSHRINE`.
+  - `AttendRiteVerb` (`targetFaith`) / `CommissionRiteVerb` (`faith`) — resolve the
+    faith's primary god → `RITE`.
+  - `SacredSpace.tierAt` proximity-reach — see Deviations (deferred for perf).
+
+### What shipped
+
+- **`QuestEventKind`** — added `VISIT_SITE`, `ENSHRINE`, `RITE`.
+- **`Objective`** — three new permits + dispatch arms (mirroring `MakeOffering`):
+  `VisitSacredSite`, `EnshrineRelic`, `PerformRites` (each `(godId, current, target)`,
+  matching its kind on god equality). The dispatch `switch` gained three arms; **nothing
+  in `QuestEvents`/`Quest` changed.**
+- **`QuestContext`** — `visitSite`/`enshrine`/`rite` factories.
+- **Four notify sources wired** (each side-effect-free, AFTER the host action's effects):
+  `Intercession.prayTo` → `VISIT_SITE`; `RelicItem.useOn` → `ENSHRINE`;
+  `AttendRiteVerb` + `CommissionRiteVerb` → `RITE` (faith → primary god).
+- **`QuestIssuer.grant(level, player, godId, kind, count)`** (offering / pilgrimage /
+  relic / rites) + **`/quest grant <god> <kind> [count]`** (kind-suggested).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `Intercession.prayTo`, `RelicItem` enshrine,
+   `AttendRite`/`CommissionRite`, (deferred: `SacredSpace.tierAt`) — each has the
+   god/position context the matcher needs (the source resolves the god).
+2. **Downstream callers.** `QuestEvents.notify` (now called from 5 sources); the three
+   new `Objective` kinds; `/quest grant`. **The engine core is unchanged** (verified via
+   `git diff`).
+3. **Sibling systems.** Praying / enshrining / attending / commissioning behave
+   identically — the notify runs after the action's own effects and only reads the
+   player's quests. The sacred/relic/rite systems are undisturbed.
+4. **Exhaustive switches.** The new `QuestEventKind` values have no exhaustive consumer
+   switch — the objective matchers use `==` equality, and the dispatch codecs switch over
+   STRING type-tags with a default. (The grep's `case OFFERING`/`switch(kind())` hits are
+   over OTHER enums — `FavourAct`, layout-event/plaza-piece kinds.)
+
+### Simplification Sweep
+
+- **Engine core NOT touched** (the headline proof) — three kinds added purely via
+  permits + codec arms + notify sources. **One notify call per source**; the god
+  resolution at the two rite verbs reuses the same `primaryGod(Religions.get(...))`
+  one-liner already used by the offering source (no new resolution logic).
+- **New arms/classes:** `Objective.VisitSacredSite`/`.EnshrineRelic`/`.PerformRites` (+
+  their dispatch arms); 3 `QuestEventKind` values; 3 `QuestContext` factories; the
+  generalized `QuestIssuer.grant`. Touched sources: `Intercession`, `RelicItem`,
+  `AttendRiteVerb`, `CommissionRiteVerb`, `QuestCommand`.
+
+### Deviations from prompt
+
+- **`VISIT_SITE` (pilgrimage) completes by praying at the god's sacred site** (a saint
+  grave, via `Intercession.prayTo`). **The optional "reach the god's sacred space"
+  proximity notify is deferred** — passive reach detection needs a per-player tick, and a
+  per-tick `SacredSpace.tierAt` is a structure-backed query that would violate the S1b/S2
+  perf discipline. The prompt's "and/or" allows scoping to the prayer source; the
+  proximity variant can ride a future per-player quest tick (or a cheap cached
+  sacredness) when one exists.
+- **The four count-kinds share a structure** (`godId, current, target`); kept as distinct
+  named permits per the engine model (each a versioned kind for future divergence). A
+  shared generic codec helper was tried then reverted to the proven inline
+  `RecordCodecBuilder.mapCodec` (avoiding generics-inference risk on the unbuildable
+  sandbox).
+
+### Out-of-scope but flagged
+
+- **F2a-3** — V3-calling graduation (`DivineVision` issues a real quest instead of a bare
+  `PlayerCalling`; the favour-act hook becomes quest completion) + rich givers
+  (deity/saint/clergy issuance) + the giver-standing / player-religious-career layer.
+- **F2b** — re-seat the legacy guild quest system onto this base.
+- **Later** — recover-a-stolen/moved-relic quests (needs relic-location tracking); staged/
+  grand quests; a quest journal UI; the proximity sacred-site-reach notify.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the F2a-1 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** (the four notify calls are FQN-split across lines —
+the plain grep confirmed all five sources present) + the exhaustive-switch sweep (clean):
+the engine core is `git diff`-empty vs F2a-1; the three new dispatch arms use the proven
+inline `MAP_CODEC` pattern; the rite verbs' god resolution mirrors the offering source;
+each notify is additive after its action.
+
+### Smoke test (user-runnable)
+
+1. **Rites.** `/quest grant sun_mother rites 3` → `/quest` shows it 0/3 → attend or
+   commission 3 Sunstead rites → advances + completes (favour reward granted).
+2. **Pilgrimage.** `/quest grant sun_mother pilgrimage` → pray at a Sun-Mother saint's
+   grave (`/religion pray` or the relic right-click) → completes.
+3. **Relic.** `/quest grant sun_mother relic` → enshrine a Sun-Mother relic (use it on a
+   block) → completes.
+4. **Non-match.** A rite of a DIFFERENT faith, enshrining a different god's relic, or
+   praying to a different god's saint does NOT advance the quest.
+5. **Unchanged hosts + perf.** Praying / enshrining / rites behave exactly as before
+   (the notify is side-effect-free); no per-tick perf cost was added (no
+   sacred-site-reach tick). Save+reload mid-quest → progress persists.

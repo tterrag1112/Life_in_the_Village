@@ -10,6 +10,12 @@ package tterrag1112.life_in_the_village.Quests;
  * (pilgrimage / relic / rite), and F2b folds in the work/guild vocabulary.</p>
  */
 public enum QuestEventKind {
-    /** The player made an offering to a faith (the proving kind). */
-    OFFERING
+    /** The player made an offering to a faith (F2a-1 proving kind). */
+    OFFERING,
+    /** F2a-2 — the player prayed at a god's sacred site (pilgrimage). */
+    VISIT_SITE,
+    /** F2a-2 — the player enshrined a relic of a god's faith. */
+    ENSHRINE,
+    /** F2a-2 — the player attended or commissioned a rite of a faith. */
+    RITE
 }

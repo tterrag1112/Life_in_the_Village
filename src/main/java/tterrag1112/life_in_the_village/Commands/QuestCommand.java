@@ -38,22 +38,30 @@ public final class QuestCommand {
                                     for (var g : GodRegistry.all()) b.suggest(g.id());
                                     return b.buildFuture();
                                 })
-                                .executes(ctx -> handleGrant(ctx, 3))
-                                .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
+                                .executes(ctx -> handleGrant(ctx, "offering", 3))
+                                .then(Commands.argument("kind", StringArgumentType.word())
+                                        .suggests((c, b) -> {
+                                            for (String k : QuestIssuer.KINDS) b.suggest(k);
+                                            return b.buildFuture();
+                                        })
                                         .executes(ctx -> handleGrant(ctx,
-                                                IntegerArgumentType.getInteger(ctx, "count")))))));
+                                                StringArgumentType.getString(ctx, "kind"), 3))
+                                        .then(Commands.argument("count", IntegerArgumentType.integer(1, 64))
+                                                .executes(ctx -> handleGrant(ctx,
+                                                        StringArgumentType.getString(ctx, "kind"),
+                                                        IntegerArgumentType.getInteger(ctx, "count"))))))));
     }
 
-    private static int handleGrant(CommandContext<CommandSourceStack> ctx, int count) {
+    private static int handleGrant(CommandContext<CommandSourceStack> ctx, String kind, int count) {
         CommandSourceStack src = ctx.getSource();
         ServerLevel level = src.getLevel();
         ServerPlayer player = src.getPlayer();
         if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
         String godId = StringArgumentType.getString(ctx, "god");
-        Quest q = QuestIssuer.grantOfferingQuest(level, player, godId, count);
+        Quest q = QuestIssuer.grant(level, player, godId, kind, count);
         if (q == null) {
-            src.sendFailure(Component.literal("Unknown god " + godId
-                    + " (try sun_mother / the_pattern / sea_mother / forge_father)"));
+            src.sendFailure(Component.literal("Unknown god '" + godId + "' or kind '" + kind
+                    + "' (kinds: offering / pilgrimage / relic / rites)"));
             return 0;
         }
         src.sendSuccess(() -> Component.literal("§aIssued: " + q.title()), false);

@@ -81,6 +81,13 @@ public final class AttendRiteVerb implements PlayerVerb {
                 tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.ATTEND_RITE,
                 ctx.level().getGameTime(), ctx.player().blockPosition());  // S1b — sacred at the rite venue
 
+        // F2a-2 — attending a rite advances any PerformRites objective for the faith's god.
+        String attendedGod = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                .primaryGod(tterrag1112.life_in_the_village.Npc.Religion.Religions.get(ctx.level(), targetFaith))
+                .map(tterrag1112.life_in_the_village.Npc.Religion.God::id).orElse(null);
+        tterrag1112.life_in_the_village.Quests.QuestEvents.notify(ctx.player(),
+                tterrag1112.life_in_the_village.Quests.QuestContext.rite(attendedGod, targetFaith));
+
         // R9d payoff — the public act of devotion warms co-religionists present.
         int warmed = PietyPayoff.applyCoReligionistRegard(ctx.level(), ctx.player(),
                 village, vdata, piety.primaryReligion().orElse(null), piety.primaryTier());

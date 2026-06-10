@@ -14,7 +14,9 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
  *
  * <p>F2a-1 ships exactly one kind: {@link MakeOffering} (make N offerings to a god).</p>
  */
-public sealed interface Objective permits Objective.MakeOffering {
+public sealed interface Objective
+        permits Objective.MakeOffering, Objective.VisitSacredSite,
+                Objective.EnshrineRelic, Objective.PerformRites {
 
     /** Stable type tag for the dispatch codec. */
     String type();
@@ -32,7 +34,10 @@ public sealed interface Objective permits Objective.MakeOffering {
 
     /** Dispatch codec over the sealed kinds (one arm in F2a-1; add arms per kind). */
     Codec<Objective> CODEC = Codec.STRING.dispatch("type", Objective::type, t -> switch (t) {
-        case MakeOffering.TYPE -> MakeOffering.MAP_CODEC;
+        case MakeOffering.TYPE    -> MakeOffering.MAP_CODEC;
+        case VisitSacredSite.TYPE -> VisitSacredSite.MAP_CODEC;
+        case EnshrineRelic.TYPE   -> EnshrineRelic.MAP_CODEC;
+        case PerformRites.TYPE    -> PerformRites.MAP_CODEC;
         default -> throw new IllegalStateException("Unknown objective type: " + t);
     });
 
@@ -63,6 +68,69 @@ public sealed interface Objective permits Objective.MakeOffering {
 
         public String describe() {
             return "Make offerings to " + godId + " (" + Math.min(current, target) + "/" + target + ")";
+        }
+    }
+
+    /** F2a-2 — pilgrimage: pray at {@code godId}'s sacred site (a saint grave). Advances
+     *  on a {@link QuestEventKind#VISIT_SITE} event for the god. */
+    record VisitSacredSite(String godId, int current, int target) implements Objective {
+        public static final String TYPE = "visit_sacred_site";
+        public static final MapCodec<VisitSacredSite> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                Codec.STRING.fieldOf("godId").forGetter(VisitSacredSite::godId),
+                Codec.INT.optionalFieldOf("current", 0).forGetter(VisitSacredSite::current),
+                Codec.INT.optionalFieldOf("target", 1).forGetter(VisitSacredSite::target)
+        ).apply(i, VisitSacredSite::new));
+
+        public String type() { return TYPE; }
+        public boolean matches(QuestContext ctx) {
+            return ctx.kind() == QuestEventKind.VISIT_SITE && godId != null && godId.equals(ctx.godId());
+        }
+        public Objective advanced() { return new VisitSacredSite(godId, Math.min(target, current + 1), target); }
+        public boolean isComplete() { return current >= target; }
+        public String describe() {
+            return "Pilgrimage to " + godId + "'s sacred ground (" + Math.min(current, target) + "/" + target + ")";
+        }
+    }
+
+    /** F2a-2 — enshrine {@code target} relic(s) of {@code godId}'s faith. Advances on an
+     *  {@link QuestEventKind#ENSHRINE} event for the god. */
+    record EnshrineRelic(String godId, int current, int target) implements Objective {
+        public static final String TYPE = "enshrine_relic";
+        public static final MapCodec<EnshrineRelic> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                Codec.STRING.fieldOf("godId").forGetter(EnshrineRelic::godId),
+                Codec.INT.optionalFieldOf("current", 0).forGetter(EnshrineRelic::current),
+                Codec.INT.optionalFieldOf("target", 1).forGetter(EnshrineRelic::target)
+        ).apply(i, EnshrineRelic::new));
+
+        public String type() { return TYPE; }
+        public boolean matches(QuestContext ctx) {
+            return ctx.kind() == QuestEventKind.ENSHRINE && godId != null && godId.equals(ctx.godId());
+        }
+        public Objective advanced() { return new EnshrineRelic(godId, Math.min(target, current + 1), target); }
+        public boolean isComplete() { return current >= target; }
+        public String describe() {
+            return "Enshrine a relic of " + godId + " (" + Math.min(current, target) + "/" + target + ")";
+        }
+    }
+
+    /** F2a-2 — perform (attend/commission) {@code target} rites of {@code godId}'s faith.
+     *  Advances on a {@link QuestEventKind#RITE} event for the god. */
+    record PerformRites(String godId, int current, int target) implements Objective {
+        public static final String TYPE = "perform_rites";
+        public static final MapCodec<PerformRites> MAP_CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                Codec.STRING.fieldOf("godId").forGetter(PerformRites::godId),
+                Codec.INT.optionalFieldOf("current", 0).forGetter(PerformRites::current),
+                Codec.INT.optionalFieldOf("target", 1).forGetter(PerformRites::target)
+        ).apply(i, PerformRites::new));
+
+        public String type() { return TYPE; }
+        public boolean matches(QuestContext ctx) {
+            return ctx.kind() == QuestEventKind.RITE && godId != null && godId.equals(ctx.godId());
+        }
+        public Objective advanced() { return new PerformRites(godId, Math.min(target, current + 1), target); }
+        public boolean isComplete() { return current >= target; }
+        public String describe() {
+            return "Perform rites of " + godId + " (" + Math.min(current, target) + "/" + target + ")";
         }
     }
 }
