@@ -2,19 +2,12 @@ package tterrag1112.life_in_the_village.Npc.Religion.Sacred;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Religion.BuildingFaith;
 import tterrag1112.life_in_the_village.Npc.Religion.God;
 import tterrag1112.life_in_the_village.Npc.Religion.GodRegistry;
-import tterrag1112.life_in_the_village.Npc.Religion.Religion;
-import tterrag1112.life_in_the_village.Npc.Religion.Religions;
-import tterrag1112.life_in_the_village.Utilities.PosUtil;
-import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * Sacred Space S1a — the <b>query</b>: how sacred a position is to a god, folding
@@ -65,6 +58,15 @@ public final class SacredSpace {
         return SacrednessTier.classify(sacrednessAt(level, godId, pos));
     }
 
+    /** S1b — the sacred amplifier ({@link SacrednessTier#amplifier()}) for {@code godId}
+     *  at {@code pos}, or <b>1.0 when {@code pos == null}</b> (a non-positional grant —
+     *  today's numbers, unchanged). The one entry the favour + miracle paths call so
+     *  the tier→multiplier mapping is never duplicated. */
+    public static float amplifierAt(ServerLevel level, String godId, BlockPos pos) {
+        if (pos == null) return 1.0f;
+        return tierAt(level, godId, pos).amplifier();
+    }
+
     /**
      * The full breakdown (total + per-source contributions). The single fold home —
      * both {@link #sacrednessAt} and the readout go through here, so the natural /
@@ -89,31 +91,21 @@ public final class SacredSpace {
         float built = builtPotency(level, godId, pos);
         if (built > 0f) { out.add(new Contribution("built", built)); total += built; }
 
-        // 3. (S3 seam) — the decaying theophany imprint layer folds in here:
-        //    float imprint = TheophanyImprints.get(level).potencyAt(godId, pos);
-        //    if (imprint > 0f) { out.add(new Contribution("imprint", imprint)); total += imprint; }
+        // 3. Imprint (S3) — decaying theophany imprints of this god near pos (their
+        //    current decayed strength). The dynamic third source; composes additively
+        //    so every S1b/S2 effect inherits it through sacrednessAt.
+        long now = level.getGameTime();
+        float imprint = SacredSpaceSavedData.get(level).imprintPotency(level, godId, pos, now);
+        if (imprint > 0f) { out.add(new Contribution("imprint", imprint)); total += imprint; }
 
         return new Breakdown(total, out);
     }
 
     /** {@link #BUILT_POTENCY} when a religious building of {@code godId}'s faith sits
-     *  within {@link #BUILT_RADIUS} (horizontal) of {@code pos} in the village that
-     *  contains {@code pos}; else 0. */
+     *  within {@link #BUILT_RADIUS} (horizontal) of {@code pos}; else 0. Delegates to
+     *  the shared god-aware building scan ({@link BuildingFaith#hasBuildingOfGodNear}). */
     private static float builtPotency(ServerLevel level, String godId, BlockPos pos) {
-        VillageSavedData data = VillageSavedData.get(level);
-        Village village = data.getVillageAt(pos).orElse(null);
-        if (village == null) return 0f;
-        PosUtil at = new PosUtil(pos);
-        for (UUID bid : village.getBuildingIds()) {
-            Building b = data.getBuildingById(bid).orElse(null);
-            if (b == null || !BuildingFaith.isReligiousBuilding(b.getType())) continue;
-            if (at.horizontalDistanceTo(b.getShape().getOrigin()) > BUILT_RADIUS) continue;
-            String faith = BuildingFaith.resolveFaith(level, village, b);
-            if (faith == null) continue;
-            Religion r = Religions.get(level, faith);
-            God primary = r == null ? null : GodRegistry.primaryGod(r).orElse(null);
-            if (primary != null && primary.id().equals(godId)) return BUILT_POTENCY;
-        }
-        return 0f;
+        return BuildingFaith.hasBuildingOfGodNear(level, godId, pos, BUILT_RADIUS,
+                BuildingFaith::isReligiousBuilding) ? BUILT_POTENCY : 0f;
     }
 }

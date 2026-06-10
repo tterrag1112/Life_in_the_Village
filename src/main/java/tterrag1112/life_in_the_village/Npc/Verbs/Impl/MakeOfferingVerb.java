@@ -77,7 +77,7 @@ public final class MakeOfferingVerb implements PlayerVerb {
         tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.awardForReligion(
                 ctx.level(), playerId, religionId,
                 tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.OFFERING,
-                ctx.level().getGameTime());
+                ctx.level().getGameTime(), ctx.player().blockPosition());  // S1b — sacred at the offering site
 
         ctx.npc().getRelationships().adjust(playerId, 5);
         // Temple treasury bump — uses the existing per-building economy

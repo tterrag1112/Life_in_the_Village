@@ -46,6 +46,24 @@ public final class DivineTheophany {
     private static final long  COOLDOWN = 168000L;
     private static final int   CHECK_INTERVAL = 200;
 
+    /** S1b — sacred ground EASES the favour-extreme threshold (a theophany is likelier
+     *  at the god's sacred place): the threshold shifts inward by this many favour
+     *  points by sacredness tier. {@link #MAX_SACRED_EASE} bounds the perf-guard
+     *  pre-check (never query sacredness unless the player is within this of the
+     *  extreme). */
+    private static final float SACRED_EASE_MINOR = 8f;
+    private static final float SACRED_EASE_MAJOR = 15f;
+    private static final float MAX_SACRED_EASE   = 15f;
+
+    /** S2 — a holy day eases the favour-extreme threshold further (stacking with the
+     *  sacred-space ease) for the DEVOUT+/PIOUS believer: derived from the (cheap)
+     *  holy-day factor so a PIOUS holy-day shifts the extreme by {@link #MAX_HOLY_EASE},
+     *  a DEVOUT one by half. The holy check is a calendar lookup (no structure query),
+     *  so it is evaluated FIRST and can fire on its own without ever touching the
+     *  structure-backed sacred-space query. */
+    private static final float HOLY_EASE_SCALE = 15f;   // (factor − 1) × scale → PIOUS 15, DEVOUT 7.5
+    private static final float MAX_HOLY_EASE    = 15f;
+
     // ── Trigger (per-player tick; rare + milestone-bounded) ──────────────────
 
     public static void tick(ServerPlayer player) {
@@ -57,17 +75,54 @@ public final class DivineTheophany {
 
         for (God god : GodRegistry.playerGods(level, pid)) {
             float fav = DivineFavour.current(level, pid, god.id(), now);
-            if (fav >= FAVOUR_PEAK
-                    && DivineFavour.tierForGod(level, pid, god.id()) == PietyTier.PIOUS) {
-                if (now - data.getTheophanyTick(pid, god.id() + "|favour") >= COOLDOWN) {
-                    fireFavour(level, player, god, now);
-                }
-            } else if (fav <= WRATH_DEPTH) {
-                if (now - data.getTheophanyTick(pid, god.id() + "|wrath") >= COOLDOWN) {
-                    fireWrath(level, player, god, now);
-                }
+
+            // Favour pole (PIOUS, peak favour). Perf guard: the structure-backed
+            // sacredness query runs ONLY behind the cheap pre-checks AND only when the
+            // (cheap) holy-day ease alone hasn't already crossed the threshold and
+            // sacred space could still close the gap — never unconditionally per tick.
+            if (fav >= FAVOUR_PEAK - MAX_SACRED_EASE - MAX_HOLY_EASE
+                    && DivineFavour.tierForGod(level, pid, god.id()) == PietyTier.PIOUS
+                    && now - data.getTheophanyTick(pid, god.id() + "|favour") >= COOLDOWN) {
+                float ease = holyEase(level, pid, god, now);            // cheap calendar lookup
+                if (fav < FAVOUR_PEAK - ease
+                        && fav >= FAVOUR_PEAK - ease - MAX_SACRED_EASE)
+                    ease += sacredEase(level, player, god);             // (the structure query)
+                if (fav >= FAVOUR_PEAK - ease) { fireFavour(level, player, god, now); continue; }
+            }
+
+            // Wrath pole. Same staged perf guard against the depth threshold.
+            if (fav <= WRATH_DEPTH + MAX_SACRED_EASE + MAX_HOLY_EASE
+                    && now - data.getTheophanyTick(pid, god.id() + "|wrath") >= COOLDOWN) {
+                float ease = holyEase(level, pid, god, now);
+                if (fav > WRATH_DEPTH + ease
+                        && fav <= WRATH_DEPTH + ease + MAX_SACRED_EASE)
+                    ease += sacredEase(level, player, god);
+                if (fav <= WRATH_DEPTH + ease) fireWrath(level, player, god, now);
             }
         }
+    }
+
+    /** Favour-points a holy day eases the extreme by (0 off a holy day / below DEVOUT).
+     *  Cheap (calendar × belief × the god's piety tier) — no structure query — so it
+     *  is evaluated before {@link #sacredEase}. Derived from {@link
+     *  tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime#holyDayFactor}
+     *  so the holy-day bonus has one home. */
+    private static float holyEase(ServerLevel level, UUID pid, God god, long now) {
+        float factor = tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime
+                .holyDayFactor(level, pid, god.id(), now);
+        return (factor - 1f) * HOLY_EASE_SCALE;
+    }
+
+    /** Favour-points the player's sacredness to {@code god} eases the extreme by
+     *  ({@code 0} off sacred ground → unchanged thresholds). Called only behind the
+     *  tick's cheap pre-checks (perf guard). */
+    private static float sacredEase(ServerLevel level, ServerPlayer player, God god) {
+        return switch (tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace
+                .tierAt(level, god.id(), player.blockPosition())) {
+            case NONE  -> 0f;
+            case MINOR -> SACRED_EASE_MINOR;
+            case MAJOR -> SACRED_EASE_MAJOR;
+        };
     }
 
     // ── The two manifestations (public so the debug command can force them) ──
@@ -86,6 +141,12 @@ public final class DivineTheophany {
         player.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 12000, 0));
         // The lasting mark of favour: this GOD's favour pinned to the cap.
         DivineFavour.addCapped(level, player.getUUID(), god.id(), DivineFavour.MAX_FAVOUR, now);
+        // S3 — the glory SANCTIFIES the ground: a decaying sacred imprint at the site
+        // (wrath writes none this stage — profanity is a future option).
+        tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpaceSavedData.get(level)
+                .addImprint(god.id(), player.blockPosition(), now,
+                        tterrag1112.life_in_the_village.Npc.Religion.Sacred
+                                .SacredSpaceSavedData.INITIAL_STRENGTH);
         RiteSavedData.get(level).setTheophanyTick(player.getUUID(), god.id() + "|favour", now);
     }
 

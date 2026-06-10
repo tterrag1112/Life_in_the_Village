@@ -9862,3 +9862,407 @@ are standard 1.21.
    built bonus only (else NONE away from its buildings).
 6. **No effect change.** Confirm favour/miracle/theophany behaviour is identical to
    before (nothing reads the query but the readout).
+
+## Sacred Space S1b — wire the effects (favour / miracle / theophany) (2026-06-10)
+
+S1a built the `SacredSpace.sacrednessAt` query + the per-god rules (no effects). S1b
+makes sacred ground **do something**: a favour grant made in sacred space is
+amplified, miracles come easier there, and a theophany is likelier at a god's sacred
+place. Intentional **behaviour change**, bounded by `SacrednessTier` (tunable);
+NONE / null-position reproduces today's exact numbers. **Completes the sacred-SPACE
+effects.**
+
+### Disposition (investigation)
+
+- **Query (S1a):** `SacredSpace.sacrednessAt/tierAt`, `SacrednessTier {NONE,MINOR,MAJOR}`,
+  per-god resolution. S1b adds the shared `SacrednessTier.amplifier()` (tier→multiplier)
+  + `SacredSpace.amplifierAt(level, godId, pos)` (null-safe).
+- **Favour path:** the multiplier applies in `DivineFavour.awardConcept` after the
+  alignment weight. **No position was in scope** — S1b threads a nullable `BlockPos`
+  via OVERLOADS (existing signatures delegate with `null`). The favour-grant callers
+  that route through `awardConcept` are exactly four (RiteExecutor grants no favour —
+  the grants live in the player-act paths): `MakeOfferingVerb` (OFFERING),
+  `AttendRiteVerb` (ATTEND_RITE), `CommissionRiteVerb` (COMMISSION_RITE) → the
+  player's position; `Tithing` (TITHE) → the temple building's origin (the tithe's
+  venue; the player isn't physically present for the recurring auto-tithe). The V3
+  calling bonus (`addCappedForReligion`) and V4 sacrilege (`offend`) do NOT pass
+  through `awardConcept` → no site, unchanged (a null-location grant is identity).
+- **Miracle gate:** `MiracleInvoker.status`/`cast` — `player.blockPosition()` in scope.
+- **Theophany:** `DivineTheophany.tick` (per-player, every `CHECK_INTERVAL=200`; per-god
+  favour extreme + cooldown). Player pos in scope; the S1a `StructureRule` cost flag
+  means the sacredness query must be guarded behind the cheap pre-checks.
+
+### What shipped
+
+- **Shared sacred-factor helper (one home):** `SacrednessTier.amplifier()` → NONE 1.0,
+  MINOR 1.25, MAJOR 1.5; `SacredSpace.amplifierAt(level, godId, pos)` returns 1.0 when
+  `pos == null`. The favour AND miracle paths both call `amplifierAt` — the
+  tier→multiplier mapping is never duplicated.
+- **Favour (DivineFavour):** added `BlockPos`-carrying OVERLOADS of `award` /
+  `awardVirtue` / `awardForReligion`; the legacy signatures delegate with `null`.
+  `awardConcept` now multiplies the grant by `amplifierAt(level, godId, pos)` after the
+  alignment weight (composes with the 1.5× virtue bonus — two distinct bonuses) and
+  still clamps to the piety cap (sacred amplifies, never bypasses the cap). Four
+  callers updated to pass position (above).
+- **Miracle (MiracleInvoker):** in `status` AND `cast`, the access threshold
+  (`minFavour`) is checked against `favour × amplifierAt(...)` so a near-threshold
+  miracle becomes castable on sacred ground; the **tier gate and the real `cost` spend
+  are unchanged** (sacred eases, never bypasses). `cast` appends a flavour note when
+  the ground is sacred.
+- **Theophany (DivineTheophany):** sacred ground eases the favour-extreme thresholds —
+  the favour-peak drops by `sacredEase` (MINOR 8 / MAJOR 15) and the wrath-depth rises
+  likewise. **Perf guard:** `sacrednessAt` runs ONLY after the cheap pre-checks pass
+  (within `MAX_SACRED_EASE=15` of the extreme, PIOUS for the favour pole, off cooldown)
+  — never unconditionally per tick per player. NONE/non-sacred keeps the exact ±90
+  thresholds.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `SacredSpace.amplifierAt`/`tierAt` (S1a) + the threaded
+   `BlockPos`. Read-only.
+2. **Downstream callers.** Favour grant path (+ its 4 position-aware callers),
+   `MiracleInvoker.status`/`cast`, `DivineTheophany.tick`. **NONE / null = today's exact
+   numbers** (amplifier 1.0; theophany thresholds ±90). Verified the 4 favour callers
+   explicitly (a missed one is a silent no-bonus, not a crash).
+3. **Sibling systems.** Composes cleanly: the sacred multiplier rides on top of the
+   3a alignment bonus + the piety cap; the miracle sacred ease rides on top of the 3b
+   tier gate + cooldown (cost/spend untouched); the theophany ease rides on the
+   existing cooldown/milestone (no double-fire — favour pole `continue`s; the poles are
+   mutually exclusive at the eased thresholds).
+4. **Exhaustive switches.** New `switch (SacrednessTier)` in `SacrednessTier.amplifier`
+   and `DivineTheophany.sacredEase` cover all three arms. No existing enum changed.
+
+### Simplification Sweep
+
+- **One sacred-factor helper** (`SacrednessTier.amplifier()` + `SacredSpace.amplifierAt`)
+  shared by favour + miracle — not duplicated. Theophany uses an additive points ease
+  (a different effect shape, not a multiplier), so it's a separate small mapping, not a
+  duplicate.
+- **No dead old-path:** the favour overloads delegate (legacy 5-arg → 6-arg with
+  `null`); the private `awardConcept` is the single grant body (no parallel path left).
+- **Touched classes:** `SacrednessTier`, `SacredSpace`, `DivineFavour`, `MiracleInvoker`,
+  `DivineTheophany`, `MakeOfferingVerb`, `AttendRiteVerb`, `CommissionRiteVerb`,
+  `Tithing`.
+
+### Deviations from prompt
+
+- **Miracle easing applies to `minFavour` only**, not the spent `cost` (the prompt said
+  "multiply the effective favour read by the gate"): boosting the cost check too would
+  let the gate pass while the real spend fails. Easing the ACCESS threshold and paying
+  the real cost from real favour is the consistent reading of "eases, never bypasses".
+- **Tithe site = the temple origin** (not player pos): the recurring auto-tithe fires
+  with the player anywhere, so the temple it flows to is the meaningful sacred site.
+- Tier-eased theophany uses additive favour-point shifts (MINOR 8 / MAJOR 15) rather
+  than a multiplier — cleaner for a threshold than scaling it.
+
+### Out-of-scope but flagged
+
+- **S2** — sacred TIME / holy-day bonuses (piety-gated; the "highly pious only" gate
+  belongs there, not to sacred space).
+- **S3** — decaying theophany **imprints** (a new BlockPos-keyed SavedData) folded as
+  the third `sacrednessAt` source (the commented seam in `SacredSpace.explain`).
+- **Future** — holy-city / sacred-kingdom contributor, worldgen shrine-spawn.
+- `addCappedForReligion` (calling bonus) + `offend` (sacrilege) stay non-positional by
+  design — no sacred amplification on the calling bonus or on displeasure.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the S1a tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** (the F1b two-line-straggler lesson): all four
+`DivineFavour.awardForReligion` call sites now pass the 6th `BlockPos` arg; no external
+`award`/`awardVirtue`/`awardConcept` caller exists on a stale signature; the favour
+overloads delegate (legacy callers compile unchanged); `MiracleInvoker` imports
+`SacredSpace`; `DivineTheophany` references it by FQN; the amplifier switch and the
+theophany ease switch are 3-arm exhaustive; NONE/null reproduces the prior numbers.
+
+### Smoke test (user-runnable)
+
+1. **Favour scales with the readout's tier.** Offer to the Sea-Mother in open ocean
+   (`/religion sacred sea_mother` MINOR) vs on an ocean monument (MAJOR) — the favour
+   gain is ~1.25× vs ~1.5× the flat-ground base; on non-sacred ground it equals today's
+   base (unchanged), and still clamps at the piety cap.
+2. **Miracle eases on sacred ground.** On a mountaintop (Forge-Father sacred), a
+   near-`minFavour` miracle that read LOCKED on flat ground becomes AVAILABLE
+   (`/religion miracle list` reflects it) and casts; the tier gate and the favour spent
+   are unchanged; off sacred ground it's locked as before.
+3. **Theophany likelier in sacred space.** Drive Sun-Mother favour into the 75–90 band
+   under open sky at midday (her sacred space) and confirm a glory theophany can fire
+   there that would NOT underground/at night (where the threshold stays 90).
+4. **Perf guard.** Confirm no per-tick structure-lookup spam / FPS dip — the theophany
+   tick only queries sacredness for a near-extreme, off-cooldown player.
+5. **Null-location unchanged.** A sacrilege `offend` (no site) and the V3 calling bonus
+   behave exactly as before (no sacred factor).
+
+## Sacred Time S2 — holy-day bonuses (2026-06-10)
+
+The temporal mirror of sacred space. On a faith's **holy day**, its devout gain
+heightened favour, eased miracles, and a likelier theophany; a rite at a sacred place
+ON a holy day is the peak of contact (space × time compound). The deliberate contrast
+with sacred SPACE — which any believer feels — is that sacred TIME rewards the
+**highly pious** (no bonus below DEVOUT). Bounded, piety-tier-keyed; a non-holy-day or
+sub-DEVOUT player sees today's exact numbers. **Completes sacred TIME.**
+
+### Disposition (investigation)
+
+- **Holy-day query:** `ReligiousCalendar.isHolyDay(dayOfYear)` over the per-religion
+  holy-day map; `CalendarView.dayOfYear(gameTime)` on the `% 365` axis. Holy days live
+  on the RELIGION; favour/miracle/theophany are per-GOD → resolution: today is a holy
+  day for god G (for this player) iff a religion the player BELIEVES IN that VENERATES
+  G has a holy day today (`GodRegistry.religionsVenerating(level, godId)` ∩
+  `piety.beliefs()` ∩ `calendar().isHolyDay`).
+- **Piety gate:** `DivineFavour.tierForGod(level, playerId, godId)` → `PietyTier`
+  {UNAFFILIATED, FAITHFUL, DEVOUT, PIOUS}. Gate at DEVOUT.
+- **Hook points (S1b):** the space amplifier lives in `DivineFavour.awardConcept`
+  (per-god, has level/playerId/godId/now), `MiracleInvoker.status`/`cast`, and
+  `DivineTheophany.tick`. The time factor composes (multiplies) with it at each.
+
+### What shipped
+
+- **`SacredTime`** (new, `Npc/Religion/Sacred/`) — the single home, mirroring
+  `SacredSpace`'s amplifier shape:
+  - `isHolyDay(level, pid, godId, now)` — the pure calendar × belief × veneration
+    resolution (no tier gate), public so the theophany ease + the readout share it.
+  - `holyDayFactor(level, pid, godId, now)` → 1.0 off a holy day OR below DEVOUT;
+    **DEVOUT 1.5, PIOUS 2.0** (`factorForTier`, a 4-arm `PietyTier` switch).
+- **Favour** — `awardConcept` now multiplies the grant by
+  `SacredTime.holyDayFactor` alongside the S1b space amplifier:
+  `base × align × space × time`, still clamped to the piety cap (amplifies within
+  standing, never bypasses). All award paths inherit it (one site).
+- **Miracle** — `status` + `cast` fold the holy-day factor into the effective favour
+  the `minFavour` gate reads, compounding with the space amplifier; the tier gate and
+  the real `cost` spend are unchanged. `cast`'s eased-flavour line distinguishes a
+  holy-day ease from a sacred-ground one.
+- **Theophany** — a holy day eases the favour-extreme threshold further (stacking with
+  the S1b sacred-space ease), derived from `holyDayFactor` (PIOUS 15 / DEVOUT 7.5
+  points). **Perf discipline kept + tightened:** the holy ease is a CHEAP calendar
+  lookup evaluated first; the structure-backed `sacredEase` runs only behind the cheap
+  pre-checks AND only in a bounded 15-wide band where sacred space could still close
+  the gap (so a non-holy day keeps the S1b 75–90 structure-query band; a holy day adds
+  a 60–75 band only). NONE/off-holy keeps the exact ±90 thresholds.
+- **Surfacing** — `/religion favour view` flags `☀ HOLY DAY` on each god whose holy day
+  is today (a believed venerating faith); a light, contained text addition (no GUI/
+  packet change).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligiousCalendar.isHolyDay` + `CalendarView.dayOfYear`
+   (holy day), `GodRegistry.religionsVenerating` (god→religions), `tierForGod` (gate),
+   `PietyComponent.beliefs` — all read-only.
+2. **Downstream callers.** Favour (`awardConcept`), `MiracleInvoker.status`/`cast`,
+   `DivineTheophany.tick`, the readout. **Non-holy-day / sub-DEVOUT = `holyDayFactor`
+   1.0 = today's exact numbers** (favour grant, miracle gate, ±90 theophany).
+3. **Sibling systems.** Composes with S1b sacred space MULTIPLICATIVELY (space × time)
+   — no double-count: space reads position, time reads the calendar, distinct inputs.
+   The favour cap still bounds the compound; the miracle tier gate + cost and the
+   theophany cooldown/milestone are untouched (no double-fire).
+4. **Exhaustive switches.** `SacredTime.factorForTier` covers all four `PietyTier`
+   arms; the theophany derives its ease from the factor (no separate tier switch). No
+   existing enum changed.
+
+### Simplification Sweep
+
+- **One home:** `SacredTime.holyDayFactor` (the bonus) over `SacredTime.isHolyDay` (the
+  god→religion resolution); favour, miracle, AND theophany all call `holyDayFactor`
+  (theophany derives its additive ease from it), and the readout calls `isHolyDay`. No
+  per-consumer reimplementation of the calendar/belief/veneration check.
+- **No dead path** — the time factor rides the existing S1b sites (no parallel grant/
+  gate path).
+- **Touched classes:** `SacredTime` (new), `DivineFavour`, `MiracleInvoker`,
+  `DivineTheophany`, `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **Favour time factor applied in `awardConcept`** (the per-god grant body), not at
+  `awardForReligion`: `awardConcept` already has level/playerId/godId/now and is the
+  single site where the space amplifier lives, so both bonuses compose in one place
+  and every award path inherits it uniformly. The general `holyDayFactor(godId)`
+  resolution (believed venerating religion has a holy day) makes the specific
+  `religionId` unnecessary.
+- **Theophany ease derived from `holyDayFactor`** ((factor−1)×scale) rather than a
+  second tier switch — keeps the holy-day bonus's one home and mirrors how S1b's
+  `sacredEase` is a small local mapping.
+- **Surfacing via `/religion favour view`** (a per-god flag) rather than the GUI
+  calendar — lightest contained change, no packet/screen churn (the prompt allowed
+  "a line in the /religion readout").
+
+### Out-of-scope but flagged
+
+- **S3** — decaying theophany **imprints** (a new BlockPos-keyed SavedData) as the
+  third `sacrednessAt` fold-source (`SacredSpace.explain`'s commented seam).
+- **Future** — NPC holy-day observance / festivals (this is the player-side
+  favour/miracle/theophany bonus only), holy-city contributor, worldgen shrine-spawn.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the S1b tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** (the F1b lesson): every `SacredTime` reference
+resolves (4 `holyDayFactor` call sites + 1 `isHolyDay` readout + the theophany FQN
+use); `factorForTier` is a 4-arm `PietyTier` switch; non-holy/sub-DEVOUT reproduces the
+prior numbers; the theophany structure-query band is unchanged on non-holy days.
+
+### Smoke test (user-runnable)
+
+1. **Favour scales with tier on a holy day.** On a Sunstead holy day (`/time set` to
+   its day-of-year), a PIOUS Sunstead player's offering grants ~2× the base; a DEVOUT
+   one ~1.5×; a FAITHFUL one sees NO holy-day bonus; a non-holy day grants today's base
+   (and all still clamp at the piety cap).
+2. **Miracle eases for the devout on a holy day.** A near-`minFavour` Sun-Mother
+   miracle that read locked becomes AVAILABLE/ castable for a DEVOUT+ player on the
+   holy day (`/religion miracle list` reflects it); the tier gate + cost are unchanged;
+   a sub-DEVOUT player is unaffected.
+3. **Space × time compound.** Stand in the Sun-Mother's sacred space (open sky, day) ON
+   her holy day as a PIOUS player — favour compounds (space × time, e.g. ~1.25–1.5 ×
+   2.0) and a theophany is at its likeliest (both eases stack).
+4. **Surfacing.** `/religion favour view` shows `☀ HOLY DAY` against the right god on
+   its holy day.
+5. **No regression / perf.** A sub-DEVOUT player, a non-believer, and any non-holy day
+   behave exactly as before; confirm no per-tick structure-lookup spam (the holy check
+   is a cheap calendar lookup; the sacred query stays behind the staged guard).
+
+## Sacred Space S3 — decaying theophany imprints (the dynamic third source) (2026-06-10)
+
+The capstone of the sacred-space layer and the first **location-tied, persisted**
+divine state in the mod. A glory theophany **sanctifies the ground where it occurs** —
+a sacred **imprint** that **decays over time**, its decay **slowed by a nearby player
+SHRINE** of the god's faith, its strength **raised by nearby rites**. The loop the
+design built toward: a divine event makes a place holy for a while; the player keeps it
+holy with a shrine + rites; neglect lets it fade. It folds into
+`SacredSpace.sacrednessAt` as the **third source**, so every S1b/S2 effect inherits it
+automatically. **Completes the Sacred Space + Sacred Time layer.**
+
+### Disposition (investigation)
+
+- **SavedData idiom:** `GraveyardSavedData` / `RiteSavedData` — own `SavedDataType` +
+  storage name, a codec over the collection (list rebuilt to a map in `fromCodec`),
+  `get(level)` via `computeIfAbsent`, `markDirty`. The new store is imprint-keyed.
+- **Fold seam:** the commented S3 spot in `SacredSpace.explain` — the imprint source
+  ADDS the summed current strength of the god's nearby imprints.
+- **Write point:** `DivineTheophany.fireFavour` (god + player + level + now → the
+  player's BlockPos is the site). **Glory only** — `fireWrath` writes nothing
+  (profanity is a future option).
+- **Refresh point:** `RiteExecutor.runOne` after a SUCCESSFUL rite (`gatheringLocation`
+  + `religionId` → `godsFor`). Rites RAISE existing imprints; they do not seed new ones.
+- **Shrine detection:** a `SHRINE` of the god's faith near the imprint — the same
+  god-aware building scan the built source already does.
+- **Lazy decay:** `DivineFavour`'s relax-on-read precedent — store `(anchorStrength,
+  anchorTick)`, compute current on query; no per-tick scan.
+
+### Model + decisions
+
+- **`SacredSpaceSavedData`** (new, `Npc/Religion/Sacred/`, storage
+  `life_in_the_village_sacred_imprints`) — `Map<String, Imprint>` keyed by
+  `godId@pos.asLong()`. **`Imprint`** = `(godId, pos, bornTick, anchorStrength,
+  anchorTick)` with its own codec (`BlockPos.CODEC` etc.); the store's codec is a
+  `listOf().optionalFieldOf` rebuilt to the map (the Graveyard idiom).
+- **Decay (lazy, shrine-slowed):** linear to 0 over `LIFETIME_TICKS` (6 in-game days)
+  from `anchorStrength` at `anchorTick`; a same-faith `SHRINE` within `SHRINE_SLOW_RADIUS`
+  multiplies the lifetime ×`SHRINE_LIFETIME_MULT` (3) — checked at read time. Computed in
+  `currentStrength`; **pruned lazily** when it reaches 0 on access (no global scan).
+- **Create:** `addImprint(godId, pos, now, INITIAL_STRENGTH=2.0)` — MAJOR-tier so a
+  fresh theophany site reads strongly sacred.
+- **Refresh:** `refreshNear(godId, pos, now)` raises imprints of that god within
+  `REFRESH_RADIUS` toward `STRENGTH_CAP=3.0` by `RITE_BOOST=0.5` and resets the anchor.
+- **Query:** `imprintPotency(level, godId, pos, now)` = summed current strength of the
+  god's imprints within `IMPRINT_RADIUS` (24). Short-circuits O(1) when the map is empty
+  (the common case — theophanies are rare).
+- **Shared scan (de-dup):** added `BuildingFaith.hasBuildingOfGodNear(level, godId, pos,
+  radius, typeFilter)` — the ONE god-aware building-near-position scan; the **built**
+  source (`isReligiousBuilding` filter) and the imprint **shrine-slow** (`SHRINE` filter)
+  both use it. `SacredSpace.builtPotency` was refactored onto it (removing its duplicate
+  scan).
+
+### What shipped
+
+- New: `SacredSpaceSavedData` (+ nested `Imprint`).
+- `SacredSpace.explain` — the S3 seam is **filled** (imprint contribution added to the
+  natural + built sum); `builtPotency` delegates to the shared scan.
+- `BuildingFaith.hasBuildingOfGodNear` — the shared scan.
+- `DivineTheophany.fireFavour` — writes the imprint (glory only).
+- `RiteExecutor.runOne` — refreshes nearby same-god imprints on a successful, located
+  rite.
+- `/religion sacred` — auto-shows the `imprint` contribution (via `explain`) and flags
+  `(shrine-tended)` when a shrine is slowing it.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `DivineTheophany.fireFavour` (creates), `RiteExecutor`
+   (refreshes), `BuildingFaith`/SHRINE (slows decay), `GodRegistry`/`Religions` (god
+   resolution) — all confirmed.
+2. **Downstream callers.** `SacredSpace.sacrednessAt`/`explain` (the fold) → every S1b
+   favour/miracle/theophany and S2 holy-day effect inherits imprints with **no extra
+   wiring**. No double-count: natural (rules), built (buildings), imprint (theophany
+   sites) are distinct sources summed once. The `/religion sacred` readout.
+3. **Sibling systems.** `GraveyardSavedData`/`RiteSavedData` — sibling SavedData, the
+   new store has a distinct storage name (`…_sacred_imprints`) so they coexist in
+   separate `.dat` files. The per-player theophany ledger (cooldown milestone, in
+   `RiteSavedData`) is separate player-state; the imprint is WORLD-state — not conflated.
+4. **Exhaustive switches.** None added (reused `SacrednessTier`). Confirmed.
+
+### Simplification Sweep
+
+- **One store** (`SacredSpaceSavedData`), **one decay helper** (`currentStrength`,
+  lazy/read-time), **one fold point** (`SacredSpace.explain`). The **S1a seam is now
+  filled**, not left dangling.
+- **Shrine/building detection de-duplicated:** the new `BuildingFaith.hasBuildingOfGodNear`
+  is the single god-aware scan; `SacredSpace.builtPotency` (built source) and the imprint
+  shrine-slow both call it — and `SacredSpace` shed its own copy of the scan (and the now-
+  unused `VillageSavedData`/`Village`/`Building`/`PosUtil`/`Religion`/`Religions` imports).
+- **Touched classes:** `SacredSpaceSavedData` (new), `SacredSpace`, `BuildingFaith`,
+  `DivineTheophany`, `RiteExecutor`, `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **Lazy prune only** (on access) — no separate periodic sweep added; theophanies are
+  rare so the map stays tiny and read-time pruning suffices (a periodic sweep can be
+  added if a world ever accrues many).
+- **Linear decay** (not exponential) — matches the prompt's "decay toward 0 over a
+  lifetime L" most directly and makes the shrine's lifetime-multiplier intuitive.
+- **`refreshNear` takes `level`** (to evaluate the shrine-slow when computing the
+  current strength it raises from) — a small signature detail; no caller churn (one
+  caller, `RiteExecutor`).
+- Captured `religionId` into a `final faithId` in `RiteExecutor.runOne` for the refresh
+  lambda (it is reassigned earlier, so not effectively final) — a local fix, no
+  behaviour change.
+
+### Out-of-scope but flagged
+
+- **Wrath / profanity imprints** (negative sacredness) — glory only this stage;
+  `fireWrath` writes nothing. The store + fold could carry a signed strength later.
+- **NPC-side** imprint creation / NPC holy-day observance + festivals.
+- **Holy-city / sacred-kingdom** contributor; **worldgen** shrine-spawn.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the S2 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep**: all `SacredSpaceSavedData` / `hasBuildingOfGodNear`
+/ `addImprint` / `refreshNear` / `imprintPotency` / `isShrineTended` references resolve;
+the `Imprint` codec is a 5-field record (BlockPos.CODEC + 2 long + 1 float + 1 string),
+under the cap; `fromCodec` is a 1-arg Function matching the single group field; the
+fold short-circuits O(1) when no imprints exist; the empty-store default means pre-S3
+saves load clean. **Caught locally-only bug class:** `religionId` non-effectively-final
+capture (fixed) — exactly what the qualifier/closure grep + a careful read surface when
+javac can't run here.
+
+### Smoke test (user-runnable)
+
+1. **Theophany sanctifies ground.** On ordinary ground, force a Sun-Mother glory
+   theophany (`/religion theophany favour sun_mother`) → `/religion sacred sun_mother`
+   there now reads MAJOR with an `imprint +2.0`, and an offering there gets the sacred
+   favour multiplier.
+2. **Decay.** Advance time (`/time add`) and re-check — the imprint strength drops, then
+   `/religion sacred` reads NONE once it prunes (~6 days bare).
+3. **Shrine slows decay.** Repeat, build a `SHRINE` of the faith within ~32 blocks →
+   `/religion sacred` shows `imprint … (shrine-tended)` and the decay is slower (×3
+   lifetime).
+4. **Rites refresh.** Hold a rite of the faith near the imprint → its strength rises
+   (toward 3.0) and its clock resets.
+5. **Glory only / rites don't seed.** A wrath theophany leaves no sacred imprint; a
+   routine rite on un-imprinted ground creates none.
+6. **Persistence + perf.** Save+reload → imprints persist; confirm no per-tick spam
+   (decay is read-time; the fold is O(1) when no imprints exist).
