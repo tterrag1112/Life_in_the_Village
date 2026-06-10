@@ -83,7 +83,10 @@ public final class DivineFavour {
         ATTEND_RITE    (4f, null),
         COMMISSION_RITE(6f, FaithConcept.GENEROSITY),
         PILGRIMAGE     (12f, null),
-        VIRTUE         (5f, null);
+        VIRTUE         (5f, null),
+        // SR3 — a player's intercession prayer at a saint's grave (modest; amplified
+        // by the grave's sacred imprint via the position-aware favour grant).
+        PRAYER         (8f, null);
 
         final float base;
         final FaithConcept concept;

@@ -63,7 +63,8 @@ public class SaintsSavedData extends SavedData {
      */
     public record Saint(UUID saintId, String name, String religionId, String godId,
                         FaithConcept virtue, String epitaph, boolean martyr, boolean canonized,
-                        long deathTick, BlockPos gravePos, int saintDay, Optional<String> relicId) {
+                        long deathTick, BlockPos gravePos, int saintDay, Optional<String> relicId,
+                        int veneration) {
         public static final Codec<Saint> CODEC = RecordCodecBuilder.create(i -> i.group(
                 UUID_STRING.fieldOf("saintId").forGetter(Saint::saintId),
                 Codec.STRING.fieldOf("name").forGetter(Saint::name),
@@ -76,8 +77,17 @@ public class SaintsSavedData extends SavedData {
                 Codec.LONG.fieldOf("deathTick").forGetter(Saint::deathTick),
                 BlockPos.CODEC.fieldOf("gravePos").forGetter(Saint::gravePos),
                 Codec.INT.optionalFieldOf("saintDay", -1).forGetter(Saint::saintDay),
-                Codec.STRING.optionalFieldOf("relicId").forGetter(Saint::relicId)
+                Codec.STRING.optionalFieldOf("relicId").forGetter(Saint::relicId),
+                // SR3 — grassroots veneration accrued by player prayer (drives a
+                // Venerable's popular elevation). 0 for a clergy/auto canonization.
+                Codec.INT.optionalFieldOf("veneration", 0).forGetter(Saint::veneration)
         ).apply(i, Saint::new));
+
+        /** A copy of this saint with {@code veneration} replaced. */
+        public Saint withVeneration(int v) {
+            return new Saint(saintId, name, religionId, godId, virtue, epitaph, martyr,
+                    canonized, deathTick, gravePos, saintDay, relicId, v);
+        }
     }
 
     public static final SavedDataType<SaintsSavedData> TYPE = new SavedDataType<>(
@@ -87,17 +97,24 @@ public class SaintsSavedData extends SavedData {
                     LivingSaint.CODEC.listOf().optionalFieldOf("livingSaints", List.of())
                             .forGetter(d -> new ArrayList<>(d.living.values())),
                     Saint.CODEC.listOf().optionalFieldOf("saints", List.of())
-                            .forGetter(d -> new ArrayList<>(d.saints.values()))
+                            .forGetter(d -> new ArrayList<>(d.saints.values())),
+                    // SR3 — per-player/per-saint last-prayer tick ("playerId|saintId" → tick).
+                    Codec.unboundedMap(Codec.STRING, Codec.LONG)
+                            .optionalFieldOf("prayerCooldowns", Map.of())
+                            .forGetter(d -> Map.copyOf(d.prayerCooldowns))
             ).apply(i, SaintsSavedData::fromCodec)));
 
     /** beingId → its living-saint status (a being is the Holy of at most one god). */
     private final Map<UUID, LivingSaint> living = new LinkedHashMap<>();
     /** saintId → its canonized record OR a pending Venerable ({@code canonized=false}). */
     private final Map<UUID, Saint> saints = new LinkedHashMap<>();
+    /** SR3 — "playerId|saintId" → the tick that pair last prayed (per-saint/day gate). */
+    private final Map<String, Long> prayerCooldowns = new LinkedHashMap<>();
 
     public SaintsSavedData() {}
 
-    private static SaintsSavedData fromCodec(List<LivingSaint> loaded, List<Saint> loadedSaints) {
+    private static SaintsSavedData fromCodec(List<LivingSaint> loaded, List<Saint> loadedSaints,
+                                             Map<String, Long> cooldowns) {
         SaintsSavedData d = new SaintsSavedData();
         if (loaded != null) for (LivingSaint s : loaded) {
             if (s != null) d.living.put(s.beingId(), s);
@@ -105,6 +122,7 @@ public class SaintsSavedData extends SavedData {
         if (loadedSaints != null) for (Saint s : loadedSaints) {
             if (s != null) d.saints.put(s.saintId(), s);
         }
+        if (cooldowns != null) d.prayerCooldowns.putAll(cooldowns);
         return d;
     }
 
@@ -198,6 +216,42 @@ public class SaintsSavedData extends SavedData {
     public void putSaint(Saint s) {
         if (s == null) return;
         saints.put(s.saintId(), s);
+        setDirty();
+    }
+
+    /** The nearest saint/Venerable whose grave is within {@code radius} (horizontal) of
+     *  {@code pos} — the SR3 prayer target. Canonized and Venerable both qualify. */
+    public Optional<Saint> nearestSaintGrave(BlockPos pos, int radius) {
+        if (pos == null) return Optional.empty();
+        Saint best = null;
+        double bestD = Double.MAX_VALUE;
+        for (Saint s : saints.values()) {
+            double dx = pos.getX() - s.gravePos().getX();
+            double dz = pos.getZ() - s.gravePos().getZ();
+            double d = Math.sqrt(dx * dx + dz * dz);
+            if (d <= radius && d < bestD) { best = s; bestD = d; }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    // ── Prayer cooldown (SR3) ────────────────────────────────────────────────
+
+    private static String prayKey(UUID playerId, UUID saintId) {
+        return playerId + "|" + saintId;
+    }
+
+    /** True when {@code playerId} may pray to {@code saintId} now (≥ {@code cooldown}
+     *  ticks since their last prayer to this saint). */
+    public boolean canPray(UUID playerId, UUID saintId, long now, long cooldown) {
+        if (playerId == null || saintId == null) return false;
+        Long last = prayerCooldowns.get(prayKey(playerId, saintId));
+        return last == null || now - last >= cooldown;
+    }
+
+    /** Stamps {@code playerId}'s prayer to {@code saintId} at {@code now}. */
+    public void recordPrayer(UUID playerId, UUID saintId, long now) {
+        if (playerId == null || saintId == null) return;
+        prayerCooldowns.put(prayKey(playerId, saintId), now);
         setDirty();
     }
 

@@ -118,6 +118,15 @@ public final class Canonization {
         }
     }
 
+    /** SR3 — elevate a Venerable to a canonized saint by POPULAR devotion (the
+     *  veneration threshold), running the same tie-in routine as the clergy/auto paths.
+     *  No-op if already canonized. */
+    public static void canonizeVenerable(ServerLevel level, SaintsSavedData.Saint v, long now) {
+        if (v == null || v.canonized()) return;
+        canonizeNow(level, v.saintId(), v.name(), v.religionId(), v.godId(),
+                v.martyr(), v.deathTick(), v.gravePos(), now);
+    }
+
     private static boolean hasHighPriestOfFaith(ServerLevel level, VillageSavedData data, String faith) {
         for (Village v : data.getAllVillages()) {
             if (BuildingFaith.hasSeatedPriestOfFaith(level, v, faith)) return true;
@@ -152,7 +161,7 @@ public final class Canonization {
                 + (martyr ? "Martyr" : "Saint") + " of " + godName + ".";
         int saintDay = canonized ? freeSaintDay(level, faith, deathTick) : -1;
         return new SaintsSavedData.Saint(id, name, faith, godId, virtue, epitaph, martyr,
-                canonized, deathTick, gravePos, saintDay, Optional.empty());
+                canonized, deathTick, gravePos, saintDay, Optional.empty(), 0);
     }
 
     /** The four reuse tie-ins (one routine — both auto-canonize and elevation call it). */

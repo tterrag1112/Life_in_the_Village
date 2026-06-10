@@ -181,6 +181,10 @@ public final class ReligionDebugCommand {
                 // Saints & Relics SR1 — list the living saints (holy people) per god.
                 .then(Commands.literal("saints")
                         .executes(ReligionDebugCommand::handleSaints))
+
+                // Saints & Relics SR3 — pray for a saint's intercession at their grave.
+                .then(Commands.literal("pray")
+                        .executes(ReligionDebugCommand::handlePray))
         );
     }
 
@@ -363,11 +367,29 @@ public final class ReligionDebugCommand {
             sb.append(String.format(Locale.ROOT, "%n§e--- Venerable (awaiting a high priest) (%d) ---",
                     venerables.size()));
             for (var s : venerables) {
-                sb.append(String.format(Locale.ROOT, "%n  §7%s — Venerable of %s", s.name(), s.religionId()));
+                sb.append(String.format(Locale.ROOT, "%n  §7%s — Venerable of %s §8(veneration %d/%d)",
+                        s.name(), s.religionId(), s.veneration(),
+                        tterrag1112.life_in_the_village.Npc.Religion.Saints.Intercession
+                                .VENERATION_THRESHOLD));
             }
         }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // ── /religion pray (Saints & Relics SR3) ────────────────────────────────
+
+    /** Prays for the intercession of the saint whose grave the player stands at. */
+    private static int handlePray(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        var result = tterrag1112.life_in_the_village.Npc.Religion.Saints.Intercession
+                .pray(level, player, level.getGameTime());
+        if (!result.ok()) { src.sendFailure(Component.literal(result.message())); return 0; }
+        src.sendSuccess(() -> Component.literal("§d" + result.message()), false);
         return 1;
     }
 
