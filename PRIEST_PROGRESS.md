@@ -10781,3 +10781,499 @@ args). One NeoForge API to watch on the user's build: `ItemEntity.setUnlimitedLi
 5. **Tangible + bounded.** Drop / pick up / give the relic freely; confirm no runaway
    favour (cooldown holds; carried + sacred amplifiers are capped). Save+reload → the
    relic component, `relicId`, and the enshrined imprint persist.
+
+## F2 — F2a-1: the quest engine (base + pluggable objective + one proving kind) (2026-06-10)
+
+The first foundation stage of the unified quest base. F2a-1 builds the ENGINE — the
+quest model, the pluggable `Objective` (fixing the mod's biggest quest gap: completion
+is currently hardcoded per type across separate listeners), a per-player store, and the
+full lifecycle — proven end-to-end by ONE religious objective kind. Additive: the legacy
+guild quest system is untouched (it re-seats onto this base in F2b).
+
+### Disposition (investigation)
+
+- **Offering source:** `MakeOfferingVerb` makes the offering + `awardForReligion(...
+  OFFERING...)` with `ctx.player()` (ServerPlayer) + `ctx.level()` (ServerLevel) in
+  scope — the one `QuestEvents.notify` source.
+- **SavedData idiom:** `RiteSavedData`/`SacredSpaceSavedData` → new `QuestSavedData`
+  (per-player; `unboundedMap(playerId, Quest.CODEC.listOf())`).
+- **Reward hooks:** `DivineFavour.addCapped` (favour, within standing);
+  `BuiltInRegistries.ITEM` + `player.getInventory().add` (items). ServerPlayer + level in
+  scope at completion (the notify carries the player).
+- **Guild Quest:** `Guilds.Adventurer.Quest` — NOT touched; the new base is a separate
+  package (`Quests/`), re-seated in F2b.
+
+### What shipped (the engine, in a new `Quests/` package)
+
+- **`Quest`** record `(questId, giver, title, description, objectives [ordered N],
+  status, rewards, scope, deadlineTick)` + codec + `allComplete`/`withObjectives`/
+  `withStatus`. `Quest.Scope{PLAYER}`. F2a-1 completion = ALL objectives done (no
+  sequential gating — the list supports N, gating is later).
+- **`Objective`** — the extension point: a sealed interface (one kind in F2a-1:
+  `MakeOffering(godId, current, target)`) with `matches(QuestContext)` / `advanced()` /
+  `isComplete()` / `describe()` and a **dispatch codec** (`Codec.STRING.dispatch("type",
+  …)`). Adding a kind = a `permits` entry + a `MAP_CODEC` arm; no engine change.
+- **`QuestEventKind{OFFERING}`** + **`QuestContext(kind, godId, religionId)`** — the
+  notify payload (the source resolves the god so the matcher needs no world lookup).
+- **`QuestReward`** — sealed + dispatch-coded: `Favour(godId, amount)` (via `addCapped`)
+  and `Items(itemId, count)` (registry lookup → inventory/drop).
+- **`QuestGiver(Type{DIVINE,GUILD,NPC,KINGDOM}, id)`**; **`QuestStatus{OFFERED, ACTIVE,
+  COMPLETED, FAILED, ABANDONED}`**.
+- **`QuestSavedData`** — per-player quests (`questsOf`/`active`/`add`/`replace`).
+- **`QuestEvents.notify(player, ctx)`** — **THE single completion path**: advance every
+  matching objective on the player's active quests; on `allComplete` → COMPLETED + grant
+  rewards + feedback; replace + markDirty. The whole point — one hook, many kinds,
+  replacing the per-type-listener anti-pattern.
+- **Source wired:** `MakeOfferingVerb` calls `QuestEvents.notify(player,
+  QuestContext.offering(primaryGodOf(religion), religionId))` after the offering —
+  side-effect-free on the offering itself.
+- **`QuestIssuer.grantOfferingQuest`** (the deity-issuance stub) + **`/quest`** command
+  (`grant <god> [count]` → issues the proving quest; bare `/quest` → lists active quests
+  with objective progress + completed count).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The offering act (the one `notify` source); `DivineFavour`
+   (favour reward); `BuiltInRegistries.ITEM` (item reward). Confirmed.
+2. **Downstream callers.** `QuestSavedData` (store), the reward grant, the `/quest`
+   readout. **The guild quest system is not referenced** by any `Quests/` class (only a
+   javadoc cross-reference).
+3. **Sibling systems.** The legacy guild `Quest` — separate + untouched (F2b re-seats).
+   The religion offering/favour systems — the offering now ALSO notifies the quest
+   engine, but the notify is purely additive (it reads the player's quests; the offering
+   behaviour is unchanged).
+4. **Exhaustive switches.** The new enums (`QuestStatus`/`QuestEventKind`/
+   `QuestGiver.Type`/`Quest.Scope`) have no exhaustive consumer switch — the dispatch
+   codecs switch over STRING type-tags (with a default), not the enums; grep confirms the
+   `case ABANDONED`/`switch(status)` hits are over OTHER status enums (guild quest, village
+   event), not these.
+
+### Simplification Sweep
+
+- **One completion path** (`QuestEvents.notify`) — explicitly the replacement for the
+  per-type listeners; no parallel completion route introduced. **One store**
+  (`QuestSavedData`). **One objective extension point** (the sealed `Objective` + dispatch
+  codec). **One issuance stub** (`QuestIssuer`).
+- **New classes:** `Quest`, `Objective`, `QuestReward`, `QuestGiver`, `QuestStatus`,
+  `QuestEventKind`, `QuestContext`, `QuestSavedData`, `QuestEvents`, `QuestIssuer`,
+  `QuestCommand`. Touched: `MakeOfferingVerb` (1 notify call), `ModModEvents` (command
+  registration).
+
+### Deviations from prompt
+
+- **`/quest grant` targets the executing player** (self), not an arbitrary `<player>` —
+  simpler for proving; an `EntityArgument.player()` target is a trivial later add.
+- **The debug grant issues the quest directly as ACTIVE** — the `OFFERED` state exists in
+  the lifecycle (for real issuance/acceptance later), but the proving command skips to
+  ACTIVE so the notify loop is immediately exercisable.
+- **Favour reward via `addCapped`** (capped to the player's standing) — a quest reward
+  never bypasses the piety cap.
+
+### Out-of-scope but flagged
+
+- **F2a-2** — the other three religious objective kinds (pilgrimage-to-sacred-site,
+  recover/return-relic, perform-rites) + V3-calling graduation + rich givers
+  (deity/saint/clergy) + the giver-standing / player-career layer.
+- **F2b** — re-seat the legacy guild quest system onto this base (behaviour-preserving,
+  F1b-style coverage migration).
+- **Later** — grand/staged (sequential-gated) quests + a quest journal UI + Request-board
+  / pilgrimage convergence.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the SR4 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** + the exhaustive-switch sweep (clean — no consumer
+switch over the new enums): the dispatch codecs follow the vanilla `Codec.STRING.dispatch`
+pattern (`MAP_CODEC` map-codec arms keyed by a constant `TYPE` tag); `Quest.CODEC` is 9
+fields (under the cap); the offering `notify` is wired with the player/level in scope; the
+guild system is unreferenced. One generics watch-item on the user's build: the
+`Codec.STRING.dispatch("type", Objective::type, …)` target-typed to `Codec<Objective>` —
+the standard dispatch inference; a `Codec<Objective>` witness fixes it if inference
+balks here.
+
+### Smoke test (user-runnable)
+
+1. **Issue + track.** `/quest grant sun_mother 3` → `/quest` shows "Offerings to the
+   Sun-Mother" ACTIVE with `0/3`.
+2. **Advance.** Make an offering to a Sunstead temple → `/quest` shows `1/3`; three
+   offerings → the quest completes, the favour reward is granted, a "Quest complete"
+   message fires, and it leaves the active list (Completed: 1).
+3. **Non-match.** An offering to a DIFFERENT god (or a tithe) does NOT advance it.
+4. **No behaviour change.** The offering itself behaves exactly as before (the notify is
+   side-effect-free on it); the guild quest system is entirely unaffected.
+5. **Persistence.** Save+reload → active + completed quests persist (codec round-trip).
+
+## F2 — F2a-2: the three remaining religious objective kinds (2026-06-10)
+
+F2a-1 proved the quest engine with one kind. F2a-2 fills out the religious objective
+vocabulary — pilgrimage, enshrine-a-relic, perform-rites — each a new `Objective` kind +
+a `notify` call on an existing religious action. **The engine core was NOT touched**
+(git-diff-clean on `QuestEvents`/`Quest`/`QuestReward`/`QuestSavedData`) — the proof the
+F2a-1 "kind = permit + codec arm + notify source" design holds. Still additive (guild
+quests untouched); issuance stays the `/quest grant` debug path.
+
+### Disposition (investigation)
+
+- **Engine extension points (confirmed from F2a-1):** `Objective` (sealed `permits` +
+  dispatch-codec arm), `QuestEventKind`, `QuestEvents.notify` (the one path),
+  `QuestContext`. A kind needs only these + a notify source.
+- **Notify sources + their god context:**
+  - `Intercession.prayTo` (the SR3/SR4 shared prayer core) — the god = `saint.godId()`;
+    a prayer at the god's saint grave IS reaching its sacred ground → `VISIT_SITE`.
+  - `RelicItem.useOn` enshrine — the god = `RelicData.godId` → `ENSHRINE`.
+  - `AttendRiteVerb` (`targetFaith`) / `CommissionRiteVerb` (`faith`) — resolve the
+    faith's primary god → `RITE`.
+  - `SacredSpace.tierAt` proximity-reach — see Deviations (deferred for perf).
+
+### What shipped
+
+- **`QuestEventKind`** — added `VISIT_SITE`, `ENSHRINE`, `RITE`.
+- **`Objective`** — three new permits + dispatch arms (mirroring `MakeOffering`):
+  `VisitSacredSite`, `EnshrineRelic`, `PerformRites` (each `(godId, current, target)`,
+  matching its kind on god equality). The dispatch `switch` gained three arms; **nothing
+  in `QuestEvents`/`Quest` changed.**
+- **`QuestContext`** — `visitSite`/`enshrine`/`rite` factories.
+- **Four notify sources wired** (each side-effect-free, AFTER the host action's effects):
+  `Intercession.prayTo` → `VISIT_SITE`; `RelicItem.useOn` → `ENSHRINE`;
+  `AttendRiteVerb` + `CommissionRiteVerb` → `RITE` (faith → primary god).
+- **`QuestIssuer.grant(level, player, godId, kind, count)`** (offering / pilgrimage /
+  relic / rites) + **`/quest grant <god> <kind> [count]`** (kind-suggested).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `Intercession.prayTo`, `RelicItem` enshrine,
+   `AttendRite`/`CommissionRite`, (deferred: `SacredSpace.tierAt`) — each has the
+   god/position context the matcher needs (the source resolves the god).
+2. **Downstream callers.** `QuestEvents.notify` (now called from 5 sources); the three
+   new `Objective` kinds; `/quest grant`. **The engine core is unchanged** (verified via
+   `git diff`).
+3. **Sibling systems.** Praying / enshrining / attending / commissioning behave
+   identically — the notify runs after the action's own effects and only reads the
+   player's quests. The sacred/relic/rite systems are undisturbed.
+4. **Exhaustive switches.** The new `QuestEventKind` values have no exhaustive consumer
+   switch — the objective matchers use `==` equality, and the dispatch codecs switch over
+   STRING type-tags with a default. (The grep's `case OFFERING`/`switch(kind())` hits are
+   over OTHER enums — `FavourAct`, layout-event/plaza-piece kinds.)
+
+### Simplification Sweep
+
+- **Engine core NOT touched** (the headline proof) — three kinds added purely via
+  permits + codec arms + notify sources. **One notify call per source**; the god
+  resolution at the two rite verbs reuses the same `primaryGod(Religions.get(...))`
+  one-liner already used by the offering source (no new resolution logic).
+- **New arms/classes:** `Objective.VisitSacredSite`/`.EnshrineRelic`/`.PerformRites` (+
+  their dispatch arms); 3 `QuestEventKind` values; 3 `QuestContext` factories; the
+  generalized `QuestIssuer.grant`. Touched sources: `Intercession`, `RelicItem`,
+  `AttendRiteVerb`, `CommissionRiteVerb`, `QuestCommand`.
+
+### Deviations from prompt
+
+- **`VISIT_SITE` (pilgrimage) completes by praying at the god's sacred site** (a saint
+  grave, via `Intercession.prayTo`). **The optional "reach the god's sacred space"
+  proximity notify is deferred** — passive reach detection needs a per-player tick, and a
+  per-tick `SacredSpace.tierAt` is a structure-backed query that would violate the S1b/S2
+  perf discipline. The prompt's "and/or" allows scoping to the prayer source; the
+  proximity variant can ride a future per-player quest tick (or a cheap cached
+  sacredness) when one exists.
+- **The four count-kinds share a structure** (`godId, current, target`); kept as distinct
+  named permits per the engine model (each a versioned kind for future divergence). A
+  shared generic codec helper was tried then reverted to the proven inline
+  `RecordCodecBuilder.mapCodec` (avoiding generics-inference risk on the unbuildable
+  sandbox).
+
+### Out-of-scope but flagged
+
+- **F2a-3** — V3-calling graduation (`DivineVision` issues a real quest instead of a bare
+  `PlayerCalling`; the favour-act hook becomes quest completion) + rich givers
+  (deity/saint/clergy issuance) + the giver-standing / player-religious-career layer.
+- **F2b** — re-seat the legacy guild quest system onto this base.
+- **Later** — recover-a-stolen/moved-relic quests (needs relic-location tracking); staged/
+  grand quests; a quest journal UI; the proximity sacred-site-reach notify.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the F2a-1 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** (the four notify calls are FQN-split across lines —
+the plain grep confirmed all five sources present) + the exhaustive-switch sweep (clean):
+the engine core is `git diff`-empty vs F2a-1; the three new dispatch arms use the proven
+inline `MAP_CODEC` pattern; the rite verbs' god resolution mirrors the offering source;
+each notify is additive after its action.
+
+### Smoke test (user-runnable)
+
+1. **Rites.** `/quest grant sun_mother rites 3` → `/quest` shows it 0/3 → attend or
+   commission 3 Sunstead rites → advances + completes (favour reward granted).
+2. **Pilgrimage.** `/quest grant sun_mother pilgrimage` → pray at a Sun-Mother saint's
+   grave (`/religion pray` or the relic right-click) → completes.
+3. **Relic.** `/quest grant sun_mother relic` → enshrine a Sun-Mother relic (use it on a
+   block) → completes.
+4. **Non-match.** A rite of a DIFFERENT faith, enshrining a different god's relic, or
+   praying to a different god's saint does NOT advance the quest.
+5. **Unchanged hosts + perf.** Praying / enshrining / rites behave exactly as before
+   (the notify is side-effect-free); no per-tick perf cost was added (no
+   sacred-site-reach tick). Save+reload mid-quest → progress persists.
+
+## F2 — F2a-3: V3 calling graduation + the giver-standing (career) layer (2026-06-10)
+
+The integrative stage that **completes F2a**: graduate the V3 divine callings (the mod's
+existing invisible "religious quest") into real first-class quests on the F2 engine
+(convert-then-delete the parallel `PlayerCalling`), and add the **giver-standing** layer
+— the spine of the player religious career. Self-contained; guild quests untouched.
+
+### Disposition (investigation)
+
+- **V3 calling (as-built):** `DivineVision.deliver` rolls a vision; some lay a
+  `PlayerCalling(religionId, FavourAct, issuedTick)` on `RiteSavedData`;
+  `DivineVision.onFavourAct` (called from `DivineFavour.awardForReligion`) fulfils it
+  (clears it, grants `CALLING_REWARD=15` favour, sends a confirmation vision); the screen
+  shows the active calling.
+- **`PlayerCalling` usage surface (grepped, the coverage list):** `PlayerCalling.java`
+  (the record); `RiteSavedData` (codec field + map + fromCodec param + get/set/clear
+  accessors); `DivineVision` (lay in `deliver`, fulfil in `onFavourAct`);
+  `DivineFavour.awardForReligion` (the fulfilment call); `PlayerReligionSnapshotBuilder`
+  (the screen's calling line); `PlayerReligionScreen` (the "Calling" label).
+- **`FavourAct` → `Objective` kind:** `CALLABLE` is only OFFERING / ATTEND_RITE /
+  COMMISSION_RITE → MakeOffering / PerformRites (clean; no gap). PILGRIMAGE →
+  VisitSacredSite; other acts fall back to an offering objective.
+- **Completion path for standing:** `QuestEvents.notify`'s single `allComplete` branch.
+
+### What shipped
+
+**Part A — graduation (convert-then-delete):**
+- `QuestIssuer.issueDivineCalling(level, player, religionId, act, callingReward, now)` —
+  builds a real ACTIVE DIVINE quest (giver = the faith's primary god), an `Objective` from
+  the act, rewards = `Favour(godId, CALLING_REWARD)` + a new `QuestReward.Vision(godId,
+  confirmation)` (the god-voiced fulfilment line, reusing `DivineVision.loreFor`).
+- `DivineVision.deliver` now **issues that quest** instead of a `PlayerCalling` (gated on
+  no active DIVINE quest); the issuance vision ("I would have you serve. … ") still fires.
+  The quest engine's existing notify path (offering/rite/pilgrimage, F2a-1/2) tracks +
+  completes it + grants the favour/vision reward — **parity with the old `CALLING_REWARD`
+  + confirmation vision**.
+- **Deleted:** `PlayerCalling.java`; `DivineVision.onFavourAct`; the `DivineFavour
+  .awardForReligion` fulfilment call; the `RiteSavedData` calling state (codec field, map,
+  fromCodec param, get/set/clear accessors → 6→5 codec fields; a pre-F2a-3 save's
+  "playerCalling" key is ignored on load). The screen's calling line is **rerouted** to
+  the active DIVINE quest; its label is "✦ Divine quest — …".
+
+**Part B — giver standing (the player religious career):**
+- `QuestSavedData` gained a `standingByPlayer` map (playerId → giverKey "TYPE:id" → count;
+  3rd... codec field, empty default) + `accrueStanding`/`standing`/`standings`/`giverKey`
+  + `hasActiveGiverQuest`.
+- **Accrued in the ONE completion path** (`QuestEvents.notify`'s `allComplete` branch) —
+  not per-kind.
+- `DevotionRank{SUPPLICANT(0), DEVOTEE(1), DISCIPLE(3), CHAMPION(6)}` + `fromCount`.
+- Surfaced: a "--- Devotion ---" section in `/quest` (per god: rank + completed count).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `DivineVision.deliver` (issuance), `QuestEvents` completion
+   (→ standing), the act→kind map. Confirmed.
+2. **Downstream callers.** Every `PlayerCalling` reader re-pointed/removed (grep-clean —
+   zero code refs remain, only comments): the screen line → active DIVINE quest; the
+   fulfilment + state deleted; the `DivineFavour` call removed. The standing surfacing in
+   `/quest`.
+3. **Sibling systems.** The favour economy — the graduated quest's `Favour` reward is the
+   old `CALLING_REWARD` (15) via `addCapped` (parity; capped to standing). The SR1
+   living-saint status — standing is a COMPLEMENTARY career facet (distinct map/rank),
+   not conflated. The F2 engine — standing rides the existing completion path (one accrual
+   line; the `Quest` record is `git diff`-untouched).
+4. **Exhaustive switches.** New `DevotionRank` — its only switch is its own `displayName`
+   (4-arm exhaustive); no external consumer switch. The retired `PlayerCalling.describe`
+   `FavourAct` switch is deleted with the class (no orphan). No other enum touched.
+
+### Simplification Sweep
+
+- **The `PlayerCalling` parallel quest system is DELETED** — the convert-then-delete
+  payoff: no orphan state (RiteSavedData calling map gone), no orphan reader (all
+  re-pointed), no orphan fulfilment (onFavourAct gone). Grep-verified.
+- **Standing is one record + one accrual point** (`QuestSavedData.standingByPlayer` +
+  `accrueStanding` in `QuestEvents`) + one rank enum.
+- **Deleted:** `PlayerCalling`. **New:** `DevotionRank`, `QuestReward.Vision`,
+  `QuestIssuer.issueDivineCalling`, the standing map/methods. **Touched:** `DivineVision`,
+  `DivineFavour`, `RiteSavedData`, `PlayerReligionSnapshotBuilder`, `PlayerReligionScreen`,
+  `QuestEvents`, `QuestSavedData`, `QuestCommand`.
+
+### Deviations from prompt
+
+- **The screen's calling field name (`activeCalling`) is kept** (now sourced from the
+  active DIVINE quest, label "Divine quest") — avoids an `OpenPlayerReligionPacket` schema
+  change; the screen still shows the divine task line.
+- **Standing surfaced in `/quest`** (not the religion screen) — the screen surfacing would
+  need a packet field; the prompt allowed "/quest and/or the screen". The screen already
+  shows the active divine quest (the calling line); the rank lives in `/quest`.
+- **The confirmation vision's lore is generated at ISSUANCE** (stored in the `Vision`
+  reward text) rather than at fulfilment — same flavour, fixed at issue time.
+
+### Out-of-scope but flagged
+
+- **F2b** — re-seat the legacy guild quest system onto this base (behaviour-preserving,
+  F1b-style coverage migration).
+- **Later** — saint/clergy quest givers; rank-gated perks / quest-unlock trees; staged/
+  grand quests + a quest journal UI; guild/other-profession careers modelling this
+  standing.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the F2a-2 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** (the `PlayerCalling` retirement is grep-clean — zero
+code refs, only comments) + the exhaustive-switch sweep (clean): `RiteSavedData` is 6→5
+codec fields with `fromCodec` re-arity'd; the `Quest` engine record is `git diff`-empty;
+the new `QuestReward.Vision` arm uses the proven inline `MAP_CODEC`; standing accrues in
+the single completion path. One generics watch-item carried from F2a-1: the dispatch
+codecs' target-typing.
+
+### Smoke test (user-runnable)
+
+1. **Graduation.** Drive a god's favour high so `DivineVision` lays a divine quest →
+   `/quest` shows it ACTIVE (a real quest with a tasked objective, not the old invisible
+   calling); the religion screen's "✦ Divine quest" line shows it.
+2. **Fulfilment parity.** Do the tasked act (offering / rite) → the quest completes, the
+   favour reward (15, the old `CALLING_REWARD`) lands, and the god-voiced confirmation
+   vision fires — matching the old calling fulfilment.
+3. **Career.** Complete several DIVINE quests for a god → `/quest`'s "Devotion" section
+   shows the rank climbing (Supplicant → Devotee → Disciple → Champion).
+4. **No remnant.** Confirm no old "Calling" flag/state remains; the living-saint status +
+   favour are unaffected (complementary).
+5. **Persistence.** Save+reload → the active divine quest + the standing/rank persist
+   (and a pre-F2a-3 save loads cleanly, its "playerCalling" key ignored).
+
+## F2 — F2b-1: add the guild quest vocabulary to the base (additive) (2026-06-10)
+
+The first half of the guild re-seat: teach the F2 quest base the guild vocabulary — the
+guild objective kinds, the coin/XP reward kinds, and the difficulty/rank metadata —
+WITHOUT re-pointing the guild system (the legacy guild quests keep running on their own
+`Quest` class until F2b-2). Provable via `/quest`. Additive. **Includes one sanctioned
+engine addition (flagged): the poll / condition-check completion path.**
+
+### Disposition (investigation)
+
+- **F2 engine extension points:** `Objective` (sealed + dispatch codec), `QuestEvents
+  .notify` (event path), `Quest` completion. The poll path slots in as an
+  `Objective.isSatisfied(level, player)` (poll kinds) + a quest-level `allSatisfied` +
+  a `QuestEvents.evaluate` (turn-in) — funneling to the SAME completion routine as
+  `notify`, leaving the event path unchanged.
+- **Legacy guild detection:** `QuestProgressEvents.onMobDeath` (player HUNT kill count),
+  turn-in checks (GATHER/DELIVER/EXPLORE/ESCORT), `PartyQuestTracker`. These stay on the
+  legacy system; F2b-1 mirrors only the KINDS + an additive mob-death `notify` for the
+  new `Hunt` (both observe the same kill).
+- **Reward hooks:** coins minted from `CurrencyValue` denominations into
+  `ModItems.DENIER*` (player inventory); `PlayerGuildData.get(level).addXp(playerId, xp)`.
+- **Metadata enums:** the legacy `Quest.QuestDifficulty` (EASY…LEGENDARY, with a
+  `GuildRank` min-rank gate) + the top-level `GuildRank` ladder.
+
+### What shipped
+
+- **The poll path (the sanctioned engine addition):** `EvalMode{EVENT, POLL}`;
+  `Objective.mode()` (EVENT default) + `Objective.isSatisfied(level, player)` (default =
+  `isComplete()`; poll kinds override with a live check); `Quest.allSatisfied(level,
+  player)`; `QuestEvents.evaluate(player)` (the turn-in path) + the factored
+  `QuestEvents.complete(...)` (the ONE completion routine, shared by event + poll).
+  Event objectives keep `notify` + `allComplete` exactly as before.
+- **Guild `Objective` kinds** (dispatch arms, inline `MAP_CODEC`): `Hunt(mobId,…)`
+  (EVENT, MOB_DEATH notify), `Escort(targetMob, destination)` (EVENT, ESCORT_ARRIVED —
+  source deferred to F2b-2), `Gather(itemId, target)` (POLL, holds N), `Deliver(itemId,
+  villageId)` (POLL, in-village + holds), `Explore(biomeId)` (POLL, in-biome). Poll
+  helpers (inventory count / in-village / current-biome) live once on the interface.
+- **`QuestEventKind`** +MOB_DEATH, +ESCORT_ARRIVED; **`QuestContext`** gained a generic
+  `subject` field (mob id) + `mobDeath` factory.
+- **`QuestReward`** +`Coins(bronze)` (minted into inventory) +`Xp(xp)` (guild XP; no-op
+  for a non-member; the party multiplier + rank-up are F2b-2).
+- **`Quest` metadata:** optional `difficulty` (new base `QuestDifficulty`, mirroring the
+  legacy names + `GuildRank` gate + base reward magnitudes) + `rankRequirement`
+  (`Optional<GuildRank>`) — both `optionalFieldOf`; unset (NONE / empty) for religious
+  quests. (`Quest` 9→11 record fields, still under the codec cap.)
+- **The one event source wired:** `QuestEventHooks` (a SEPARATE `@EventBusSubscriber`
+  mob-death handler, additive — the legacy `QuestProgressEvents` is untouched; both
+  observe the kill) → `Hunt` notify.
+- **`/quest` test surface:** `/quest guild <kind> <target> [count] [difficulty]` (issues
+  GUILD-giver quests with Coins+Xp from the difficulty) + `/quest turnin` (= `/quest
+  check`) → `QuestEvents.evaluate` (the poll completion).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** The mob-death event (`Hunt` notify), inventory/village/biome
+   state (the poll checks), `CurrencyValue`/`ModItems` (coins) + `PlayerGuildData.addXp`
+   (XP). Confirmed.
+2. **Downstream callers.** `QuestEvents` now has BOTH an event path (`notify`, unchanged)
+   and a poll path (`evaluate`); the new kinds + rewards + metadata; `/quest guild` +
+   `/quest turnin`. **The legacy guild system is not referenced** by the new code (the
+   only guild-package symbols touched are READ: `GuildRank`, `PlayerGuildData.addXp`,
+   `QuestDifficulty` values mirrored — none mutated; `git diff` of `Guilds/*` is empty).
+3. **Sibling systems.** The legacy guild quests are untouched (the added mob-death notify
+   is a separate handler — legacy HUNT still works; different stores, no interference).
+   The religious quests are unaffected (and could opt into a poll objective later — the
+   poll path is general). The F2a-3 standing accrual still runs in `complete` (now shared
+   by both paths).
+4. **Exhaustive switches.** New `EvalMode`/`QuestDifficulty` + the guild objective/reward
+   kinds have NO exhaustive consumer switch (matchers use `==`; `mode()`/`isSatisfied`
+   are virtual-dispatch, not switched; dispatch codecs switch STRING tags with a
+   default). Grep-clean.
+
+### Simplification Sweep
+
+- **The poll path is ONE clean general capability** — `EvalMode` + `isSatisfied` +
+  `evaluate` + the shared `complete` — not duplicated per kind; event-vs-poll lives in
+  the objective (its `mode`/`isSatisfied`), and the engine just calls the right
+  evaluation. No second completion routine (event + poll both funnel to `complete`).
+- **New classes:** `EvalMode`, `QuestDifficulty`, `QuestEventHooks`. **New arms:** 5
+  `Objective` kinds, 2 `QuestReward` kinds, 2 `QuestEventKind` values, the `Quest`
+  metadata + `allSatisfied`/`evaluate`/`complete`. **Touched (engine):** `Objective`,
+  `Quest`, `QuestEvents`, `QuestContext`, `QuestEventKind`, `QuestReward`, `QuestIssuer`,
+  `QuestCommand`. **Guild package: untouched.**
+
+### Deviations from prompt
+
+- **`Escort` is defined (EVENT, ESCORT_ARRIVED) but has no source this stage** — the
+  escort mechanic (the NPC arriving) is F2b-2; F2b-1 carries the kind + codec for
+  vocabulary completeness. So the F2b-1-provable kinds are `Hunt` (event/mob-death) +
+  `Gather`/`Deliver`/`Explore` (poll/turn-in). (Noted honestly per the constraint.)
+- **`Deliver`'s poll check is "in the target village holding the item"** (not consuming
+  it) — the consuming turn-in flow is F2b-2; F2b-1's poll is the satisfaction check.
+- **`Coins` mints denominations directly** into the player's inventory (rather than via
+  `CoinHelper.giveCoins`, which takes a `SimpleContainer`) — the player-facing basic
+  grant; the guild's purse-aware payout + party multiplier are F2b-2.
+
+### Out-of-scope but flagged
+
+- **F2b-2** — re-seat the player guild quests onto the base: `QuestGenerator`→F2 issuance
+  (GUILD giver, difficulty/rank), `PlayerGuildData`→F2 store, `GuildScreen`/
+  `GuildActionPacket`→F2 accept/turn-in (+ party multiplier + rank-up), the player
+  listeners→`notify`, the escort source, and **narrow the legacy `Quest` to
+  adventurer-only** (F1b-style coverage migration).
+- **Later** — adventurer NPC-group quests stay legacy (scope A); staged/grand quests;
+  quest journal UI.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the F2a-3 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** + the exhaustive-switch sweep (clean): `Quest` is 11
+record fields with all `new Quest(` callers (only `QuestIssuer` + the `withX` helpers)
+updated; the `Guilds/*` package is `git diff`-empty (untouched); the new dispatch arms
+use the proven inline `MAP_CODEC`; the poll path funnels to the one `complete`. Two
+NeoForge watch-items on the user's build: `Holder.unwrapKey()` (biome id) and the
+`@EventBusSubscriber` default bus (mirrors the working legacy `QuestProgressEvents`).
+
+### Smoke test (user-runnable)
+
+1. **Hunt (event).** `/quest guild hunt minecraft:zombie 3 EASY` → kill 3 zombies →
+   live progress + auto-completes (event), Coins+Xp granted.
+2. **Gather (poll).** `/quest guild gather minecraft:wheat 10` → with 10 wheat in
+   inventory, `/quest turnin` → completes; without them, turn-in does nothing.
+3. **Deliver / Explore (poll).** `/quest guild deliver minecraft:bread` (in a village,
+   holding bread) → `/quest turnin` completes; `/quest guild explore minecraft:desert`
+   (standing in a desert) → `/quest turnin` completes.
+4. **Rewards + gate.** Confirm the Coins+Xp land on completion; confirm the quest carries
+   its difficulty + rank requirement (`/quest` shows `[EASY]`).
+5. **Legacy untouched.** Confirm the legacy guild board still accepts/turns-in/HUNT-
+   detects exactly as before (separate system). Save+reload → the new quests persist.

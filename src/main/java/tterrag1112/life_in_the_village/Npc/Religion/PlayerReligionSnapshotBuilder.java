@@ -94,14 +94,15 @@ public final class PlayerReligionSnapshotBuilder {
                     e.dayOfYear(), e.daysAway(), own));
         }
 
-        // ── Active divine calling (Divine Layer V3) ──────────────────────────
+        // ── Active divine quest (F2a-3 — the graduated V3 calling) ───────────
         long now = level.getGameTime();
-        String activeCalling = rites.getPlayerCalling(playerId)
-                .map(c -> {
-                    String fname = Religions.find(level, c.religionId())
-                            .map(Religion::displayName).orElse(c.religionId());
-                    return fname + ": " + c.describe();
-                })
+        String activeCalling = tterrag1112.life_in_the_village.Quests.QuestSavedData.get(level)
+                .active(playerId).stream()
+                .filter(q -> q.giver().type()
+                        == tterrag1112.life_in_the_village.Quests.QuestGiver.Type.DIVINE)
+                .findFirst()
+                .map(q -> q.objectives().isEmpty() ? q.title()
+                        : q.objectives().get(0).describe())
                 .orElse("");
 
         // ── Per-god divine standing (F1a 4b) — favour + band + miracles + theophany ──

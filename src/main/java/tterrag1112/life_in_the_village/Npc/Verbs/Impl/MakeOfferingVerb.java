@@ -79,6 +79,14 @@ public final class MakeOfferingVerb implements PlayerVerb {
                 tterrag1112.life_in_the_village.Npc.Religion.DivineFavour.FavourAct.OFFERING,
                 ctx.level().getGameTime(), ctx.player().blockPosition());  // S1b — sacred at the offering site
 
+        // F2a-1 — the unified quest hook: an offering advances any MAKE_OFFERING
+        // objective for this religion's primary god. Side-effect-free on the offering.
+        String offeredGod = tterrag1112.life_in_the_village.Npc.Religion.GodRegistry
+                .primaryGod(tterrag1112.life_in_the_village.Npc.Religion.Religions.get(ctx.level(), religionId))
+                .map(tterrag1112.life_in_the_village.Npc.Religion.God::id).orElse(null);
+        tterrag1112.life_in_the_village.Quests.QuestEvents.notify(ctx.player(),
+                tterrag1112.life_in_the_village.Quests.QuestContext.offering(offeredGod, religionId));
+
         ctx.npc().getRelationships().adjust(playerId, 5);
         // Temple treasury bump — uses the existing per-building economy
         // attached to the temple if present.

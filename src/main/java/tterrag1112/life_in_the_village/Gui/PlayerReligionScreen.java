@@ -96,7 +96,7 @@ public class PlayerReligionScreen extends Screen {
                 : "No tithe pledge";
         g.drawString(font, clip(font, pledge, bw), x, panelY + 63, BookScreenColors.MID, false);
         if (!data.activeCalling().isEmpty()) {
-            g.drawString(font, clip(font, "✦ Calling — " + data.activeCalling(), bw),
+            g.drawString(font, clip(font, "✦ Divine quest — " + data.activeCalling(), bw),
                     x, panelY + 73, BookScreenColors.DARK, false);
         } else {
             g.drawString(font, data.ritesThisMonth() + " rite(s) this month"

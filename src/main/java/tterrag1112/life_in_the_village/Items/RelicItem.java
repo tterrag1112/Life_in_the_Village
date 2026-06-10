@@ -89,6 +89,9 @@ public class RelicItem extends Item {
         BlockPos pos = ctx.getClickedPos().above();
         SacredSpaceSavedData.get(sl)
                 .addPermanentImprint(data.godId(), pos, sl.getGameTime(), ENSHRINE_STRENGTH);
+        // F2a-2 — enshrining advances any ENSHRINE objective for the relic's god.
+        tterrag1112.life_in_the_village.Quests.QuestEvents.notify(sp,
+                tterrag1112.life_in_the_village.Quests.QuestContext.enshrine(data.godId()));
         sp.displayClientMessage(Component.literal("§dThe relic of St. " + data.saintName()
                 + " is enshrined here — this ground is now sacred."), false);
         return InteractionResult.SUCCESS;

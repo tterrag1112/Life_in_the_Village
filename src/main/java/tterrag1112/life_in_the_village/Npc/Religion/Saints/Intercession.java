@@ -106,6 +106,11 @@ public final class Intercession {
                 msg.append(" §7(veneration ").append(v).append("/").append(VENERATION_THRESHOLD).append(")");
             }
         }
+        // F2a-2 — a prayer at the god's sacred site (a saint grave) is a pilgrimage:
+        // advance any VISIT_SITE objective for this god. Side-effect-free on the prayer.
+        tterrag1112.life_in_the_village.Quests.QuestEvents.notify(player,
+                tterrag1112.life_in_the_village.Quests.QuestContext.visitSite(godId));
+
         return new Result(true, msg.toString());
     }
 
