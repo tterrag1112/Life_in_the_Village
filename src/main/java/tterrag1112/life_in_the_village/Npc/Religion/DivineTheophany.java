@@ -1,6 +1,5 @@
 package tterrag1112.life_in_the_village.Npc.Religion;
 
-import net.minecraft.core.Vec3i;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
@@ -13,7 +12,6 @@ import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.MoverType;
 import net.minecraft.world.phys.Vec3;
-import tterrag1112.life_in_the_village.Npc.Religion.ReligionIdentity.DeityDomain;
 
 import java.util.UUID;
 
