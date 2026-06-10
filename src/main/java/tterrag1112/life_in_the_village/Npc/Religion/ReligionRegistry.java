@@ -8,13 +8,17 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
- * Static registry of every {@link Religion}. Populated lazily on
- * first access; idempotent. Phase 5 culture wiring may swap in a
- * data-pack-driven loader; v1 hard-codes the four starter religions
- * per spec line 36.
+ * Static <b>template catalog</b> of the starter {@link Religion}s. Populated lazily
+ * on first access; idempotent. v1 hard-codes the four starters per spec line 36.
+ *
+ * <p><b>F1b 1b — templates, not the live set.</b> The world's live religions live in
+ * the per-world {@link ReligionSavedData} (seeded from these templates on first
+ * access) and are read through the {@link Religions} facade. This class's read
+ * accessor is now {@link #templates()} — package-private, template-named, with the
+ * seeder as its only runtime reader. The {@code id} constants and
+ * {@link #dominantReligionFor} (culture→default-id) stay public seed/config.</p>
  *
  * <p>Holy-day mapping note (spec "Things to flag" #1): "Spring
  * Equinox" / "Full Moon" / "Kingdom Day" become specific day-of-
@@ -36,17 +40,17 @@ public final class ReligionRegistry {
 
     private ReligionRegistry() {}
 
-    public static Religion get(String id) {
-        ensureInit();
-        return RELIGIONS.get(id);
-    }
+    // ── Template catalog (F1b 1b — the SEED source, not the live set) ─────────
+    // After the per-world migration these are TEMPLATE accessors: the only runtime
+    // reader is ReligionSavedData.seedIfEmpty (same package). Every live lookup goes
+    // through the per-world Religions facade. Package-private + template-named so any
+    // straggler reaching for the old static get/find/all fails to compile — the
+    // compiler is the coverage proof that the migration is complete.
 
-    public static Optional<Religion> find(String id) {
-        ensureInit();
-        return Optional.ofNullable(RELIGIONS.get(id));
-    }
-
-    public static List<Religion> all() {
+    /** Every seed template (copied into a fresh world's {@link ReligionSavedData}).
+     *  The sole runtime reader is {@link ReligionSavedData#seedIfEmpty()}; a by-id
+     *  template lookup can be re-added if a seeder ever needs one. */
+    static List<Religion> templates() {
         ensureInit();
         return List.copyOf(RELIGIONS.values());
     }

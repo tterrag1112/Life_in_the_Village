@@ -200,7 +200,7 @@ public final class RiteScheduler {
     public static boolean religionRitualises(ServerLevel level, Village village,
                                              String faithId, Rite rite) {
         String id = faithId != null ? faithId : ReligionContent.villageReligionId(level, village);
-        Religion religion = ReligionRegistry.get(id);
+        Religion religion = Religions.get(level, id);
         return religion != null && religion.ritualises(rite);
     }
 

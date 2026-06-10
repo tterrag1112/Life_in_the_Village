@@ -78,7 +78,7 @@ public final class DivineVision {
 
     private static void deliver(ServerLevel level, ServerPlayer player, God god, long now) {
         // RELIGION narrative source: a religion that venerates this god.
-        Religion rel = GodRegistry.primaryReligionOf(god.id()).orElse(null);
+        Religion rel = GodRegistry.primaryReligionOf(level, god.id()).orElse(null);
         ReligionIdentity id = rel == null ? null : ReligionIdentity.get(rel.id());
         RiteSavedData data = RiteSavedData.get(level);
 
@@ -168,7 +168,7 @@ public final class DivineVision {
 
         ServerPlayer player = level.getServer().getPlayerList().getPlayer(playerId);
         if (player == null) return;
-        Religion rel = ReligionRegistry.get(religionId);
+        Religion rel = Religions.get(level, religionId);
         God god = rel == null ? null : GodRegistry.primaryGod(rel).orElse(null);
         if (god == null) return;
         ReligionIdentity id = ReligionIdentity.get(religionId);

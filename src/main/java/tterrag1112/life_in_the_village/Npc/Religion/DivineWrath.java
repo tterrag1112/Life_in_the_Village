@@ -46,7 +46,7 @@ public final class DivineWrath {
         UUID pid = player.getUUID();
         String faith = RiteSavedData.get(level).getPlayerPiety(pid)
                 .flatMap(PietyComponent::primaryReligion).orElse(null);
-        Religion religion = faith == null ? null : ReligionRegistry.get(faith);
+        Religion religion = faith == null ? null : Religions.get(level, faith);
         if (religion == null) return;
 
         // F1a 4a — offense targets the SPECIFIC god(s) whose taboo was broken (not a

@@ -28,8 +28,8 @@ public final class MiracleInvoker {
 
     /** F1a sub-stage 3b — the GOD a miracle belongs to (its religion's primary god;
      *  the god is the subject of the gift). Null for an unresolvable miracle. */
-    public static God godFor(Miracle m) {
-        Religion r = m == null ? null : ReligionRegistry.get(m.religionId());
+    public static God godFor(ServerLevel level, Miracle m) {
+        Religion r = m == null ? null : Religions.get(level, m.religionId());
         return r == null ? null : GodRegistry.primaryGod(r).orElse(null);
     }
 
@@ -37,7 +37,7 @@ public final class MiracleInvoker {
     public static Status status(ServerLevel level, ServerPlayer player, Miracle m, long now) {
         UUID pid = player.getUUID();
         if (cooldownRemaining(pid, m.id(), now) > 0) return Status.ON_COOLDOWN;
-        God god = godFor(m);
+        God god = godFor(level, m);
         if (god == null) return Status.LOCKED_FAVOUR;
         PietyTier tier = DivineFavour.tierForGod(level, pid, god.id());
         if (tier.ordinal() < m.minTier().ordinal()) return Status.LOCKED_TIER;
@@ -54,7 +54,7 @@ public final class MiracleInvoker {
         Miracle m = Miracles.byId(miracleId);
         if (m == null) return new Result(false, "No such miracle: " + miracleId);
         UUID pid = player.getUUID();
-        God god = godFor(m);
+        God god = godFor(level, m);
         if (god == null) return new Result(false, "No god grants " + m.displayName() + ".");
 
         long cd = cooldownRemaining(pid, m.id(), now);

@@ -57,9 +57,12 @@ public final class FaithVoice {
      */
     public static Optional<String> line(TownspersonMob npc, RandomSource rng) {
         if (!speaks(npc)) return Optional.empty();
+        // F1b 1b — religions are per-world; the NPC carries the (server) level.
+        if (!(npc.level() instanceof net.minecraft.server.level.ServerLevel level))
+            return Optional.empty();
         String faith = npc.getPiety().primaryReligion().orElse(null);
         if (faith == null) return Optional.empty();
-        Religion religion = ReligionRegistry.get(faith);
+        Religion religion = Religions.get(level, faith);
         if (religion == null) return Optional.empty();
         // F1a 4a — deity attributes (name / domain / demands / rewards) from the
         // PRIMARY god; "what the faith esteems" (the virtue pool) from the UNION.

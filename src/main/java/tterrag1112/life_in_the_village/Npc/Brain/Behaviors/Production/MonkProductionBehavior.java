@@ -87,7 +87,7 @@ public class MonkProductionBehavior extends ContextProductionBehavior {
                     : BuildingFaith.resolveFaith(level, village, building);
             if (faith != null) {
                 Optional<ItemStack> scripture = ScriptureFactory.scriptureStack(
-                        faith, Optional.of(entity.getUUID()), level.getGameTime());
+                        level, faith, Optional.of(entity.getUUID()), level.getGameTime());
                 if (scripture.isPresent()) return scripture.get();
             }
         }

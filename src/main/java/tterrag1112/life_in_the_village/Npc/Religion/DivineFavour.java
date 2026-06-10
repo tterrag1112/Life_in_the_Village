@@ -100,7 +100,7 @@ public final class DivineFavour {
      *  hook (the calling is a religion-keyed task). */
     public static void awardForReligion(ServerLevel level, UUID playerId,
                                         String religionId, FavourAct act, long now) {
-        Religion r = ReligionRegistry.get(religionId);
+        Religion r = Religions.get(level, religionId);
         if (r == null) return;
         for (God g : GodRegistry.godsFor(r)) award(level, playerId, g.id(), act, now);
         // Divine Layer V3 — an act may fulfil a standing divine calling (religion-
@@ -111,7 +111,7 @@ public final class DivineFavour {
     /** Drives displeasure with every god the religion venerates (V4 sacrilege). */
     public static void offendForReligion(ServerLevel level, UUID playerId,
                                          String religionId, float amount, long now) {
-        Religion r = ReligionRegistry.get(religionId);
+        Religion r = Religions.get(level, religionId);
         if (r == null) return;
         for (God g : GodRegistry.godsFor(r)) offend(level, playerId, g.id(), amount, now);
     }
@@ -119,7 +119,7 @@ public final class DivineFavour {
     /** Capped (no-hook) favour add to the religion's god(s) — the V3 calling bonus. */
     public static void addCappedForReligion(ServerLevel level, UUID playerId,
                                             String religionId, float amount, long now) {
-        Religion r = ReligionRegistry.get(religionId);
+        Religion r = Religions.get(level, religionId);
         if (r == null) return;
         for (God g : GodRegistry.godsFor(r)) addCapped(level, playerId, g.id(), amount, now);
     }
@@ -128,7 +128,7 @@ public final class DivineFavour {
      *  god-less); the readout/sacrilege debug reads in religion terms. */
     public static float currentForReligion(ServerLevel level, UUID playerId,
                                            String religionId, long now) {
-        Religion r = ReligionRegistry.get(religionId);
+        Religion r = Religions.get(level, religionId);
         God g = r == null ? null : GodRegistry.primaryGod(r).orElse(null);
         return g == null ? 0f : current(level, playerId, g.id(), now);
     }
@@ -136,7 +136,7 @@ public final class DivineFavour {
     // =========================================================================
     // Core, god-keyed API. The storage methods take a god id; favour is stored
     // per god (PlayerFavour). The god's tier/cap come from the best piety among the
-    // religions that venerate it (reverse index).
+    // religions that venerate it (resolved per-world via GodRegistry.religionsVenerating).
     // =========================================================================
 
     /** Grants favour with {@code godId} for {@code act}, demand-weighted by the GOD's
@@ -156,7 +156,7 @@ public final class DivineFavour {
                                      FavourAct act, FaithConcept concept, long now) {
         if (godId == null) return;
         RiteSavedData data = RiteSavedData.get(level);
-        float cap = cap(tierFor(data, playerId, godId));
+        float cap = cap(tierFor(level, data, playerId, godId));
         if (cap <= 0f) return;                              // no standing → can't hold favour
         float weight = aligned(godId, concept) ? ALIGNED_BONUS : 1f;
         // Lower bound is the displeasure floor (not 0): a repenting, displeased
@@ -173,7 +173,7 @@ public final class DivineFavour {
                                  float amount, long now) {
         if (godId == null) return;
         RiteSavedData data = RiteSavedData.get(level);
-        float cap = cap(tierFor(data, playerId, godId));
+        float cap = cap(tierFor(level, data, playerId, godId));
         if (cap <= 0f) return;
         float next = clamp(current(level, playerId, godId, now) + amount,
                 DISPLEASURE_FLOOR, cap);
@@ -186,7 +186,7 @@ public final class DivineFavour {
                               float amount, long now) {
         if (godId == null || amount <= 0f) return;
         RiteSavedData data = RiteSavedData.get(level);
-        float cap = cap(tierFor(data, playerId, godId));
+        float cap = cap(tierFor(level, data, playerId, godId));
         if (cap <= 0f) return;
         float next = clamp(current(level, playerId, godId, now) - amount,
                 DISPLEASURE_FLOOR, cap);
@@ -223,7 +223,7 @@ public final class DivineFavour {
      *  {@code now}, clamped to the god's piety-tier cap. No entry → tier equilibrium. */
     public static float current(ServerLevel level, UUID playerId, String godId, long now) {
         RiteSavedData data = RiteSavedData.get(level);
-        PietyTier tier = tierFor(data, playerId, godId);
+        PietyTier tier = tierFor(level, data, playerId, godId);
         float eq = equilibrium(tier);
         float cap = cap(tier);
         PlayerFavour fav = data.getPlayerFavour(playerId).orElse(null);
@@ -240,14 +240,15 @@ public final class DivineFavour {
      *  piety is belief in a RELIGION, so a god's tier is the BEST tier among the
      *  religions that venerate it (single-god starters → the one religion's belief). */
     public static PietyTier tierForGod(ServerLevel level, UUID playerId, String godId) {
-        return tierFor(RiteSavedData.get(level), playerId, godId);
+        return tierFor(level, RiteSavedData.get(level), playerId, godId);
     }
 
-    private static PietyTier tierFor(RiteSavedData data, UUID playerId, String godId) {
+    private static PietyTier tierFor(ServerLevel level, RiteSavedData data,
+                                     UUID playerId, String godId) {
         PietyComponent piety = data.getPlayerPiety(playerId).orElse(null);
         if (piety == null) return PietyTier.UNAFFILIATED;
         float strength = 0f;
-        for (String religionId : GodRegistry.religionsVenerating(godId)) {
+        for (String religionId : GodRegistry.religionsVenerating(level, godId)) {
             strength = Math.max(strength, piety.beliefIn(religionId));
         }
         if (strength < 0.2f) return PietyTier.UNAFFILIATED;

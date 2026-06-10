@@ -9441,3 +9441,152 @@ facade and the readout).
 4. **No re-seed clobber.** After reload (store non-empty), confirm the list is still
    exactly four (seed runs only-when-empty; it does not append duplicates or reset a
    saved set). A later non-template set would likewise survive reload unre-seeded.
+
+## F1b sub-stage 1b — migrate every religion lookup to the per-world store (2026-06-09)
+
+The big behaviour-preserving swap. 1a stood up `ReligionSavedData` + the `Religions`
+facade with no callers; 1b points **every real religion lookup** at the per-world
+store, then **locks the static `ReligionRegistry` accessors to template-only** so any
+straggler fails to compile. The world now owns its religions end-to-end; behaviour is
+identical (the seeded store equals the old static set). **This completes the
+per-world-ify (F1b-1).**
+
+### Disposition (caller inventory + plan)
+
+- **`get`/`find`/`all` sites (45, grep-audited).** 44 migrated to `Religions.*(level)`;
+  the 45th is the SEEDER (`ReligionSavedData.seedIfEmpty`), which stays on the static
+  catalog — now `ReligionRegistry.templates()`. Almost every site already had a
+  `ServerLevel` (the divine layer, rite scheduling/execution, building faith, temple +
+  player snapshot builders, event scheduler, commands are all server-side).
+- **Level-threading where a site lacked one** (each flagged):
+  - `FaithJudgment.judge(actor, …)` and `FaithVoice.line(npc, …)` — derive the
+    (server) level from the NPC entity (`actor.level() instanceof ServerLevel`);
+    witnesses share the actor's level. No caller-signature change (the entity carries
+    the level).
+  - `ScriptureFactory.scriptureStack/scriptureRecord/title/body` — gained a
+    `ServerLevel` first param; the 2 callers (`TempleProsperity`,
+    `MonkProductionBehavior`) thread their level.
+  - `ReligionContent.invocation/tenet` — gained `ServerLevel`; `RiteExecutor`'s
+    `riteFlavorSuffix`/`confessionTenetSuffix` thread level (all 5 `handleX` call
+    sites already carry it).
+  - `MiracleInvoker.godFor(Miracle)` → `godFor(ServerLevel, Miracle)`; both internal
+    callers (`status`/`cast`) have level.
+  - 3 command suggestion lambdas → `c.getSource().getLevel()`; 3 handlers
+    (`handleGods`/`handleIdentity`/`handleList`) gained `ServerLevel level =
+    src.getLevel();`.
+- **`GodRegistry` per-world links.** Deleted the static `RELIGIONS_BY_GOD` reverse
+  index (and its init-time build loop); `religionsVenerating`/`primaryReligionOf`
+  **gained a `ServerLevel`** and compute on demand from `Religions.all(level)`
+  (religions are few; it walks the in-memory store, not disk). `playerGods(level,pid)`
+  keeps its signature, resolves beliefs via `Religions.find(level, rid)`.
+  `godsFor`/`primaryGod` are **unchanged** — gods stay GLOBAL; they resolve a
+  religion's `godIds` against the global god catalog and need no level.
+- **`DivineFavour.tierFor`** threaded level (the favour-cap path): `tierForGod` →
+  `tierFor(level, …)` → `religionsVenerating(level, godId)`. The cap resolves
+  identically (best belief among venerating religions; single-god starters → the one
+  religion).
+- **`dominantReligionFor`** — unchanged public culture→default-id helper; its callers
+  resolve the returned id against the per-world store via the migrated lookups.
+- **`CalendarView.upcomingAcross(...)`** — arg swapped to `Religions.all(level)`.
+- **`ReligionIdentity.get` (narrative)** — NOT migrated; narrative stays
+  static/template, resolved by id (per the design).
+
+### The coverage lock (compiler proof)
+
+`ReligionRegistry.get/find/all` were renamed to a single package-private
+**`templates()`** (template-named, seeder-only). With the old public names gone, every
+straggler that still reached for the static registry **fails to compile** — the
+compiler proving the migration complete. The id constants and `dominantReligionFor`
+stay public (seed/config).
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `ReligionSavedData`/`Religions` are now the lookup source;
+   the global god catalog (`GodRegistry.GODS`) is unchanged; `ReligionRegistry`
+   demoted to seed templates (read only by the seeder).
+2. **Downstream callers.** All 44 live `get/find/all` sites migrated (inventory above).
+   `GodRegistry.religionsVenerating`/`primaryReligionOf` now level-threaded; their only
+   callers (`DivineFavour.tierFor`, `DivineVision.deliver`) updated. The favour cap
+   (`tierForGod` → `religionsVenerating`) resolves identically. The calendar
+   enumeration + every debug command migrated.
+3. **Sibling systems.** The divine layer (favour / miracles / visions / wrath /
+   theophany) now reads religions per-world — behaviour identical (seeded set = old
+   static set). `ReligionIdentity` narrative still static. `RiteSavedData` unaffected
+   (separate store).
+4. **Exhaustive switches.** None touched (no enum change). Confirmed.
+
+### Simplification Sweep
+
+- **Stragglers the coverage lock surfaced (grep found them first, both METHOD
+  REFERENCES my `(`-suffixed grep initially skipped):**
+  `NpcProfileSnapshotBuilder` (`ReligionRegistry::find` → `Religions.find(level, …)`)
+  and `PietyComponent.attendsRite` (`ReligionRegistry::find`). This is exactly the
+  F1a-style hidden-reader case the dual grep-+-compiler mechanism exists for.
+- **Orphan deleted:** `PietyComponent.attendsRite(Rite)` had **zero callers** —
+  removed (rather than thread a level into a data component that shouldn't know the
+  world store; per-world rite-ritualisation goes through
+  `RiteScheduler.religionRitualises(level, …)`).
+- **Field removed (no orphan):** `GodRegistry.RELIGIONS_BY_GOD` static reverse index
+  (+ its init build loop) → replaced by on-demand computation.
+- **Accessors collapsed:** `ReligionRegistry` `get`/`find`/`all` → one package-private
+  `templates()` (the unused `find` and a symmetric `template(id)` dropped — no
+  callers).
+- **Touched classes:** `GodRegistry`, `DivineFavour`, `DivineVision`, `DivineWrath`,
+  `FaithJudgment`, `FaithVoice`, `FaithHistory`, `ScriptureFactory`, `ReligionContent`,
+  `MiracleInvoker`, `RiteScheduler`, `RiteExecutor`, `TempleProsperity`,
+  `TempleSnapshotBuilder`, `BuildingFaith`, `PlayerReligionSnapshotBuilder`,
+  `MonkProductionBehavior`, `PietyComponent`, `NpcProfileSnapshotBuilder`,
+  `VillageEventScheduler`, `ReligionDebugCommand`, `ReligionRegistry`,
+  `ReligionSavedData`.
+
+### Deviations from prompt
+
+- **Caller count.** The prompt estimated ~49 lookup sites; the actual `get/find/all`
+  inventory was 45 (44 live + the seeder), plus 2 method-reference stragglers the
+  `(`-form grep missed and the broadened grep/compiler caught. Same coverage outcome.
+- **`/religion list`** (the pre-existing command) now reads the per-world store too
+  (data-identical to before), so it and the 1a `/religion world list` show the same
+  set — acceptable; de-duping the two commands is out of scope.
+- Two helpers derive level from the NPC entity rather than gaining a param
+  (`FaithJudgment.judge`, `FaithVoice.line`) — lower churn, and the entity always
+  carries its (server) level for these server-only paths.
+
+### Out-of-scope but flagged
+
+- **F1b-2** — interreligious relations (KINDRED / NEUTRAL / RIVAL / HERETICAL, a
+  god-overlap baseline, per-world; `FaithReconciliation` + Kingdom-tension consumers).
+- **Dynamism** — founding / schism / conversion, using `ReligionSavedData.put` (the
+  mutation seam stood up in 1a, still caller-less).
+- **Official-religion-law → village-faith wiring** — deferred behaviour change;
+  `dominantReligionFor` stays culture-default for now.
+- **`ReligionIdentity` per-world** — narrative stays template (by design).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; `git reset --hard`
+to the F1b-1a remote tip restored all pushed work before this stage — no work lost.]
+Static review: final grep shows **zero** `ReligionRegistry.get/find/all` references in
+any form (`.`, spaced, `::`); the sole `templates()` reader is the seeder; every
+`Religions.*(level)` call site passes a `ServerLevel`; the level-threaded signatures'
+callers are all updated (grep-confirmed); gods stay global (`godsFor`/`primaryGod`
+unchanged).
+
+### Smoke test (user-runnable)
+
+1. **Everything still resolves (data-identical).** New world → rites still schedule
+   per faith (`/religion rite …`), NPC piety/beliefs resolve, building faith resolves
+   (`/religion temple`, `/religion shrine`), `/religion identity sunstead` reads as
+   before, `/religion list` == `/religion world list` (four faiths).
+2. **Divine layer unchanged.** `/religion favour grant sun_mother 60`, `/religion
+   miracle cast …`, `/religion sacrilege the_loom 80`, `/religion theophany favour
+   sun_mother` — all behave exactly as before; the favour CAP (`tierForGod` via
+   `religionsVenerating`) gives identical tiers/caps.
+3. **Player screen + calendar.** `/religion me` — per-god rows, calendar lists all
+   faiths (cross-faith `upcomingAcross` now per-world), pledge/calling read correctly.
+4. **Persistence.** Save + reload → all of the above identical; the per-world store
+   round-trips (`/religion world list` still four).
+5. **Coverage.** The build has no remaining static `ReligionRegistry.get/find/all`
+   runtime callers — compiler-clean after the accessor restriction (only the seeder
+   reads `templates()`).

@@ -328,7 +328,7 @@ public final class TempleProsperity {
         // via the D1 identity), not a generic subject book: a Sunstead temple's
         // library holds Sunstead scripture. Empty only for an unknown religion.
         java.util.Optional<BookRecord> rec =
-                ScriptureFactory.scriptureRecord(faith, java.util.Optional.of(priest.getUUID()), now);
+                ScriptureFactory.scriptureRecord(level, faith, java.util.Optional.of(priest.getUUID()), now);
         if (rec.isEmpty()) return 0L;
         cat.acquire(rec.get());
         econ.withdraw(BOOK_COST);

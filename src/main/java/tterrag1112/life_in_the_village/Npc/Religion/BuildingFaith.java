@@ -138,7 +138,7 @@ public final class BuildingFaith {
         }
         if (best != null) return best;
         // No minority present — deterministic non-dominant fallback.
-        for (Religion r : ReligionRegistry.all()) {
+        for (Religion r : Religions.all(level)) {
             if (!r.id().equals(dominant)) return r.id();
         }
         return dominant; // single registered religion — degenerate, but safe

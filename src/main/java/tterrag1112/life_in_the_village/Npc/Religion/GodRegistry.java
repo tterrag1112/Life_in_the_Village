@@ -21,8 +21,15 @@ import java.util.UUID;
  * is hand-authored here on the {@link God} (no longer derived from
  * {@code ReligionIdentity}/{@code Religion.deity()}, which kept only religion
  * NARRATIVE: cosmology / sacred history / aesthetics / practices). A religion
- * references its gods by id ({@link Religion#godIds()}); the reverse index maps a
- * god back to the religions that venerate it (for the piety tier + narrative).</p>
+ * references its gods by id ({@link Religion#godIds()}); the reverse mapping (god →
+ * the religions venerating it, for the piety tier + narrative) is computed on demand
+ * from the per-world store ({@link Religions}).</p>
+ *
+ * <p><b>Gods stay GLOBAL (F1b 1b).</b> Only the religion SET is per-world; the god
+ * catalog is shared across worlds. {@link #godsFor}/{@link #primaryGod} resolve a
+ * religion's {@code godIds} against this global catalog and need no level. The
+ * per-world links ({@link #religionsVenerating}/{@link #primaryReligionOf}) take a
+ * {@link ServerLevel} and read the world's religion set.</p>
  */
 public final class GodRegistry {
 
@@ -34,10 +41,6 @@ public final class GodRegistry {
     public static final String FORGE_FATHER = "forge_father";
 
     private static final Map<String, God> GODS = new LinkedHashMap<>();
-    /** F1a sub-stage 3a — reverse index: god id → the religions that venerate it.
-     *  Used by the favour economy to resolve a god's piety tier (piety is belief in
-     *  a RELIGION) and by 3b to map a god back to its religion for content. */
-    private static final Map<String, List<String>> RELIGIONS_BY_GOD = new LinkedHashMap<>();
     private static volatile boolean initialised = false;
 
     private GodRegistry() {}
@@ -89,18 +92,28 @@ public final class GodRegistry {
 
     /** F1a sub-stage 3a — the religion ids that venerate {@code godId} (reverse of
      *  {@link Religion#godIds()}). Used to resolve a god's piety tier (the best
-     *  belief among its venerating religions). Empty for an unknown god. */
-    public static List<String> religionsVenerating(String godId) {
+     *  belief among its venerating religions). Empty for an unknown god.
+     *
+     *  <p>F1b 1b — computed on demand from the PER-WORLD store ({@link Religions});
+     *  religions are few and this is not a per-tick hot path (it walks the in-memory
+     *  store, not disk). The static reverse index is gone — the world owns the set.</p> */
+    public static List<String> religionsVenerating(ServerLevel level, String godId) {
         ensureInit();
-        return godId == null ? List.of() : RELIGIONS_BY_GOD.getOrDefault(godId, List.of());
+        if (level == null || godId == null) return List.of();
+        List<String> out = new ArrayList<>();
+        for (Religion r : Religions.all(level)) {
+            if (r.godIds().contains(godId)) out.add(r.id());
+        }
+        return out;
     }
 
     /** F1a sub-stage 3b — a religion that venerates {@code godId} (its first), for
      *  reading RELIGION-narrative attributes (cosmology / calendar / sacred history)
-     *  the deity attributes don't cover. Empty for an unknown / unvenerated god. */
-    public static Optional<Religion> primaryReligionOf(String godId) {
-        List<String> rids = religionsVenerating(godId);
-        return rids.isEmpty() ? Optional.empty() : ReligionRegistry.find(rids.get(0));
+     *  the deity attributes don't cover. Empty for an unknown / unvenerated god.
+     *  F1b 1b — resolved against the per-world store. */
+    public static Optional<Religion> primaryReligionOf(ServerLevel level, String godId) {
+        List<String> rids = religionsVenerating(level, godId);
+        return rids.isEmpty() ? Optional.empty() : Religions.find(level, rids.get(0));
     }
 
     /**
@@ -115,7 +128,7 @@ public final class GodRegistry {
         if (piety == null) return List.of();
         LinkedHashSet<God> set = new LinkedHashSet<>();
         for (String rid : piety.beliefs().keySet()) {
-            ReligionRegistry.find(rid).ifPresent(r -> set.addAll(godsFor(r)));
+            Religions.find(level, rid).ifPresent(r -> set.addAll(godsFor(r)));
         }
         return new ArrayList<>(set);
     }
@@ -192,12 +205,8 @@ public final class GodRegistry {
         register(thePattern());
         register(seaMother());
         register(forgeFather());
-        // Build the reverse index from the authored religion → godIds links.
-        for (Religion r : ReligionRegistry.all()) {
-            for (String gid : r.godIds()) {
-                RELIGIONS_BY_GOD.computeIfAbsent(gid, k -> new ArrayList<>()).add(r.id());
-            }
-        }
+        // F1b 1b — no reverse index built here anymore; religionsVenerating computes
+        // it on demand from the per-world store (the world owns the religion set).
         initialised = true;
         LOGGER.info("[GodRegistry] Registered {} gods", GODS.size());
     }

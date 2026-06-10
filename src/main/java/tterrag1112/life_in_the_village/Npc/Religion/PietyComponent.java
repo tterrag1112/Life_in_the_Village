@@ -87,16 +87,10 @@ public final class PietyComponent {
 
     // ── Rite attendance ────────────────────────────────────────────────────
 
-    /** Spec line 60. True when the NPC plausibly attends rites of
-     *  type {@code r} for their primary religion. v1 returns
-     *  {@code primaryStrength() >= 0.2 && primary religion ritualises r}. */
-    public boolean attendsRite(Rite r) {
-        if (primaryStrength() < 0.2f) return false;
-        return primaryReligion()
-                .flatMap(ReligionRegistry::find)
-                .map(rel -> rel.ritualises(r))
-                .orElse(false);
-    }
+    // F1b 1b — the former attendsRite(Rite) helper was deleted as a zero-caller
+    // orphan (its only static-registry reference would otherwise need a level
+    // threaded into this data component). Per-world rite-ritualisation checks go
+    // through RiteScheduler.religionRitualises(level, …) instead.
 
     public long lastRiteAttendedTick()    { return lastRiteAttendedTick; }
     public int  ritesAttendedThisMonth()  { return ritesAttendedThisMonth; }

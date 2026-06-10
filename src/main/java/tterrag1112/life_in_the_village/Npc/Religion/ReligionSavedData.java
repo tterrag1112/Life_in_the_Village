@@ -78,7 +78,7 @@ public class ReligionSavedData extends SavedData {
      *  store is empty (a fresh world). No-op once seeded or once a saved set loaded. */
     private void seedIfEmpty() {
         if (!religions.isEmpty()) return;
-        for (Religion r : ReligionRegistry.all()) religions.put(r.id(), r);
+        for (Religion r : ReligionRegistry.templates()) religions.put(r.id(), r);
         setDirty();
     }
 

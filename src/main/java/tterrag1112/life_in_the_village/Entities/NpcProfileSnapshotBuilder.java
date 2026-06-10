@@ -166,7 +166,7 @@ public final class NpcProfileSnapshotBuilder {
         // ── Religion (R9a) ───────────────────────────────────────────────────
         var piety = npc.getPiety();
         var religion = piety.primaryReligion()
-                .flatMap(tterrag1112.life_in_the_village.Npc.Religion.ReligionRegistry::find);
+                .flatMap(id -> tterrag1112.life_in_the_village.Npc.Religion.Religions.find(level, id));
         String religionName = religion
                 .map(tterrag1112.life_in_the_village.Npc.Religion.Religion::displayName).orElse("");
         // F1a — the headline deity name is the PRIMARY god's name (impersonal gods

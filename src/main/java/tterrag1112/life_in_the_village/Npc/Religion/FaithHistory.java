@@ -52,7 +52,7 @@ public final class FaithHistory {
         // Idempotency — a village's religious origins are written once.
         if (!log.byType(village.getId(), HistoryEventType.SACRED_HISTORY).isEmpty()) return 0;
 
-        Religion religion = ReligionRegistry.get(religionId);
+        Religion religion = Religions.get(level, religionId);
         String faithName = religion != null ? religion.displayName() : religionId;
 
         int seeded = 0;
