@@ -76,6 +76,11 @@ public final class DivineTheophany {
         for (God god : GodRegistry.playerGods(level, pid)) {
             float fav = DivineFavour.current(level, pid, god.id(), now);
 
+            // SR1 — living-saint loss review on the per-player divine cadence (cheap:
+            // a map lookup; the tier read only if they are a saint of this god).
+            tterrag1112.life_in_the_village.Npc.Religion.Saints.Saints
+                    .reviewPlayerLapse(level, pid, god.id(), fav, now);
+
             // Favour pole (PIOUS, peak favour). Perf guard: the structure-backed
             // sacredness query runs ONLY behind the cheap pre-checks AND only when the
             // (cheap) holy-day ease alone hasn't already crossed the threshold and
@@ -148,6 +153,10 @@ public final class DivineTheophany {
                         tterrag1112.life_in_the_village.Npc.Religion.Sacred
                                 .SacredSpaceSavedData.INITIAL_STRENGTH);
         RiteSavedData.get(level).setTheophanyTick(player.getUUID(), god.id() + "|favour", now);
+        // SR1 — the glory IS the anointing: a PIOUS player at peak favour (the gate
+        // this fires behind) becomes a living saint of the god. Idempotent.
+        tterrag1112.life_in_the_village.Npc.Religion.Saints.Saints
+                .anointPlayer(level, player.getUUID(), god.id(), now);
     }
 
     /** Theophany of wrath — a dread manifestation + a severe but NON-permanent

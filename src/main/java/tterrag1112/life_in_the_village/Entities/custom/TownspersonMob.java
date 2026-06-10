@@ -2473,6 +2473,14 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         tterrag1112.life_in_the_village.Npc.Aging.DeathArc
                 .onNpcDeath(npc, level);
 
+        // SR2 — canonization check (after burial, so the grave exists): a living saint
+        // who dies, a martyr, or a recorded Venerable. The death-source entity (killer)
+        // classifies martyrdom.
+        net.minecraft.world.entity.Entity killer =
+                event.getSource() == null ? null : event.getSource().getEntity();
+        tterrag1112.life_in_the_village.Npc.Religion.Saints.Canonization
+                .onNpcDeath(level, npc, killer, level.getGameTime());
+
         // ── Phase 1: fire WitnessedDeath for every nearby NPC, FamilyDeath
         //    for every household member of the deceased.
         UUID deceasedId = npc.getUUID();

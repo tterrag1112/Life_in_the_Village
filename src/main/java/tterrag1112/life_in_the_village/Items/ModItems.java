@@ -50,6 +50,13 @@ public class ModItems {
             StallLeaseItem::new,
             props -> new Item.Properties().stacksTo(1));
 
+    /** SR4 — a saint's relic. Carries a {@code RelicData} component; minted on
+     *  canonization (one per saint). */
+    public static final DeferredItem<Item> RELIC = ITEMS.registerItem(
+            "relic",
+            RelicItem::new,
+            props -> new Item.Properties().stacksTo(1).fireResistant());
+
 
 
 

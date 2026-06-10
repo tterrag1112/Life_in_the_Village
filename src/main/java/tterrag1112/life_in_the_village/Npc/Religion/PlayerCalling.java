@@ -34,6 +34,7 @@ public record PlayerCalling(String religionId, FavourAct act, long issuedTick) {
             case COMMISSION_RITE -> "Commission a rite from a priest.";
             case PILGRIMAGE      -> "Undertake a pilgrimage.";
             case VIRTUE          -> "Live your faith's virtue.";
+            case PRAYER          -> "Pray for a saint's intercession.";
         };
     }
 }

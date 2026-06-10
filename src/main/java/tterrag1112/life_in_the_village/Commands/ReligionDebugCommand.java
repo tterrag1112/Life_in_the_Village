@@ -177,6 +177,14 @@ public final class ReligionDebugCommand {
                                 })
                                 .executes(ctx -> handleSacred(ctx,
                                         StringArgumentType.getString(ctx, "godId")))))
+
+                // Saints & Relics SR1 — list the living saints (holy people) per god.
+                .then(Commands.literal("saints")
+                        .executes(ReligionDebugCommand::handleSaints))
+
+                // Saints & Relics SR3 — pray for a saint's intercession at their grave.
+                .then(Commands.literal("pray")
+                        .executes(ReligionDebugCommand::handlePray))
         );
     }
 
@@ -317,6 +325,72 @@ public final class ReligionDebugCommand {
         }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // ── /religion saints (Saints & Relics SR1) ──────────────────────────────
+
+    /** Lists the living saints (holy people) grouped by god: the player/NPC being id,
+     *  whether it's a player, and how long ago they were recognised. Read-only. */
+    private static int handleSaints(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var saints = tterrag1112.life_in_the_village.Npc.Religion.Saints.SaintsSavedData.get(level);
+        var all = saints.all();
+        StringBuilder sb = new StringBuilder("§e=== Living saints (" + all.size() + ") ===");
+        if (all.isEmpty()) sb.append("\n  §7(none yet — a glory theophany anoints a player; "
+                + "sustained PIOUS piety designates an NPC)");
+        long now = level.getGameTime();
+        for (var g : tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.all()) {
+            var ofGod = saints.livingSaintsOf(g.id());
+            if (ofGod.isEmpty()) continue;
+            sb.append(String.format(Locale.ROOT, "%n§6Holy of %s§7 (%s):",
+                    g.displayName(), g.id()));
+            for (var s : ofGod) {
+                long days = Math.max(0, (now - s.becameTick()) / 24000L);
+                sb.append(String.format(Locale.ROOT, "%n  §d★ §f%s §8[%s]§7 — %d day(s)",
+                        s.beingId(), s.isPlayer() ? "player" : "npc", days));
+            }
+        }
+        // SR2 — the canonized (deceased) roster + pending Venerables.
+        var canonized = saints.canonizedSaints();
+        sb.append(String.format(Locale.ROOT, "%n§e--- Canonized (%d) ---", canonized.size()));
+        for (var s : canonized) {
+            sb.append(String.format(Locale.ROOT, "%n  §6%s§7 — %s of §f%s§7, virtue %s, saint's day %d%s%s",
+                    s.name(), s.martyr() ? "Martyr" : "Saint",
+                    tterrag1112.life_in_the_village.Npc.Religion.GodRegistry.find(s.godId())
+                            .map(gg -> gg.displayName()).orElse(s.godId()),
+                    s.virtue().name(), s.saintDay(), s.martyr() ? " §c(martyr)" : "",
+                    s.relicId().isPresent() ? " §5[relic]" : ""));
+        }
+        var venerables = saints.venerables();
+        if (!venerables.isEmpty()) {
+            sb.append(String.format(Locale.ROOT, "%n§e--- Venerable (awaiting a high priest) (%d) ---",
+                    venerables.size()));
+            for (var s : venerables) {
+                sb.append(String.format(Locale.ROOT, "%n  §7%s — Venerable of %s §8(veneration %d/%d)",
+                        s.name(), s.religionId(), s.veneration(),
+                        tterrag1112.life_in_the_village.Npc.Religion.Saints.Intercession
+                                .VENERATION_THRESHOLD));
+            }
+        }
+        src.sendSuccess(() -> Component.literal(sb.toString())
+                .withStyle(ChatFormatting.WHITE), false);
+        return 1;
+    }
+
+    // ── /religion pray (Saints & Relics SR3) ────────────────────────────────
+
+    /** Prays for the intercession of the saint whose grave the player stands at. */
+    private static int handlePray(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        var result = tterrag1112.life_in_the_village.Npc.Religion.Saints.Intercession
+                .pray(level, player, level.getGameTime());
+        if (!result.ok()) { src.sendFailure(Component.literal(result.message())); return 0; }
+        src.sendSuccess(() -> Component.literal("§d" + result.message()), false);
         return 1;
     }
 
@@ -472,8 +546,12 @@ public final class ReligionDebugCommand {
             // S2 — flag a holy day for this god (today, via a believed venerating faith).
             boolean holy = tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime
                     .isHolyDay(level, pid, gid, now);
-            sb.append(String.format(Locale.ROOT, "%n  §6%-16s§8(%s)§7 %.1f%s",
-                    name, gid, fav, holy ? " §e☀ HOLY DAY" : ""));
+            // SR1 — flag the player as a living saint (Holy of) of this god.
+            boolean saint = tterrag1112.life_in_the_village.Npc.Religion.Saints.SaintsSavedData
+                    .get(level).isLivingSaint(pid, gid);
+            sb.append(String.format(Locale.ROOT, "%n  §6%-16s§8(%s)§7 %.1f%s%s",
+                    name, gid, fav, saint ? " §d★ HOLY OF " + name : "",
+                    holy ? " §e☀ HOLY DAY" : ""));
         }
         src.sendSuccess(() -> Component.literal(sb.toString())
                 .withStyle(ChatFormatting.WHITE), false);

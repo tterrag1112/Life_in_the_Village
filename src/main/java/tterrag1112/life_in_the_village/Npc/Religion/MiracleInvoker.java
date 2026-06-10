@@ -4,6 +4,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace;
 import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime;
+import tterrag1112.life_in_the_village.Npc.Religion.Saints.SaintFactor;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -49,7 +50,8 @@ public final class MiracleInvoker {
         // (they ease, never bypass the gate or the cap).
         float effFavour = favour
                 * SacredSpace.amplifierAt(level, god.id(), player.blockPosition())
-                * SacredTime.holyDayFactor(level, pid, god.id(), now);
+                * SacredTime.holyDayFactor(level, pid, god.id(), now)
+                * SaintFactor.amplifierFor(level, pid, god.id());
         if (effFavour < m.minFavour() || favour < m.cost()) return Status.LOCKED_FAVOUR;
         return Status.AVAILABLE;
     }
@@ -81,7 +83,8 @@ public final class MiracleInvoker {
         // the spend.
         float effFavour = favour
                 * SacredSpace.amplifierAt(level, god.id(), player.blockPosition())
-                * SacredTime.holyDayFactor(level, pid, god.id(), now);
+                * SacredTime.holyDayFactor(level, pid, god.id(), now)
+                * SaintFactor.amplifierFor(level, pid, god.id());
         if (effFavour < m.minFavour() || favour < m.cost()) {
             return new Result(false, "Not enough favour for " + m.displayName()
                     + " (need " + Math.round(Math.max(m.minFavour(), m.cost()))

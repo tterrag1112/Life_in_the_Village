@@ -63,13 +63,16 @@ public class SacredSpaceSavedData extends SavedData {
      * ({@code anchorStrength} at {@code anchorTick} — a rite refresh resets both).
      */
     public record Imprint(String godId, BlockPos pos, long bornTick,
-                          float anchorStrength, long anchorTick) {
+                          float anchorStrength, long anchorTick, boolean permanent) {
         public static final Codec<Imprint> CODEC = RecordCodecBuilder.create(i -> i.group(
                 Codec.STRING.fieldOf("godId").forGetter(Imprint::godId),
                 BlockPos.CODEC.fieldOf("pos").forGetter(Imprint::pos),
                 Codec.LONG.fieldOf("bornTick").forGetter(Imprint::bornTick),
                 Codec.FLOAT.fieldOf("anchorStrength").forGetter(Imprint::anchorStrength),
-                Codec.LONG.fieldOf("anchorTick").forGetter(Imprint::anchorTick)
+                Codec.LONG.fieldOf("anchorTick").forGetter(Imprint::anchorTick),
+                // SR2 — a saint's-grave imprint is permanent (never decays/prunes); a
+                // theophany imprint is false. optionalFieldOf so pre-SR2 saves load.
+                Codec.BOOL.optionalFieldOf("permanent", false).forGetter(Imprint::permanent)
         ).apply(i, Imprint::new));
 
         /** A stable map key (a god may imprint a spot once; distinct gods don't collide). */
@@ -106,6 +109,7 @@ public class SacredSpaceSavedData extends SavedData {
      *  {@link #LIFETIME_TICKS} (×{@link #SHRINE_LIFETIME_MULT} when a same-faith shrine
      *  is near), from {@code anchorStrength} at {@code anchorTick}. 0 once expired. */
     private float currentStrength(ServerLevel level, Imprint im, long now) {
+        if (im.permanent()) return im.anchorStrength();     // SR2 — saint grave: no decay
         float lifetime = LIFETIME_TICKS;
         if (BuildingFaith.hasBuildingOfGodNear(level, im.godId(), im.pos(),
                 SHRINE_SLOW_RADIUS, t -> t == BuildingType.SHRINE)) {
@@ -145,11 +149,22 @@ public class SacredSpaceSavedData extends SavedData {
 
     // ── Writes ───────────────────────────────────────────────────────────────
 
-    /** Sacred Space S3 — a glory theophany CREATES an imprint at {@code pos} (replacing
-     *  any prior imprint of the same god at the same spot). */
+    /** Sacred Space S3 — a glory theophany CREATES a (decaying) imprint at {@code pos}
+     *  (replacing any prior imprint of the same god at the same spot). */
     public void addImprint(String godId, BlockPos pos, long now, float strength) {
+        addImprint(godId, pos, now, strength, false);
+    }
+
+    /** SR2 — a saint's grave CREATES a PERMANENT (non-decaying) imprint; the same
+     *  shrine-slow / rite-refresh still raise it on top. */
+    public void addPermanentImprint(String godId, BlockPos pos, long now, float strength) {
+        addImprint(godId, pos, now, strength, true);
+    }
+
+    private void addImprint(String godId, BlockPos pos, long now, float strength, boolean permanent) {
         if (godId == null || pos == null) return;
-        Imprint im = new Imprint(godId, pos.immutable(), now, Math.min(STRENGTH_CAP, strength), now);
+        Imprint im = new Imprint(godId, pos.immutable(), now,
+                Math.min(STRENGTH_CAP, strength), now, permanent);
         imprints.put(im.key(), im);
         setDirty();
     }
@@ -167,7 +182,7 @@ public class SacredSpaceSavedData extends SavedData {
             if (!im.godId().equals(godId)) continue;
             if (at.horizontalDistanceTo(im.pos()) > REFRESH_RADIUS) continue;
             float raised = Math.min(STRENGTH_CAP, currentStrength(level, im, now) + RITE_BOOST);
-            e.setValue(new Imprint(im.godId(), im.pos(), im.bornTick(), raised, now));
+            e.setValue(new Imprint(im.godId(), im.pos(), im.bornTick(), raised, now, im.permanent()));
             changed = true;
         }
         if (changed) setDirty();

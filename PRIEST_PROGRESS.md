@@ -10266,3 +10266,518 @@ javac can't run here.
    routine rite on un-imprinted ground creates none.
 6. **Persistence + perf.** Save+reload → imprints persist; confirm no per-tick spam
    (decay is read-time; the fold is O(1) when no imprints exist).
+
+## Saints & Relics SR1 — living saints (holy people) (2026-06-10)
+
+The first holy-layer stage and the richer saint tier: a **living holy person** — a
+status a devout player or NPC attains in life through deep devotion and a god's
+recognition. The player's religious summit; an NPC's path to a revered focal point; the
+seed of the canonized roster (SR2 auto-canonizes a living saint who dies). SR1 builds
+the **status**: who becomes one, what they get (recognition + personal divine ease), how
+it's lost, where it's stored and shown. No canonization/death (SR2), intercession (SR3),
+or relics (SR4).
+
+### Disposition (investigation)
+
+- **Anointing hook:** `DivineTheophany.fireFavour` already fires only at peak favour for
+  a PIOUS player (the favour-pole tick gates `tierForGod == PIOUS`), so the glory
+  manifesting IS the recognition — no extra numeric threshold needed.
+- **Gates:** `PietyComponent.primaryTier()` / `DivineFavour.tierForGod` (PIOUS),
+  `DivineFavour.current` (favour), `meetsMonthlyAttendance()` (NPC sustained signal).
+- **Amplifier-composition pattern:** the favour grant (`DivineFavour.awardConcept`) and
+  miracle gate (`MiracleInvoker`) already fold `SacredSpace.amplifierAt` ×
+  `SacredTime.holyDayFactor` multiplicatively — `SaintFactor` slots in as one more
+  factor with identical shape.
+- **SavedData idiom:** `SacredSpaceSavedData`/`RiteSavedData` — new `SaintsSavedData`.
+- **Daily NPC hook:** `RiteScheduler.dailyTick` already does a per-village pass; the NPC
+  saint sweep rides it.
+
+### Model + what shipped
+
+- **`SaintsSavedData`** (new, `Npc/Religion/Saints/`, storage `life_in_the_village_saints`)
+  — `Map<UUID beingId, LivingSaint(beingId, godId, becameTick, isPlayer)>` (a being is
+  the Holy of at most one god). Reads `isLivingSaint`/`livingSaintGod`/`livingSaintsOf`/
+  `all`; writes `add` (idempotent) / `remove`. List-codec rebuilt to the map; empty
+  default. Shaped to accept SR2's canonized roster (a second list) later.
+- **`SaintFactor`** (new) — the personal-ease multiplier mirroring the sacred amplifiers:
+  `amplifierFor(level, beingId, godId)` = `SAINT_AMPLIFIER` (1.25) for a living saint of
+  that god, else 1.0. The one home for the saint multiplier.
+- **`Saints`** (new) — the one home for the transitions: `anointPlayer` (idempotent),
+  `reviewPlayerLapse` (revoke on favour ≤ CURSE band or tier < PIOUS), `dailyNpcSweep`
+  (designate sustained-PIOUS NPCs of their faith's primary god; revoke on piety lapse).
+- **Anointing (player):** `DivineTheophany.fireFavour` → `Saints.anointPlayer`.
+- **Personal ease:** `awardConcept` and `MiracleInvoker.status`/`cast` now multiply by
+  `SaintFactor.amplifierFor` beside the space × time amplifiers (composes; still clamped
+  to the favour cap — eases, never bypasses the cap or tier gate).
+- **Loss:** player on the per-player theophany cadence (`DivineTheophany.tick`); NPC on
+  the daily `RiteScheduler` sweep. Both routed through `Saints` (one logic home).
+- **Surfacing:** `/religion saints` (living saints by god) + a `★ HOLY OF <god>` flag on
+  `/religion favour view`.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `DivineTheophany.fireFavour` (player anoint), `tierForGod` /
+   `DivineFavour.current` / `PietyComponent` (gates), `GodRegistry.primaryGod` (NPC patron
+   god). Confirmed.
+2. **Downstream callers.** Favour grant + miracle gate now also fold `SaintFactor`; the
+   two command readouts. **Non-saints read 1.0 → today's exact numbers.**
+3. **Sibling systems.** Composes with sacred space (S1b) × time (S2) MULTIPLICATIVELY —
+   distinct sources, no double-count. The anointing rides the existing `fireFavour`
+   (after its effect + cooldown stamp) — it does not disturb the theophany's
+   cooldown/milestone or effect.
+4. **Exhaustive switches.** None added — `SaintFactor` is a boolean→multiplier (no enum);
+   `Saints` switches nothing. No existing enum changed.
+
+### Simplification Sweep
+
+- **One store** (`SaintsSavedData`), **one multiplier helper** (`SaintFactor`, folded
+  beside the existing amplifiers — not a parallel favour path), **one transitions home**
+  (`Saints`: anoint / player-lapse / NPC-sweep all live here; the effect sites only
+  READ via `SaintFactor`/`isLivingSaint`).
+- **Touched classes:** `SaintsSavedData` (new), `SaintFactor` (new), `Saints` (new),
+  `DivineTheophany`, `DivineFavour`, `MiracleInvoker`, `RiteScheduler`,
+  `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **Optional favour-ceiling bump skipped** — kept to the ease amplifier + recognition
+  (the prompt's stated core); the saint's grant is eased but still clamped to the
+  piety-tier cap. A bounded ceiling bump can be added later if desired.
+- **Surfacing via command readouts** (`/religion saints` + favour-view flag) rather than
+  the GUI player-religion screen — avoids packet/screen churn ("keep it light"); the
+  screen "Holy of <God>" line is a light future add (flagged).
+- **NPC reverence is roster-only** — no greeting/standing AI flag (the prompt allowed
+  "a light flag at most / optional"); the `/religion saints` readout surfaces NPC saints.
+  Deeper NPC reverence deferred.
+- **Player loss reviewed on the theophany cadence** (every 200 ticks per player) and NPC
+  on the daily sweep — both lazy/periodic, no per-tick scan, per the discipline.
+
+### Out-of-scope but flagged
+
+- **SR2** — canonized / deceased saints: a living saint who dies → auto-canonize (martyr
+  fast-track + Venerable→deliberate canonization for others); a `Saint` record +
+  chronicle + grave epitaph + an S3 imprint at the grave + a saint's-day calendar add via
+  `ReligionSavedData.put`. (`SaintsSavedData` is shaped to hold the dead roster.)
+- **SR3** — intercession (pray-to-saint). **SR4** — relics.
+- **Deferred** — NPC favour / NPC theophany to unify the two saint paths; bless-others /
+  community aura; the GUI-screen "Holy of" line; deeper NPC reverence.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the S3 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep**: every `SaintsSavedData` / `SaintFactor` /
+`Saints.Saints` reference resolves; `LivingSaint` is a 4-field record codec (UUID-string
++ string + long + bool) under the cap; the multiplier reads 1.0 for non-saints
+(behaviour-preserving); `DivineFavour.CURSE_AT` / `tierForGod` are public for the
+cross-package lapse check; the NPC sweep + player review are both periodic (no per-tick
+scan).
+
+### Smoke test (user-runnable)
+
+1. **Player anointing.** As a PIOUS Sunstead player, drive favour to peak and force a
+   Sun-Mother glory theophany (`/religion theophany favour sun_mother`) → `/religion
+   saints` lists you as Holy of the Sun-Mother and `/religion favour view` shows the
+   `★ HOLY OF` flag.
+2. **Personal ease.** An offering / near-threshold miracle with the Sun-Mother is then
+   eased (×1.25 on top of any sacred space/time) vs a non-saint; the favour still clamps
+   at the cap.
+3. **Loss.** Drive favour into displeasure (`/religion sacrilege sunstead 200`) or drop
+   below PIOUS → within a theophany check the status is revoked (`/religion saints` drops
+   you).
+4. **NPC designation + loss.** A sustained-PIOUS NPC of a faith is designated (within a
+   day's sweep) and shows in `/religion saints` as an `npc`; if its piety lapses below
+   PIOUS it's revoked on a later sweep.
+5. **No regression / perf.** A non-saint player and NPC see today's exact numbers;
+   confirm no per-tick spam (the saint multiplier is an O(1) map read; the NPC sweep is
+   daily, the player review on the 200-tick theophany cadence).
+
+## Saints & Relics SR2 — canonized (deceased) saints (2026-06-10)
+
+The second saint tier: the roster of the venerated dead. A living saint who dies is
+auto-canonized; a martyr is canonized for dying for the faith; an exceptionally
+virtuous NPC becomes a "Venerable" a high priest later elevates. Canonization inscribes
+the grave, makes it lasting holy ground, gives the faith a new saint's day, and
+chronicles it — all by REUSING the sacred-site, calendar, and chronicle machinery.
+
+### Disposition (investigation)
+
+- **Death pipeline:** `TownspersonMob.onNpcDeath(LivingDeathEvent)` → `DeathArc.onNpcDeath`
+  buries via `GraveyardSavedData.bury` (grave slot = `gravePos`). Death cause was NOT
+  retained — `event.getSource().getEntity()` (the killer) is now captured + threaded so
+  martyrdom is classifiable.
+- **SR1 store:** `SaintsSavedData` (living roster) — extended with the canonized `Saint`
+  roster (the room SR1 left).
+- **Qualification reads:** `Saints.livingSaintGod` (path 1), `getPiety().primaryTier()`
+  (DEVOUT/PIOUS), `getRetirementState().mentoredInPast()` (virtue signal),
+  `BuildingFaith.hasSeatedPriestOfFaith` (clergy gate).
+- **Reuse points:** `Grave.epitaph` (+ a new `inscribe`); `SacredSpaceSavedData`
+  imprint (made durable); `ReligionSavedData.get/put` + `ReligiousCalendar` (saint's
+  day); `VillageHistoryLog.record` + a new `HistoryEventType.SAINT_CANONIZED`.
+
+### Model + what shipped
+
+- **`SaintsSavedData.Saint`** (new record) `(saintId, name, religionId, godId, virtue
+  [FaithConcept], epitaph, martyr, canonized, deathTick, gravePos, saintDay, relicId
+  [SR4 seam, empty])` — a `canonized=false` record is a pending **Venerable**. Second
+  codec list beside the living roster; accessors `canonizedSaints`/`venerables`/
+  `saintsOf`/`saintAtGrave`/`putSaint`.
+- **`Canonization`** (new) — the ONE entry point + the three paths + the shared tie-in
+  routine:
+  - `onNpcDeath(level, deceased, killer, now)` (after burial): **path 1** living saint →
+    auto (moved off the living roster); **path 2** martyr (DEVOUT+ slain by another
+    living entity) → auto; **path 3** Venerable (PIOUS, or DEVOUT + a mentorship
+    legacy) → recorded.
+  - `dailyVenerableSweep` — a high priest of the faith (`hasSeatedPriestOfFaith` in any
+    village) elevates pending Venerables. From `RiteScheduler.dailyTick`.
+  - `applyTieIns` — the ONE reuse routine (auto-canonize and elevation both call it):
+    inscribe epitaph → durable imprint → saint's day → chronicle.
+- **Durable grave imprint:** `SacredSpaceSavedData.Imprint` gained a `permanent` flag
+  (optionalFieldOf, pre-SR2 saves load false); `currentStrength` returns the anchor
+  strength with no decay/prune when permanent; `addPermanentImprint` is the saint-grave
+  writer (the shrine-slow / rite-refresh still raise it). The decaying theophany imprint
+  is unchanged (permanent=false).
+- **Saint's day — the FIRST real `ReligionSavedData.put`:** `addSaintDay` fetches the
+  per-world religion, copies its calendar + adds `"St. <name>'s Day" → saintDay` (the
+  death-day's day-of-year, or the next free day), rebuilds the `Religion` preserving
+  every other field (godIds, rites, …), and `put`s it. `SacredTime` then applies the
+  holy-day bonus on that day automatically.
+- **Chronicle:** `SAINT_CANONIZED` (new `HistoryEventType`, MAJOR → never pruned) in the
+  village holding the grave.
+- **Epitaph:** the formerly-unused `Grave.epitaph` is inscribed ("Here lies <name>,
+  Saint/Martyr of <God>.") via new `Graveyard.inscribe` / `GraveyardSavedData
+  .inscribeEpitaph`.
+- **Surfacing:** `/religion saints` now also lists the canonized roster (name, martyr?,
+  god, virtue, saint's day) + pending Venerables. The grave reads sacred in
+  `/religion sacred` via the imprint.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `LivingDeathEvent` (death + the now-captured killer), SR1
+   `Saints` living roster, piety tier + `mentoredInPast`, clergy lookup. Confirmed.
+2. **Downstream callers.** `SaintsSavedData` (roster), `Graveyard` (epitaph),
+   `SacredSpaceSavedData` (permanent imprint → flows through `sacrednessAt` and every
+   sacred effect), `ReligionSavedData.put` (saint's day → `SacredTime`),
+   `VillageHistoryLog` (chronicle). Each runs through the single `applyTieIns`.
+3. **Sibling systems.** The saint's-day `put` rebuilds the `Religion` field-for-field
+   (only the calendar changes) — godIds/rites/preferredBookCategories intact, and the
+   relation OVERRIDES live in `ReligionSavedData`'s separate map (untouched). The
+   permanent imprint composes additively into `sacrednessAt` with natural/built/theophany
+   (no double-count — it's just another imprint summed by god + distance).
+4. **Exhaustive switches.** **Grepped every `switch` — none is over `HistoryEventType`**
+   (the matches were `goal.type()`/`rite.type()`/`effect.type()`/etc., distinct enums);
+   `HistoryEventType` uses a per-value `defaultImportance()` field, not a consumer
+   switch. `SAINT_CANONIZED` needs no arm updates.
+
+### Simplification Sweep
+
+- **One canonization entry** (`Canonization.onNpcDeath`) feeding the three paths; **one
+  tie-in routine** (`applyTieIns`) so the auto and elevation paths don't each
+  re-implement epitaph+imprint+day+chronicle.
+- **Durable imprint did NOT fork the store** — a `permanent` flag on the existing
+  `Imprint` + one branch in `currentStrength`, reusing `addImprint`'s body.
+- **Touched classes:** `SaintsSavedData`, `Canonization` (new), `SacredSpaceSavedData`,
+  `Graveyard`, `GraveyardSavedData`, `HistoryEventType`, `TownspersonMob` (death hook),
+  `RiteScheduler` (sweep), `ReligionDebugCommand` (readout).
+
+### Deviations from prompt
+
+- **Canonization is NPC-only.** A player living saint who "dies" merely respawns — they
+  don't permanently die, get a grave, or canonize; their living-saint status (SR1) is
+  their summit. (The prompt's smoke test names a player, but canonizing a respawning
+  player is incoherent — the dead roster is for the truly dead.)
+- **Martyr bar = the conservative base** ("violent death of a DEVOUT+ believer slain by
+  another entity"). The "stronger if near a sacred site / by a rival faith" weighting is
+  a tuning refinement deferred (it would LOWER the bar; kept conservative so martyrdom
+  stays rare).
+- **Venerable virtue signal** = PIOUS, or DEVOUT + a mentorship legacy
+  (`mentoredInPast`). "Widely positively remembered" (memory polarity) left as a future
+  signal — `mentoredInPast` is a clean, stored proxy.
+
+### Out-of-scope but flagged
+
+- **SR3** — intercession: pray at a saint's grave → cooldowned favour / minor miracle,
+  refreshing the grave imprint; the veneration loop that can later auto-elevate
+  Venerables or drive a player-driven canonization ceremony.
+- **SR4** — relics (a saint's relic item); `relicId` stays empty.
+- **Deferred** — player-driven canonization ceremony / UI; NPC favour/theophany to unify
+  the saint paths; the richer martyr/Venerable signals (sacred-site/rival-faith
+  weighting, memory polarity).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container had drifted to the R9c base on resume; fetched + `git reset
+--hard` to the SR1 remote tip restored all pushed work — no loss.] Static review +
+**multi-line/qualifier-split grep** (the F1b lesson — and it mattered: the two
+`Canonization` call sites are FQN-split across lines, invisible to the single-line grep,
+confirmed present by the plain grep): the `Saint` codec is 12 fields (under the cap);
+`Imprint` is now 6 fields (the `permanent` optionalFieldOf keeps pre-SR2 saves loading);
+the saint's-day `put` rebuilds all 8 `Religion` fields (no clobber); `SAINT_CANONIZED`
+hits no exhaustive switch; `addImprint`'s existing 4-arg caller still resolves via the
+delegating overload.
+
+### Smoke test (user-runnable)
+
+1. **Living saint → auto-canonize.** Make an NPC a living saint (SR1: sustained PIOUS),
+   then kill it → `/religion saints` lists it under Canonized; `/religion sacred <god>`
+   at its grave reads sacred and DOESN'T fade over days; the grave epitaph is inscribed;
+   the faith gains a saint's day (verify a `SacredTime` holy-day bonus applies on that
+   day-of-year); a `SAINT_CANONIZED` chronicle entry exists.
+2. **Martyr.** Kill a DEVOUT+ non-saint NPC by another entity → auto-canonized as a
+   Martyr.
+3. **Venerable → elevation.** Let a PIOUS (or DEVOUT + mentor) NPC die of old age →
+   recorded as a Venerable; with a seated priest of its faith present, a daily sweep
+   canonizes it.
+4. **Nobody.** An ordinary (sub-DEVOUT, non-saint) NPC death canonizes no one.
+5. **`put` integrity + persistence.** Confirm the saint's-day `put` left the religion's
+   rites/godIds/relations intact (`/religion world list`, `/religion relations`);
+   save+reload and confirm the roster + saint's day + permanent grave imprint persist.
+
+## Saints & Relics SR3 — intercession (pray to a saint) (2026-06-10)
+
+The first player-initiated religious PETITION. At a canonized saint's grave a player
+prays for intercession — earning the saint's god's favour + a small blessing, TENDING
+the grave (refreshing its imprint), and VENERATING the saint. Veneration is also a
+grassroots path to sainthood: enough prayer at a Venerable's grave raises them by
+popular devotion, complementing SR2's clergy elevation.
+
+### Disposition (investigation)
+
+- **Prayer input:** graves are generic cobblestone-wall markers (the data is the
+  source of truth; `GraveVisit` is NPC-side), so a block-interaction would be
+  ambiguous. **Chosen: a `/religion pray` command** requiring the player within
+  {@code PRAY_RADIUS}=4 of a saint's grave (`SaintsSavedData.nearestSaintGrave`) — the
+  project's command-driven idiom, lower risk.
+- **Grave/Venerable resolution + veneration home:** added
+  `SaintsSavedData.nearestSaintGrave(pos, radius)` (canonized AND Venerable graves);
+  veneration accrues on the `Saint` record (new `veneration` int + `withVeneration`).
+- **Favour + blessing:** `DivineFavour.award(level, pid, godId, FavourAct.PRAYER, now,
+  gravePos)` — position = the grave, so the SR2 permanent imprint sacred-amplifies it
+  (S1b); a bounded `MobEffect` by the god's domain for the lesser blessing.
+- **Reuse for elevation:** SR2's tie-in routine, exposed as
+  `Canonization.canonizeVenerable` (delegates to the private `canonizeNow`/`applyTieIns`
+  — not a second routine).
+- **Cooldown:** per-player/per-saint last-prayer tick map in `SaintsSavedData`
+  (codec'd, persists).
+
+### What shipped
+
+- **`FavourAct.PRAYER`** (8f, no concept) — the intercession grant. (Enum-sweep: its
+  only exhaustive `switch`, `PlayerCalling.describe`, got a `PRAYER` arm; `CALLABLE` is
+  an explicit array, so PRAYER is not auto-offered as a divine-calling task.)
+- **`SaintsSavedData`** — `Saint.veneration` (+ `withVeneration`); `nearestSaintGrave`;
+  a `prayerCooldowns` map (3rd codec field, `optionalFieldOf` empty) + `canPray`/
+  `recordPrayer`.
+- **`Intercession`** (new, `Saints/`) — the ONE prayer entry point: find the nearest
+  saint grave → gate (FAITHFUL+ with the patron god via `tierForGod`) → per-saint/day
+  cooldown → favour grant (grave-position, sacred-amplified) → a lesser domain blessing
+  (1-min, amp 0) → `refreshNear` the grave imprint (tend) → record cooldown → at a
+  Venerable's grave, accrue veneration and, at {@code VENERATION_THRESHOLD}=10, call
+  `Canonization.canonizeVenerable`. Returns a `Result(ok, message)`.
+- **`Canonization.canonizeVenerable`** (new public) — popular elevation reusing the SR2
+  tie-ins (idempotent — no-op if already canonized).
+- **Surfacing:** `/religion pray` (chat feedback); `/religion saints` shows each
+  Venerable's `veneration N/10` progress.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `SaintsSavedData` (grave lookup / Venerables / veneration),
+   the `/religion pray` input, `DivineFavour` (favour + the PRAYER act),
+   `SacredSpaceSavedData.refreshNear` (tend), `tierForGod` (gate). Confirmed.
+2. **Downstream callers.** The favour grant (now also from prayer; PRAYER arm added to
+   the lone FavourAct switch), the blessing effect, the elevation (SR2 `applyTieIns`
+   via `canonizeVenerable`), the readouts. Each dispositioned.
+3. **Sibling systems.** **No runaway feedback:** the prayer is amplified by the grave
+   imprint AND refreshes it, but (a) the per-saint/day cooldown bounds the loop to one
+   grant/day, (b) `refreshNear` raises the imprint only toward `STRENGTH_CAP`, and (c)
+   the favour grant is still clamped to the piety cap — so no unbounded farming. **SR2
+   compose:** `canonizeVenerable` is idempotent and flips `canonized=true` (the saint
+   leaves `venerables()`), so the clergy sweep can't double-canonize it.
+4. **Exhaustive switches.** `FavourAct` — the one exhaustive switch
+   (`PlayerCalling.describe`) updated with `PRAYER`; the `god.domain()` blessing switch
+   covers all four `DeityDomain` arms. No other enum changed.
+
+### Simplification Sweep
+
+- **One intercession entry** (`Intercession.pray`); **one elevation routine** (the
+  grassroots path calls SR2's `Canonization.canonizeVenerable` → the same `applyTieIns`
+  — no second canonization implementation); **one cooldown/veneration home**
+  (`SaintsSavedData`).
+- **Touched classes:** `DivineFavour` (PRAYER), `PlayerCalling` (switch arm),
+  `SaintsSavedData` (veneration + cooldown + nearest), `Canonization` (public
+  elevation), `Intercession` (new), `ReligionDebugCommand` (pray + readout).
+
+### Deviations from prompt
+
+- **Input is `/religion pray`**, not a grave block-interaction — graves are generic
+  cobblestone markers (no distinct grave block to hook), so a proximity-gated command
+  is the clean, unambiguous surface.
+- **Praying at a Venerable grants the favour + blessing too** (not veneration alone) —
+  it's a genuine devotional act; the Venerable's patron god is set. (Its grave has no
+  imprint until elevation, so no sacred amplification there yet — correct.)
+- **Veneration lives on the `Saint` record** (not a separate ledger) — it travels with
+  the saint and is naturally dropped when the record is rebuilt as canonized.
+- **Blessing is a fixed bounded domain effect** (1-min, amplifier 0) — a lesser boon,
+  deliberately not scaled by favour/tier (that's miracle territory).
+
+### Out-of-scope but flagged
+
+- **SR4** — relics (a saint's relic item: a carried personal benefit + an enshrined
+  sacred site, sought/stolen); `relicId` stays the empty seam.
+- **Deferred** — a player-driven canonization CEREMONY (vs the command); NPC
+  favour/theophany; a fuller saint blessing / miracle-as-intercession (relics/clergy
+  can grant more later); a real grave-block interaction surface.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the SR2 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep** + the **enum-sweep preflight** (which earned its
+keep: adding `FavourAct.PRAYER` broke the exhaustive `PlayerCalling.describe` switch —
+caught by grep, fixed): both `Saint` constructors pass the new 13th `veneration` arg;
+the cooldown map is a 3rd `optionalFieldOf` codec field (pre-SR3 saves load empty);
+`canonizeVenerable` is idempotent; `CALLABLE` is an explicit array (PRAYER not
+auto-added); the blessing `DeityDomain` switch is 4-arm exhaustive.
+
+### Smoke test (user-runnable)
+
+1. **Pray at a saint's grave.** As a FAITHFUL+ believer of the saint's faith, stand at
+   a canonized saint's grave (SR2) and `/religion pray` → favour with the saint's god
+   (amplified by the grave imprint), a short domain blessing, and chat feedback "St. X
+   interceded…".
+2. **Cooldown + gate.** A second `/religion pray` same day is refused ("already sought…
+   today"); a non-believer / sub-FAITHFUL is refused ("not of … faith").
+3. **Tend.** Confirm the prayer `refreshNear`s the grave imprint (`/religion sacred`
+   strength holds/rises).
+4. **Grassroots elevation.** Pray at a Venerable's grave repeatedly (across days, or
+   with several players) — `/religion saints` shows `veneration N/10`; at 10 the
+   Venerable is canonized (saint's day / chronicle / durable grave appear, same as SR2).
+5. **No farming + persistence.** Confirm favour doesn't runaway (the daily cooldown
+   holds); save+reload and confirm veneration + cooldowns persist.
+
+## Saints & Relics SR4 — relics (2026-06-10)
+
+The final holy-layer stage: a saint's <b>relic</b> — a real, holdable item carrying a
+fragment of the saint's holiness. <b>Carried</b>, it grants a small standing with the
+saint's god; <b>right-clicked</b>, it prays anywhere (portable intercession);
+<b>used on a block</b>, it enshrines a permanent sacred site. Being a true item, it can
+be sought, given, taken, and moved — the "fought over" flavour falls out of its
+tangibility. Fills the `relicId` seam. **This completes the Saints & Relics holy
+layer** (living saints → canonized roster → intercession → relics).
+
+### Disposition (investigation)
+
+- **Item pattern:** `JobContractItem`/`StallLeaseItem` carry a record component
+  (`*.CODEC` persistent + `*.STREAM_CODEC` via `ByteBufCodecs.fromCodecWithRegistries`)
+  registered in `ModDataComponents`; the item registers in `ModItems.ITEMS`
+  (`registerItem(name, Ctor::new, props)`). `use` returns `InteractionResult` in this
+  build; `useOn(UseOnContext)` likewise.
+- **Mint seam:** `Canonization.applyTieIns` — every canonization path (SR2 auto/clergy,
+  SR3 grassroots) runs it, so minting there mints once for all paths.
+- **Carried fold:** SR1 `SaintFactor.amplifierFor(level, beingId, godId)` — the carried
+  bonus folds in there, so it composes with the favour/miracle hooks automatically.
+- **Prayer reuse:** SR3 `Intercession.pray` — factored so the grave command and the
+  relic right-click share one core.
+- **Enshrine reuse:** SR2 permanent `Imprint` via `SacredSpaceSavedData.addPermanentImprint`.
+
+### What shipped
+
+- **`RelicData`** (new component record: `saintId`, `saintName`, `godId`) +
+  **`RELIC_DATA`** `DataComponentType` (persistent + synced).
+- **`RelicItem`** (new, registered as `ModItems.RELIC`, `stacksTo(1).fireResistant()`):
+  tooltip (St. <name> / holy to <god>); `use` (air) → portable intercession via
+  `Intercession.prayWithRelic`; `useOn` (block) → enshrine a permanent imprint at the
+  target.
+- **Mint on canonization:** `Canonization.mintRelic` (in `applyTieIns`) sets
+  `Saint.relicId` (= the saintId string, one relic per saint) and best-effort spawns the
+  relic `ItemEntity` at the grave with `setUnlimitedLifetime()` (the first reliquary;
+  the grave is already permanently sacred from SR2).
+- **Carried benefit:** `SaintFactor` now multiplies in `RELIC_CARRY_AMPLIFIER` (1.1)
+  when an online player carries a relic of that god — bounded, composing with the
+  living-saint 1.25 and the sacred space/time amplifiers.
+- **Prayer core factored:** `Intercession.prayTo(level, player, saint, now)` is the one
+  prayer body; `pray` (grave command) and `prayWithRelic` (relic) both call it — no
+  forked prayer logic.
+- **Surfacing:** the relic tooltip; `/religion saints` marks a saint with `[relic]`.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** `Canonization.applyTieIns` (mint), `SaintsSavedData`/
+   `Saint.relicId`, `ModItems`/`ModDataComponents` (registration). Confirmed.
+2. **Downstream callers.** Carried fold (`SaintFactor` → the favour/miracle hooks that
+   already call it — no new hook); right-click intercession (the shared
+   `Intercession.prayTo`); enshrine (`addPermanentImprint` → flows into `sacrednessAt`).
+3. **Sibling systems.** SR3 intercession — the `pray` refactor preserves the grave-
+   prayer behaviour (same body, now via `prayTo`); the relic prayer is the same
+   gate/cooldown (no new power). The sacred layer — an enshrined imprint composes
+   additively into `sacrednessAt` like the grave's (no double-count). SR1 `SaintFactor`
+   — the carried bonus is bounded (1.1) and multiplies cleanly.
+4. **Exhaustive switches.** No new enum — the relic reuses `FavourAct.PRAYER` (via
+   `prayTo`); the blessing's `DeityDomain` switch (in `Intercession`) already covers all
+   arms. Nothing to update.
+
+### Simplification Sweep
+
+- **One mint point** (`mintRelic` inside the single `applyTieIns`); **one prayer core**
+  (`Intercession.prayTo`, shared by grave + relic); **one enshrine routine** (the SR2
+  permanent imprint). The carried bonus rides the existing `SaintFactor` (no parallel
+  favour path).
+- **Touched classes:** `RelicData` (new), `RelicItem` (new), `ModDataComponents`,
+  `ModItems`, `Canonization` (mint), `Intercession` (factor `prayTo` + `prayWithRelic`),
+  `SaintFactor` (carried), `SaintsSavedData` (`withRelicId`), `ReligionDebugCommand`.
+
+### Deviations from prompt
+
+- **`RelicData` stores `godId` (not domain)** — the domain/virtue is resolved from the
+  god at runtime (tooltip + the blessing), avoiding redundant stored data.
+- **Enshrine does NOT consume the relic and has no cooldown** — deliberate per the
+  prompt ("moving it later doesn't un-bless"; "a relic carried to a new shrine spreads
+  sacredness"). Bounded because the sacred amplifier itself is capped (1.5×), so
+  multiple sacred sites don't create unbounded favour.
+- **Relic spawn at the grave is best-effort** (chunk-load gated, like the SR2 headstone
+  marker); `relicId` is set regardless, and the grave is already sacred. A relic that
+  failed to spawn (unloaded chunk) simply isn't in the world — no re-mint path here.
+- **Carried benefit folded into `SaintFactor`** (resolves the online player + scans the
+  main inventory) — no new favour hook; it inherits the favour + miracle composition for
+  free.
+
+### Out-of-scope but flagged
+
+- **Future tails:** a player canonization CEREMONY; NPC favour/theophany (to unify the
+  saint paths); **relic quests / theft** (the item's movability is the flavour; deeper
+  relic gameplay belongs to the quest base); a bless-others saint AURA.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew
+compileJava --offline` fails resolving `neoform-runtime:2.0.18` before javac; no javac
+errors surfaced). [Container current at the SR3 tip; no reset needed.] Static review +
+**multi-line/qualifier-split grep**: `RelicData` mirrors `JobContractTerms` (CODEC +
+`fromCodecWithRegistries` STREAM_CODEC); `RELIC_DATA`/`RELIC` register on the existing
+mod-event-bus `DeferredRegister`s (already wired in `Life_in_the_village`); `RelicItem`'s
+`appendHoverText`/`use`/`useOn` signatures match the build's items (`JobContractItem`/
+`PriceBoardItem`); the carried-relic scan returns 1.0 for NPCs (no player) and is bounded;
+`Saint` is now constructed only via `withVeneration`/`withRelicId`/`buildSaint` (all 13
+args). One NeoForge API to watch on the user's build: `ItemEntity.setUnlimitedLifetime()`
+(the enshrined relic's no-despawn) — flagged for a quick fix if the name differs here.
+
+### Smoke test (user-runnable)
+
+1. **Mint + enshrine.** Canonize a saint (SR2/SR3) → a relic item appears at the grave,
+   `Saint.relicId` is set, `/religion saints` shows `[relic]`.
+2. **Carried benefit.** Pick up the relic → favour/miracles with the saint's god are
+   slightly eased (×1.1, composing with sacred space/time and any living-saint ease);
+   drop it → the bonus is gone.
+3. **Portable prayer.** Right-click the relic far from the grave → a portable
+   intercession (favour + a domain blessing), on the SAME per-saint/day cooldown as the
+   grave prayer (`/religion pray`).
+4. **Enshrine.** Use the relic on a block elsewhere → `/religion sacred <god>` there reads
+   MAJOR-sacred (a permanent imprint); the relic stays in hand (movable, re-usable).
+5. **Tangible + bounded.** Drop / pick up / give the relic freely; confirm no runaway
+   favour (cooldown holds; carried + sacred amplifiers are capped). Save+reload → the
+   relic component, `relicId`, and the enshrined imprint persist.

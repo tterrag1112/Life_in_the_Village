@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredSpace;
 import tterrag1112.life_in_the_village.Npc.Religion.Sacred.SacredTime;
+import tterrag1112.life_in_the_village.Npc.Religion.Saints.SaintFactor;
 
 import java.util.UUID;
 
@@ -82,7 +83,10 @@ public final class DivineFavour {
         ATTEND_RITE    (4f, null),
         COMMISSION_RITE(6f, FaithConcept.GENEROSITY),
         PILGRIMAGE     (12f, null),
-        VIRTUE         (5f, null);
+        VIRTUE         (5f, null),
+        // SR3 — a player's intercession prayer at a saint's grave (modest; amplified
+        // by the grave's sacred imprint via the position-aware favour grant).
+        PRAYER         (8f, null);
 
         final float base;
         final FaithConcept concept;
@@ -191,9 +195,13 @@ public final class DivineFavour {
         // S2 — a holy day amplifies it further for the DEVOUT+ (1.0 otherwise). Sacred
         // SPACE × sacred TIME compound multiplicatively; both stay within the cap below.
         float holy = SacredTime.holyDayFactor(level, playerId, godId, now);
+        // SR1 — a living saint of this god enjoys a personal ease (1.0 otherwise),
+        // composing with space × time (one more multiplicative source).
+        float saint = SaintFactor.amplifierFor(level, playerId, godId);
         // Lower bound is the displeasure floor (not 0): a repenting, displeased
         // player's act climbs GRADUALLY out of the negative, not instantly to 0.
-        float next = clamp(current(level, playerId, godId, now) + act.base * weight * sacred * holy,
+        float next = clamp(
+                current(level, playerId, godId, now) + act.base * weight * sacred * holy * saint,
                 DISPLEASURE_FLOOR, cap);
         data.getOrCreatePlayerFavour(playerId).set(godId, next, now);
         data.markDirty();
