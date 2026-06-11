@@ -73,6 +73,14 @@ public final class ResidentialArranger {
     /** GRID_BLOCKS — alley corridor width (FOOTPATH tier). Public for the
      *  district sizer's alley-overhead estimate. */
     public static final int GRID_ALLEY_WIDTH = 2;
+    /** GRID_BLOCKS — front setback (blocks) between a house's corridor-facing
+     *  footprint edge and its leaf-cell boundary. The leaf boundary already
+     *  sits at corridor/2 + 1 from the corridor centerline, so a setback of 1
+     *  puts the facade ~1.5-2 blocks off the painted street edge — tight city
+     *  fronting — while keeping footprints clear of the corridor (open
+     *  corridor lines are truncated at footprints downstream, so an
+     *  overlapping house would clip its own street). */
+    private static final int GRID_FRONT_SETBACK = 1;
 
     /**
      * Arranges {@code houseCount} houses in {@code block} per {@code variant},
@@ -375,6 +383,35 @@ public final class ResidentialArranger {
                             < horizDistSqr(centre, face))) {
                 face = faceAlley;
             }
+            // A1 fix-up — city-grid density: pull the house from the leaf
+            // CENTRE up to its corridor-facing leaf edge (front edge
+            // GRID_FRONT_SETBACK inside the boundary), so houses front their
+            // street/alley tightly instead of floating mid-plot. Only the
+            // facing axis shifts; the cross axis stays centred (leaves are
+            // ~cellPitch wide, leaving ~1 block to each neighbour). The
+            // faceTarget is rebuilt AXIS-ALIGNED straight out the front edge:
+            // keeping the raw corridor projection could flip chooseFacing's
+            // dominant axis once the front-axis delta shrinks below the
+            // projection's along-corridor offset, turning the house sideways.
+            if (face != null) {
+                int dx = face.getX() - centre.getX();
+                int dz = face.getZ() - centre.getZ();
+                if (Math.abs(dx) >= Math.abs(dz)) {
+                    int cx = dx > 0
+                            ? leaf[2] - houseDepth / 2 - GRID_FRONT_SETBACK
+                            : leaf[0] + houseDepth / 2 + GRID_FRONT_SETBACK;
+                    centre = new BlockPos(cx, 0, centre.getZ());
+                    face = new BlockPos(dx > 0 ? leaf[2] + 2 : leaf[0] - 2,
+                            0, centre.getZ());
+                } else {
+                    int cz = dz > 0
+                            ? leaf[3] - houseDepth / 2 - GRID_FRONT_SETBACK
+                            : leaf[1] + houseDepth / 2 + GRID_FRONT_SETBACK;
+                    centre = new BlockPos(centre.getX(), 0, cz);
+                    face = new BlockPos(centre.getX(), 0,
+                            dz > 0 ? leaf[3] + 2 : leaf[1] - 2);
+                }
+            }
             houses.add(new HousePlacement(centre, face != null ? face : edgeNode));
         }
         return new Arrangement(houses, List.copyOf(alleys), List.copyOf(streets),
@@ -398,7 +435,13 @@ public final class ResidentialArranger {
         }
         int lo = (cutX ? x0 : z0) + cellPitch + corridor / 2;
         int hi = (cutX ? x1 : z1) - cellPitch - corridor / 2;
-        int c = lo + (hi > lo ? rng.nextInt(hi - lo + 1) : 0);
+        // A1 fix-up — midpoint-biased cut (small jitter) instead of uniform
+        // random: uniform cuts spread leaf sizes across [pitch, 2*pitch +
+        // corridor), and the wide leaves read as suburban plots (house adrift
+        // in the middle). Near-even cuts converge every leaf to ~cellPitch so
+        // houses dominate their cells — a city grid, not a plot grid.
+        int mid = (lo + hi) / 2;
+        int c = mid + (hi > lo ? jitter(rng, Math.min(2, (hi - lo) / 2)) : 0);
         List<BlockPos> line = cutX
                 ? List.of(new BlockPos(c, 0, z0), new BlockPos(c, 0, z1))
                 : List.of(new BlockPos(x0, 0, c), new BlockPos(x1, 0, c));
