@@ -9182,3 +9182,137 @@ block seats via the existing `seatDistrict` (reach-based band range, dual-band o
 with a per-craft-lot fallback so crafts always place; the lane reuses `snapPathToSurface` +
 `InternalPath` FOOTPATH → `state.internalLanes` → `realizePaths`; residential paths untouched;
 `WORKSHOP_TARGET` removed (no refs); no new enum/codec/switch.
+
+### 2026-06-11 — 4c-c: the workshop QUARTER (CITY tier)
+
+4c-b's craft row gave the craft set a style; Garrett dislikes lots (and a bare row) at CITY.
+4c-c ships the Garrett-approved **workshop quarter**: at CITY the craft set seats as ONE
+footprint-sized district — a demand-guided BSP of cells **sized to each member's footprint**,
+customer-facing crafts fronting a central street, storage (stockpile/warehouse) on back/alley
+cells, and one cell reserved OPEN as the shared **work-yard** (well_hamlet + FOUNTAIN
+GatheringPoint; open ground otherwise — v1, no invented yard props).
+
+**Tier gate (`reserveWorkshopDistricts`):** CITY → QUARTER (fallback: row → lots); TOWN →
+the 4c-b craft row, unchanged (fallback: lots); HAMLET/OUTPOST → per-craft lots directly.
+`ViabilityTier` from `state.ctx.tier()` — no new enum.
+
+**BSP seam generalization (no copy):** GRID_BLOCKS' arranger-local `subdivide` became a
+generic `bsp()` core (cut across the longer axis, corridor width by depth — street at 0,
+alleys deeper — centerline emission, corridor/2+1 margin, recursion) + a `BspGuide<T>` policy
+seam. GRID_BLOCKS' pitch-stop + midpoint-jitter policy moved into `gridGuide()` **verbatim,
+same per-cut RNG draw order** (deterministic parity). The quarter's `quarterGuide()` carries
+the per-node demand multiset: cuts split demands area-balanced and land proportionally,
+clamped so each side holds its biggest demand; leaf at one demand; any unfittable node fails
+the arrangement (→ fallback). The leaf-centre → corridor-edge pull was extracted as
+`pullToCorridor()` (shared GRID_BLOCKS + quarter).
+
+**Cell sizing + assignment (`ResidentialArranger.arrangeQuarter`):** demand per member =
+footprint max-dim + HOUSE_GAP (+ one WORKSHOP_YARD_SIDE=13 yard demand). Post-BSP assignment
+is greedy by descending demand, fit-constrained (cell ≥ demand on BOTH axes): yard → fitting
+cell nearest the central street's MIDPOINT; fronts → nearest the central street; storage →
+farthest. Null when any item can't be celled — **the planner then un-seats the gate** (the
+lots fallback indexes `workshopGates` 1:1) and falls back. Non-null ⇒ every craft has a cell
+(1:1 invariant, like #3).
+
+**Streets:** central street + edge-node entry stitch render **VILLAGE_PATH** (one tier up
+from the row's FOOTPATH lane — matches GRID_BLOCKS/GREEN street convention); alleys FOOTPATH.
+All through `InternalPath` → `realizePaths`; the gate joins `districtConnectionNodes` (router
+junction) and `state.servedBlocks` (no-branch obstacle mask).
+
+**Work-yard render seam:** a WELL-ONLY `GreenDecor` entry (null green bounds) — the adapter's
+flora loop now skips null-green entries; the well loop stamps `well_hamlet` + registers the
+FOUNTAIN GatheringPoint exactly like GREEN. No new Result field (the record is at 12 fields
+with a back-compat constructor chain).
+
+**Metrics:** `DistrictReport.WorkshopSeating` gains `QUARTER`; harness `Table.seatCol` +
+`Baseline.diffDistrict` move from the hardcoded "baseline ROW regressed" check to a shared
+seating ladder rank (QUARTER > ROW > LOTS > NONE — downgrades gate, upgrades never do, so
+existing CITY baselines flipping ROW→QUARTER pass). `RunMetrics` doc + `HEADLESS_HARNESS.md`
+updated. Baseline JSON round-trips QUARTER as a plain string.
+
+**Files modified:**
+- `.../V2/Layer4/ResidentialArranger.java` (bsp core + gridGuide + pullToCorridor refactor;
+  QuarterMember/QuarterArrangement/arrangeQuarter/quarterGuide)
+- `.../V2/Layer4/PhasedPlanner.java` (tier gate; reserveWorkshopQuarter; QUARTER enum value;
+  CRAFT_STORAGE_SET + WORKSHOP_YARD_SIDE)
+- `.../V2/Layer4/GreenDecor.java` (doc: null green = well-only entry)
+- `.../V2/V2VillageSpawnerAdapter.java` (null-green guard in the GardenPlot loop)
+- `.../V2/Harness/{Table,Baseline,RunMetrics}.java`, `docs/HEADLESS_HARNESS.md`
+
+**Tie-In Audit:**
+- *GRID_BLOCKS regression risk (the reused seam):* `gridGuide` reproduces the old `subdivide`
+  byte-for-byte in behaviour — same stop rule, same lo/hi, same midpoint+jitter, same RNG
+  draw count/order, same DFS leaf order; `gridBlocks`' call site otherwise untouched
+  (token-compare of the surrounding method: only the extracted pull changed, output-identical).
+- *Craft-row path at TOWN:* diff-verified token-identical (152 tokens) modulo the tier-gate
+  wrapper + comment trim.
+- *Downstream of `workshopGates`:* `seatDistrict` overlap-reject, rural exclusion
+  (`insideAny`), `districtConnectionNodes`, lots 1:1 indexing — all list-driven, the quarter
+  adds one gate like the row did; arrangement failure removes it (no stale gate).
+- *`greenDecor` consumers:* the two adapter loops only (flora loop now guarded; well loop
+  null-checks `wellCentre` already, unchanged). `Result` wiring untouched.
+- *`ViabilityValidator` / `OverlapAuditor`:* unaffected — validator counts placed buildings
+  per tier (quarter places the same crafts through the same `materializeBuilding` +
+  reservation path); auditor audits placed footprints × roads (no new overlap class; internal
+  lanes aren't audited, same as residential variants).
+- *Economy/inhabitants:* unchanged — same `materializeBuilding` path, so businesses register
+  and inhabitants spawn as before.
+- *Exhaustive switches:* `WorkshopSeating` has NO switch in main; harness `Table.abbr` is
+  over `DropReason` (checked — unaffected); the new `Table.seatRank` switch has a default.
+  No `ViabilityTier` switch touched (`VillageExtent.radiusFor` etc. unchanged).
+- *Codecs:* none touched (DistrictReport is in-memory; baseline JSON is string-keyed).
+
+**Simplification Sweep:** the BSP refactor is net-deduplicating (one core, two thin guides —
+no copied ~60 lines). With the quarter live, **no 4c-b/#3 code is dead**: the row is TOWN's
+primary + CITY's first fallback; lots are HAMLET's primary + the terminal fallback. True
+orphans found: none (the row's `districtDims(STREET_ROW)` use and the lots loop both remain
+reachable on their tiers). Flagged, not acted: `reserveWorkshopQuarter` duplicates ~8 lines
+of civicReach/dirs setup from `reserveWorkshopDistricts` (kept — passing 4 params through
+read worse; consolidate if a third workshop seating mode ever appears).
+
+**Deviations from prompt:**
+- **HAMLET "unchanged" is actually a behaviour change:** pre-4c-c, HAMLET tried the row first
+  (4c-b had no tier gate). The approved design says HAMLET → lots, so the gate sends
+  HAMLET/OUTPOST straight to lots. Net effect in practice: at HAMLET's radius (20) the row
+  rarely seated anyway.
+- **Street tier choice:** central street VILLAGE_PATH (the row's lane is FOOTPATH; one tier
+  up). VILLAGE_ROAD was rejected — variant streets (GRID_BLOCKS/GREEN) established
+  VILLAGE_PATH as the internal-street tier, and the quarter's spine is an internal street.
+- **Harness regression rule broadened minimally:** the old gate only fired on baseline ROW;
+  the ladder rank also catches LOTS→NONE (and QUARTER→anything) downgrades. Strictly more
+  protective; upgrades still never fail.
+- **Quarter cut positions are deterministic (no jitter):** demand-derived cuts; jitter risked
+  fit failures for zero visual gain at this cell count.
+
+**Out-of-scope but flagged:**
+- MILLER/WAREHOUSE still resolve the 32×32 fallback footprint (no NBT) — they inflate their
+  quarter cells to 34; authored NBTs would compact the quarter noticeably (content gap,
+  same one 4c-a hit).
+- CITY radius 120 leaves a ~48..76 seat band for the ~88-block quarter; the 4c-b-flagged cap
+  bump (~132) remains the lever if the quarter falls back too often in-world.
+- Work-yard props (anvils, log piles, carts) — explicitly v1-excluded; open + well shipped.
+
+**Cumulative pending verification:** all prior phases + 4c-b + now 4c-c. **Needs an in-world
+CITY spawn** to confirm the quarter seats, reads, and the chain falls back cleanly.
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox blocks maven.neoforged.net + no JDK). Static review done.
+2. `/litv spawn` CITY → log `workshop quarter: N/N crafts placed (block=WxW, alleys=K,
+   yard=(x,z))`; in-world: one workshop district — central gravel street with dirt alleys
+   branching, crafts fronting the street, stockpile/warehouse on back cells, the open
+   work-yard with a well at the quarter's heart; `wkSeat=QUARTER` in a harness run.
+3. CITY where the quarter can't seat (mountainous) → log falls back: `workshop quarter: no
+   clear band position…` then `workshop craft row: …` (or lots) — crafts still all place.
+4. `/litv spawn` TOWN → `workshop craft row: N/N` exactly as before (row unchanged).
+5. `/litv spawn` HAMLET → `workshop lots…` directly (no row attempt logged).
+6. Residential GRID_BLOCKS districts unchanged (same seed → same cuts as pre-4c-c).
+7. Harness `check` vs an existing baseline: CITY rows flipping to QUARTER pass; no other
+   district gates fire.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net; no
+JDK available for even a parse check — javac absent, apt/network blocked). Static review:
+brace/paren balance verified on all 7 touched files; row path token-compare identical;
+gridGuide vs old subdivide compared line-by-line (same RNG order); all referenced helpers
+(`truncateAtFootprints`, `snapPathToSurface`, `defaultFootprint`, `edgePointToward`,
+`seatDistrict`, `nearestCorridorPoint`, `projectToSegment`, `horizDistSqr`, `clamp`) exist
+with matching signatures.
