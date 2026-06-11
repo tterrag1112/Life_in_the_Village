@@ -2070,6 +2070,11 @@ public final class PhasedPlanner {
         int cellPitch = Math.max(hf.width(), hf.length()) + HOUSE_GAP;
         int houseDepth = hf.length();
 
+        // A1 stage 2 — resolve the terrace piece set once per plan. Non-null
+        // only when the row_house pieces (LEFT/RIGHT cap + >=1 interior) are
+        // authored for the culture chain; gates TERRACE's auto-pool entry,
+        // its district sizing, and the arranger's piece feed.
+        state.terracePieces = resolveTerracePieces(state);
 
         // Centrality-band Part 1 — reserve residential a dedicated ring just
         // OUTSIDE the civic precinct, deep enough for a courtyard where the
@@ -2400,6 +2405,112 @@ public final class PhasedPlanner {
                 vid, LEVEL, Rotation.NONE);
     }
 
+    /** A1 stage 2 — the variant folder the terrace pieces live in
+     *  ({@code structures/<culture>/rural/house/row_house/}). */
+    private static final String TERRACE_PIECE_FOLDER = "row_house";
+
+    /**
+     * A1 stage 2 — builds the terrace piece set from the piece index +
+     * footprint provider, or null when terraces can't be composed (no
+     * LEFT/RIGHT cap or no interior authored). Garrett's naming
+     * convention: {@code row_house/<placement>_level_<n>.nbt}; a
+     * placement prefix of {@code left}/{@code right} marks an END CAP,
+     * ANY other placement is an interior piece — so future interiors
+     * (e.g. {@code bakeryfront_level_1}) add variation with no code
+     * change. Mirrors CultureResolver's culture chain: the village
+     * culture's pieces win; the {@code default} culture's pieces are
+     * the fallback.
+     */
+    private static ResidentialArranger.TerracePieces resolveTerracePieces(State state) {
+        java.util.Set<String> pieces = state.availability.availablePieces(
+                state.culture, Style.RURAL, BuildingType.HOUSE,
+                TERRACE_PIECE_FOLDER, LEVEL);
+        if (pieces.isEmpty() && !"default".equals(state.culture)) {
+            pieces = state.availability.availablePieces(
+                    "default", Style.RURAL, BuildingType.HOUSE,
+                    TERRACE_PIECE_FOLDER, LEVEL);
+        }
+        if (pieces.isEmpty()) return null;
+
+        // Classify by placement-prefix convention; deterministic order.
+        java.util.List<String> leftCaps = new ArrayList<>();
+        java.util.List<String> rightCaps = new ArrayList<>();
+        java.util.List<String> interiors = new ArrayList<>();
+        for (String p : new java.util.TreeSet<>(pieces)) {
+            if (p.startsWith("left")) leftCaps.add(p);
+            else if (p.startsWith("right")) rightCaps.add(p);
+            else interiors.add(p);
+        }
+        if (leftCaps.isEmpty() || rightCaps.isEmpty() || interiors.isEmpty()) {
+            LOGGER.info("terrace pieces: incomplete set for culture {} "
+                    + "(left={}, right={}, interiors={}) — TERRACE disabled",
+                    state.culture, leftCaps, rightCaps, interiors);
+            return null;
+        }
+
+        ResidentialArranger.TerracePiece left = terracePiece(state, leftCaps.get(0));
+        ResidentialArranger.TerracePiece right = terracePiece(state, rightCaps.get(0));
+        java.util.List<ResidentialArranger.TerracePiece> mids = new ArrayList<>();
+        int depth = 0;
+        for (String p : interiors) mids.add(terracePiece(state, p));
+        for (ResidentialArranger.TerracePiece tp : mids) {
+            depth = Math.max(depth, pieceDepth(state, tp.variantId()));
+        }
+        depth = Math.max(depth, Math.max(
+                pieceDepth(state, left.variantId()),
+                pieceDepth(state, right.variantId())));
+        LOGGER.info("terrace pieces: left={} right={} interiors={} depth={}",
+                left, right, mids, depth);
+        return new ResidentialArranger.TerracePieces(left, right,
+                java.util.List.copyOf(mids), depth);
+    }
+
+    /** One terrace piece: forced variant id + unrotated NBT width. */
+    private static ResidentialArranger.TerracePiece terracePiece(State state,
+                                                                 String piece) {
+        String vid = tterrag1112.life_in_the_village.Village.Decoration.Variants
+                .BuildingVariant.pieceVariantId(TERRACE_PIECE_FOLDER, piece);
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
+                Style.RURAL, BuildingType.HOUSE, vid, LEVEL, Rotation.NONE);
+        return new ResidentialArranger.TerracePiece(vid, info.width());
+    }
+
+    /** A piece's front-to-back depth (unrotated NBT length). */
+    private static int pieceDepth(State state, String vid) {
+        return state.sizes.get(state.culture, Style.RURAL, BuildingType.HOUSE,
+                vid, LEVEL, Rotation.NONE).length();
+    }
+
+    /**
+     * A1 stage 2 — TERRACE district half-dims {@code {halfX, halfZ}} sized to
+     * the SEGMENT widths, not the detached-house cellPitch: the long axis must
+     * hold the worst-case flush row (caps + widest interiors, inclusive-AABB
+     * spans) + the end setbacks; the short axis is the street-row shape (row
+     * depth + lane) using the segments' depth. Mirrors
+     * {@code ResidentialArranger.terrace}'s row split (two rows at >= 4).
+     */
+    private static int[] terraceDims(ResidentialArranger.TerracePieces tp,
+                                     int houses) {
+        int perRow = houses >= 4 ? (houses + 1) / 2 : houses;
+        int widestMid = 0;
+        for (ResidentialArranger.TerracePiece p : tp.interiors()) {
+            widestMid = Math.max(widestMid, span(p.width()));
+        }
+        int rowSpan = span(tp.left().width()) + span(tp.right().width())
+                + Math.max(0, perRow - 2) * widestMid;
+        int longHalf = Math.max(MIN_PLAZA_HALF, rowSpan / 2
+                + ResidentialArranger.TERRACE_END_SETBACK + HOUSE_GAP);
+        int shortHalf = Math.max(MIN_PLAZA_HALF,
+                tp.depth() + ResidentialArranger.LANE_HALF + HOUSE_GAP);
+        return new int[]{longHalf, shortHalf};
+    }
+
+    /** Inclusive-AABB span (cells) of a piece width — matches
+     *  {@code ResidentialArranger.pieceSpan} and {@code footprintAabb}. */
+    private static int span(int w) {
+        return 2 * (w / 2) + 1;
+    }
+
     /** Phase 2 fix-up — seats one district at the LARGEST {@code want} that fits,
      *  backing off (want → TARGET → toward {@code floor}) and re-sizing per step
      *  via {@link #districtDims}. Returns the gate (with the seated count in
@@ -2410,8 +2521,14 @@ public final class PhasedPlanner {
             BlockPos anchor, double startAngle, int bandInnerR, int bandOuterR,
             int[] seatedOut) {
         for (int want = wantStart; want >= floor; ) {
-            int[] hd = districtDims(variant, want, cellPitch, houseDepth,
-                    COURTYARD_GROW_SQUARE);
+            // A1 stage 2 — TERRACE sizes to the SEGMENT widths (piece set),
+            // not the detached-house cellPitch; without pieces the arranger
+            // falls back to a street row, so size the street-row shape.
+            int[] hd = variant == ResidentialVariant.TERRACE
+                            && state.terracePieces != null
+                    ? terraceDims(state.terracePieces, want)
+                    : districtDims(variant, want, cellPitch, houseDepth,
+                            COURTYARD_GROW_SQUARE);
             int halfX = hd[0], halfZ = hd[1];
             int reach = Math.max(halfX, halfZ);
             // Centrality-band Part 1 — sweep the radial range WITHIN the band
@@ -2493,17 +2610,32 @@ public final class PhasedPlanner {
     /** A1 stage 1 — the variants the auto-selector picks from. STREET_ROW is
      *  NOT in the pool: it is the seat-fallback shape (a bearing too thin for a
      *  squarish block degrades to the street row), i.e. the "elongated piece"
-     *  case. TERRACE/HILLSIDE are reserved (stage 2 / deferred). */
+     *  case. A1 stage 2 — TERRACE joins the pool CONDITIONALLY (inside
+     *  {@link #chooseVariant}, only when the row_house pieces are authored);
+     *  it is intentionally absent here: this array only drives the band-DEPTH
+     *  sizing, and a terrace's short axis (row depth + lane) never exceeds the
+     *  squarish variants' depth. HILLSIDE remains reserved (deferred). */
     private static final ResidentialVariant[] AUTO_VARIANTS = {
             ResidentialVariant.COURTYARD, ResidentialVariant.GREEN,
             ResidentialVariant.CLUSTER, ResidentialVariant.GRID_BLOCKS};
+
+    /** A1 stage 2 — TERRACE auto-pool weight by tier: the terrace is the
+     *  DENSEST variant, so it reads urban — modest presence at TOWN and
+     *  below, stronger at CITY. (Vs. 20–30 for the stage-1 variants.) */
+    private static int terraceWeight(State state) {
+        return state.ctx.tier() == tterrag1112.life_in_the_village.Village
+                .Planning.V2.Layer2.ViabilityTier.CITY ? 25 : 12;
+    }
 
     /**
      * A1 stage 1 — auto-selection: block size + seed → variant, MIXED across a
      * village's blocks. Squarish-large blocks (≥6 houses) weight toward
      * GREEN/GRID_BLOCKS (room for a communal green / internal street grid);
      * squarish-small toward COURTYARD/CLUSTER; below 4 houses only
-     * COURTYARD/CLUSTER (a green or grid needs ≥4 to read). Never repeats the
+     * COURTYARD/CLUSTER (a green or grid needs ≥4 to read). A1 stage 2 —
+     * TERRACE joins both ≥4 pools when the row_house pieces are authored
+     * (a terrace needs ≥2 segments per row; ≥4 gives two facing rows),
+     * tier-weighted via {@link #terraceWeight}. Never repeats the
      * previous block's variant back-to-back (re-roll, then forced-different),
      * so consecutive precincts always mix. Deterministic per (village seed,
      * block index).
@@ -2513,23 +2645,30 @@ public final class PhasedPlanner {
                                                     ResidentialVariant previous) {
         java.util.Random rng = new java.util.Random(
                 state.ctx.seed() ^ (0x9E3779B97F4A7C15L * (blockIndex + 1)));
-        ResidentialVariant[] pool;
-        int[] weights;
+        java.util.List<ResidentialVariant> poolList = new ArrayList<>(5);
+        java.util.List<Integer> weightList = new ArrayList<>(5);
         if (want >= 6) {
-            pool = new ResidentialVariant[]{ResidentialVariant.GREEN,
+            java.util.Collections.addAll(poolList, ResidentialVariant.GREEN,
                     ResidentialVariant.GRID_BLOCKS, ResidentialVariant.COURTYARD,
-                    ResidentialVariant.CLUSTER};
-            weights = new int[]{30, 30, 20, 20};
+                    ResidentialVariant.CLUSTER);
+            java.util.Collections.addAll(weightList, 30, 30, 20, 20);
         } else if (want >= 4) {
-            pool = new ResidentialVariant[]{ResidentialVariant.COURTYARD,
+            java.util.Collections.addAll(poolList, ResidentialVariant.COURTYARD,
                     ResidentialVariant.CLUSTER, ResidentialVariant.GREEN,
-                    ResidentialVariant.GRID_BLOCKS};
-            weights = new int[]{30, 30, 20, 20};
+                    ResidentialVariant.GRID_BLOCKS);
+            java.util.Collections.addAll(weightList, 30, 30, 20, 20);
         } else {
-            pool = new ResidentialVariant[]{ResidentialVariant.COURTYARD,
-                    ResidentialVariant.CLUSTER};
-            weights = new int[]{50, 50};
+            java.util.Collections.addAll(poolList, ResidentialVariant.COURTYARD,
+                    ResidentialVariant.CLUSTER);
+            java.util.Collections.addAll(weightList, 50, 50);
         }
+        if (want >= 4 && state.terracePieces != null) {
+            poolList.add(ResidentialVariant.TERRACE);
+            weightList.add(terraceWeight(state));
+        }
+        ResidentialVariant[] pool = poolList.toArray(new ResidentialVariant[0]);
+        int[] weights = new int[weightList.size()];
+        for (int i = 0; i < weights.length; i++) weights[i] = weightList.get(i);
         ResidentialVariant pick = weightedPick(pool, weights, rng);
         if (pick == previous) pick = weightedPick(pool, weights, rng);
         if (pick == previous) {
@@ -2660,12 +2799,15 @@ public final class PhasedPlanner {
         // flows out to the main street (same node the router branches to).
         BlockPos edgeNode = edgePointToward(gate, state.ctx.anchor());
         ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
-                gate, houses, cellPitch, houseDepth, edgeNode, variant, seed);
+                gate, houses, cellPitch, houseDepth, edgeNode, variant, seed,
+                state.terracePieces);
         int placed = 0;
         List<Polygon.AABB> footprints = new ArrayList<>(arr.houses().size());
         for (ResidentialArranger.HousePlacement p : arr.houses()) {
+            // A1 stage 2 — terrace segments force their piece variant id
+            // (row_house:left etc.); null rolls the variant normally.
             Polygon.AABB fp = materializeBuilding(state, BuildingType.HOUSE,
-                    p.centre(), p.faceTarget());
+                    p.centre(), p.faceTarget(), p.forcedVariantId());
             if (fp != null) { placed++; footprints.add(fp); }
         }
         // Carry the variant's internal lanes to the render pass: truncate at the
@@ -2733,9 +2875,12 @@ public final class PhasedPlanner {
         // A1 stage 1 — router branch-suppression for the variants whose lanes
         // serve their houses (courtyards suppress via their decor blocks;
         // STREET_ROW intentionally stays unsuppressed, exactly as shipped).
+        // A1 stage 2 — TERRACE joins: its central lane serves every segment,
+        // so the block joins the no-branch obstacle mask like the others.
         if (variant == ResidentialVariant.GREEN
                 || variant == ResidentialVariant.CLUSTER
-                || variant == ResidentialVariant.GRID_BLOCKS) {
+                || variant == ResidentialVariant.GRID_BLOCKS
+                || variant == ResidentialVariant.TERRACE) {
             state.servedBlocks.add(gate);
         }
         LOGGER.info("residential block #{} variant={} houses={}/{} lanes={}"
@@ -2808,6 +2953,20 @@ public final class PhasedPlanner {
      */
     private static Polygon.AABB materializeBuilding(State state, BuildingType type,
                                                    BlockPos centre0, BlockPos faceTarget) {
+        return materializeBuilding(state, type, centre0, faceTarget, null);
+    }
+
+    /**
+     * A1 stage 2 overload — {@code forcedVariantId} pins the placed variant
+     * (the terrace arranger forces a SPECIFIC piece per row position, id form
+     * {@code row_house:left}); null rolls {@code pickVariantIdForV2} exactly
+     * as before. Forced ids bypass the availability pool on purpose: pieces
+     * are indexed separately ({@code availablePieces}) and were verified
+     * authored when the piece set was resolved.
+     */
+    private static Polygon.AABB materializeBuilding(State state, BuildingType type,
+                                                   BlockPos centre0, BlockPos faceTarget,
+                                                   String forcedVariantId) {
         int x = centre0.getX(), z = centre0.getZ();
         if (!state.fmap.inBounds(x, z)) return null;
         Cell cell = state.fmap.cellAt(x, z);
@@ -2818,9 +2977,11 @@ public final class PhasedPlanner {
         if (profile == null) return null;
 
         BlockPos centre = new BlockPos(x, cell.elevationY(), z);
-        String variantId = state.variantResolver.pickVariantIdForV2(
-                type, centre, state.ctx.anchor(), state.villageRadius,
-                state.culture, Style.RURAL, state.rng, state.availability);
+        String variantId = forcedVariantId != null
+                ? forcedVariantId
+                : state.variantResolver.pickVariantIdForV2(
+                        type, centre, state.ctx.anchor(), state.villageRadius,
+                        state.culture, Style.RURAL, state.rng, state.availability);
         StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
                 Style.RURAL, type, variantId, LEVEL, Rotation.NONE);
         Footprint fp = new Footprint(info.width(), info.length());
@@ -3226,6 +3387,12 @@ public final class PhasedPlanner {
         /** Residential-variant tooling — forced variant from /litv district
          *  (null → auto-select per block). */
         ResidentialVariant forcedResidentialVariant;
+        /** A1 stage 2 — the authored terrace piece set (row_house LEFT/RIGHT
+         *  caps + interiors), resolved once per plan in
+         *  {@code reserveResidentialDistricts}. Null when the pieces aren't
+         *  authored for the culture chain — TERRACE then stays out of the
+         *  auto-pool and a forced TERRACE falls back to a street row. */
+        ResidentialArranger.TerracePieces terracePieces;
         /** Internal-path lanes emitted by residential variants (street-row lane
          *  + courtyard entry path) — rendered at FOOTPATH tier. */
         final List<InternalPath> internalLanes = new ArrayList<>();

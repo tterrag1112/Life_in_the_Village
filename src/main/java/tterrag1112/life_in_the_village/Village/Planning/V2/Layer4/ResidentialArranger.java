@@ -21,15 +21,40 @@ import java.util.Random;
  * serving corridor for GRID_BLOCKS.
  *
  * <p>A1 stage 1 — GREEN (Angerdorf), CLUSTER (Haufendorf) and GRID_BLOCKS
- * (BSP streets + alleys) are live; TERRACE / HILLSIDE remain reserved
- * (forced → street-row fallback, never a silent no-op).
+ * (BSP streets + alleys) are live. A1 stage 2 — TERRACE (attached row-house
+ * segments from the authored {@code row_house} piece set) is live when the
+ * pieces are authored; HILLSIDE remains reserved (forced → street-row
+ * fallback, never a silent no-op).
  */
 public final class ResidentialArranger {
 
     private ResidentialArranger() {}
 
-    /** A planned house: its centre (y=0, planner snaps) + the point it faces. */
-    public record HousePlacement(BlockPos centre, BlockPos faceTarget) {}
+    /** A planned house: its centre (y=0, planner snaps) + the point it faces.
+     *  {@code forcedVariantId} is non-null only for composed arrangements
+     *  (TERRACE segment pieces, id form {@code row_house:left}); null means
+     *  the planner rolls the variant normally. */
+    public record HousePlacement(BlockPos centre, BlockPos faceTarget,
+                                 String forcedVariantId) {
+        public HousePlacement(BlockPos centre, BlockPos faceTarget) {
+            this(centre, faceTarget, null);
+        }
+    }
+
+    /** A1 stage 2 — one authored terrace piece: its forced variant id
+     *  ({@code row_house:left}) + its unrotated NBT width (the along-row
+     *  span). Depth lives on {@link TerracePieces} (uniform per set). */
+    public record TerracePiece(String variantId, int width) {}
+
+    /** A1 stage 2 — the authored terrace piece set: LEFT/RIGHT end caps +
+     *  the interior pool ("any piece that is not an end cap" — future
+     *  interior pieces add variation with no code change). {@code depth} is
+     *  the segments' front-to-back span (max across pieces). Built by the
+     *  planner from the piece index ({@code BuildingAvailability
+     *  .availablePieces}) + the footprint provider; null reaches
+     *  {@link #arrange} when the row_house pieces aren't authored. */
+    public record TerracePieces(TerracePiece left, TerracePiece right,
+                                List<TerracePiece> interiors, int depth) {}
 
     /**
      * The full arrangement of one block: house placements + internal-path
@@ -81,6 +106,11 @@ public final class ResidentialArranger {
      *  corridor lines are truncated at footprints downstream, so an
      *  overlapping house would clip its own street). */
     private static final int GRID_FRONT_SETBACK = 1;
+    /** TERRACE — clearance (blocks) between a row's end-cap outer wall and
+     *  the block boundary, so the caps read as row ENDS (a sliver of open
+     *  ground past the finished gable). Public so the district sizer pads
+     *  the block's long axis by the same amount. */
+    public static final int TERRACE_END_SETBACK = 2;
 
     /**
      * Arranges {@code houseCount} houses in {@code block} per {@code variant},
@@ -96,6 +126,20 @@ public final class ResidentialArranger {
                                       int cellPitch, int houseDepth,
                                       BlockPos edgeNode, ResidentialVariant variant,
                                       long seed) {
+        return arrange(block, houseCount, cellPitch, houseDepth, edgeNode,
+                variant, seed, null);
+    }
+
+    /**
+     * A1 stage 2 overload — adds the terrace piece set. {@code terracePieces}
+     * is only consulted by the TERRACE arm; null (pieces not authored, or a
+     * call site that never arranges terraces) makes TERRACE fall back to a
+     * street row exactly like the other reserved variants.
+     */
+    public static Arrangement arrange(Polygon.AABB block, int houseCount,
+                                      int cellPitch, int houseDepth,
+                                      BlockPos edgeNode, ResidentialVariant variant,
+                                      long seed, TerracePieces terracePieces) {
         if (houseCount <= 0) {
             return new Arrangement(List.of(), List.of(), List.of(), null, null);
         }
@@ -105,8 +149,14 @@ public final class ResidentialArranger {
             case GREEN -> green(block, houseCount, houseDepth, edgeNode);
             case CLUSTER -> cluster(block, houseCount, cellPitch, houseDepth, edgeNode, seed);
             case GRID_BLOCKS -> gridBlocks(block, houseCount, cellPitch, houseDepth, edgeNode, seed);
+            // A1 stage 2 — attached row-house segments. A terrace needs the
+            // authored piece set and at least two segments (LEFT + RIGHT cap);
+            // anything less falls back to the street row (never a silent no-op).
+            case TERRACE -> terracePieces != null && houseCount >= 2
+                    ? terrace(block, houseCount, terracePieces, edgeNode, seed)
+                    : streetRow(block, houseCount, cellPitch, houseDepth, edgeNode);
             // Reserved → fall back (not silent): arrange as a street row for now.
-            case TERRACE, HILLSIDE ->
+            case HILLSIDE ->
                     streetRow(block, houseCount, cellPitch, houseDepth, edgeNode);
         };
     }
@@ -169,6 +219,114 @@ public final class ResidentialArranger {
             BlockPos lane = fromAxes(longX, cx, cz, along, 0);   // face the lane
             out.add(new HousePlacement(centre, lane));
         }
+    }
+
+    // =========================================================================
+    // TERRACE — attached row-house segments: straight flush runs (LEFT cap +
+    // interior pieces + RIGHT cap, shared walls by construction) along the
+    // block's long axis, one or two rows fronting a central lane.
+    // =========================================================================
+
+    private static Arrangement terrace(Polygon.AABB block, int count,
+                                       TerracePieces pieces, BlockPos edgeNode,
+                                       long seed) {
+        Random rng = new Random(seed);
+        int cx = (block.minX() + block.maxX()) / 2;
+        int cz = (block.minZ() + block.maxZ()) / 2;
+        int wX = block.maxX() - block.minX();
+        int wZ = block.maxZ() - block.minZ();
+        boolean longX = wX >= wZ;
+        int halfLong = (longX ? wX : wZ) / 2;
+        int alongHalfLimit = Math.max(0, halfLong - TERRACE_END_SETBACK);
+
+        int rowOffset = pieces.depth() / 2 + LANE_HALF;
+        // Two parallel rows when both can host a full row (LEFT + RIGHT cap,
+        // i.e. >= 2 segments each); below 4 segments a single row keeps the
+        // caps meaningful. count >= 2 is guaranteed by arrange()'s gate.
+        int front = count >= 4 ? (count + 1) / 2 : count;
+        int back = count - front;
+
+        List<HousePlacement> houses = new ArrayList<>(count);
+        addTerraceRow(houses, longX, cx, cz, front, +rowOffset, pieces,
+                alongHalfLimit, rng);
+        if (back >= 2) {
+            addTerraceRow(houses, longX, cx, cz, back, -rowOffset, pieces,
+                    alongHalfLimit, rng);
+        }
+
+        // Central lane — the terrace's STREET (VILLAGE_PATH, like GREEN's
+        // skirt loop): the across=0 gap between the rows, run boundary to
+        // boundary so it flows past the cap setbacks; stitched to the edge
+        // node only when that sits off a short end (same rule as STREET_ROW —
+        // a side-on connector would cross a row).
+        BlockPos endA = fromAxes(longX, cx, cz, -halfLong, 0);
+        BlockPos endB = fromAxes(longX, cx, cz, +halfLong, 0);
+        boolean aNearer = horizDistSqr(edgeNode, endA) <= horizDistSqr(edgeNode, endB);
+        BlockPos near = aNearer ? endA : endB;
+        BlockPos far = aNearer ? endB : endA;
+        int edgeAlong = longX ? (edgeNode.getX() - cx) : (edgeNode.getZ() - cz);
+        boolean aligned = Math.abs(edgeAlong) >= alongHalfLimit;
+        List<BlockPos> lane = aligned
+                ? List.of(edgeNode, near, far)
+                : List.of(near, far);
+        return new Arrangement(houses, List.of(), List.of(lane), null, null);
+    }
+
+    /** Builds one flush terrace row of {@code m >= 2} segments at the given
+     *  across offset: LEFT cap + seeded interior picks + RIGHT cap, placed
+     *  edge-to-edge (centre pitch = wA/2 + wB/2 + 1 — flush under the
+     *  planner's inclusive-AABB convention, so shared walls actually touch).
+     *  Interiors drop (never the caps) until the row fits the along limit;
+     *  a row whose caps alone don't fit adds nothing (the planner's
+     *  placed-count bookkeeping re-homes the difference). Cap WORLD order
+     *  derives from the row's facing so "left"/"right" read correctly from
+     *  the lane side: viewer-left = (-fz, fx) for house front dir f. */
+    private static void addTerraceRow(List<HousePlacement> out, boolean longX,
+                                      int cx, int cz, int m, int across,
+                                      TerracePieces pieces, int alongHalfLimit,
+                                      Random rng) {
+        // Viewer-left → viewer-right sequence: LEFT cap, m-2 interiors, RIGHT cap.
+        List<TerracePiece> seq = new ArrayList<>(m);
+        seq.add(pieces.left());
+        for (int i = 0; i < m - 2; i++) {
+            seq.add(pieces.interiors()
+                    .get(rng.nextInt(pieces.interiors().size())));
+        }
+        seq.add(pieces.right());
+        // Drop interiors until the row fits the usable along span.
+        int limit = 2 * alongHalfLimit + 1;
+        while (seq.size() > 2 && rowSpan(seq) > limit) {
+            seq.remove(1);
+        }
+        if (rowSpan(seq) > limit) return;          // caps alone don't fit
+        // World order: flip when the viewer-left end lands at +along. For a
+        // row facing the lane, front dir f = -sign(across) on the across
+        // axis; viewer-left (-fz, fx) projects onto the along axis as
+        // +sign(across) when longX, -sign(across) otherwise.
+        boolean leftAtPlusEnd = longX ? across > 0 : across < 0;
+        if (leftAtPlusEnd) Collections.reverse(seq);
+        int t = -rowSpan(seq) / 2;                  // running along edge
+        for (TerracePiece p : seq) {
+            int span = pieceSpan(p);
+            int along = t + span / 2;
+            t += span;
+            BlockPos centre = fromAxes(longX, cx, cz, along, across);
+            BlockPos lane = fromAxes(longX, cx, cz, along, 0);
+            out.add(new HousePlacement(centre, lane, p.variantId()));
+        }
+    }
+
+    /** Along-axis span (cells) one piece reserves: the planner's inclusive
+     *  footprint AABB spans 2*(w/2)+1 cells (= w for the odd-width NBTs). */
+    private static int pieceSpan(TerracePiece p) {
+        return 2 * (p.width() / 2) + 1;
+    }
+
+    /** Total along-axis span (cells) of a flush piece sequence. */
+    private static int rowSpan(List<TerracePiece> seq) {
+        int s = 0;
+        for (TerracePiece p : seq) s += pieceSpan(p);
+        return s;
     }
 
     // =========================================================================
