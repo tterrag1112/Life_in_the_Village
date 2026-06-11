@@ -140,7 +140,10 @@ public final class BlockServingRouter {
      * COURTYARD block AABBs whose houses are served by a DELIBERATE ring path,
      * not the emergent MST. Buildings inside these blocks get no per-building
      * terminal (so the router stops laying patchy per-house branches there); the
-     * block still connects through its district node. Civic / market / street-row
+     * block still connects through its district node. A1 fix-up: these block
+     * AABBs additionally join the routing obstacle mask, so the MST's edges
+     * skirt the block instead of cutting through its interior (green / yard /
+     * lane knot). Civic / market / street-row
      * routing is unchanged (empty list → identical to the old path).
      */
     public static NetworkSpec route(List<PlacedBuilding> placed, Gateways gateways,
@@ -155,7 +158,15 @@ public final class BlockServingRouter {
         // plaza voids are obstacles for routing: roads thread BETWEEN buildings
         // to reach their front-cells and SKIRT the squares, never cutting
         // across a footprint (OverlapAuditor) or a designed plaza.
-        boolean[][] obstacle = obstacleMask(placed, voids, fmap, g);
+        // A1 fix-up — the no-branch block INTERIORS join the mask: a variant-
+        // arranged block (COURTYARD/GREEN/CLUSTER/GRID_BLOCKS) is a designed
+        // composition served by its own deliberate lanes, so external roads
+        // must not cut THROUGH it (through-routes across the green were
+        // reading as houses "facing the wrong road"). Same soft semantics as
+        // the voids: A* pays FOOTPRINT_PENALTY per cell, terminals relocate
+        // to the block perimeter, and the block still connects via its
+        // district node at the gate edge.
+        boolean[][] obstacle = obstacleMask(placed, voids, noBranchBlocks, fmap, g);
         List<Terminal> terms = buildTerminals(placed, gateways, fmap, anchor, g,
                 obstacle, districtNodes, noBranchBlocks);
 
@@ -358,6 +369,8 @@ public final class BlockServingRouter {
     private static boolean[][] obstacleMask(List<PlacedBuilding> placed,
                                             List<tterrag1112.life_in_the_village.Utilities
                                                     .Geometry.Polygon.AABB> voids,
+                                            List<tterrag1112.life_in_the_village.Utilities
+                                                    .Geometry.Polygon.AABB> noBranchBlocks,
                                             V2FeatureMap fmap, int g) {
         boolean[][] mask = new boolean[g][g];
         for (PlacedBuilding pb : placed) {
@@ -372,6 +385,11 @@ public final class BlockServingRouter {
         if (voids != null) {
             for (var v : voids) {
                 markRect(mask, fmap, g, v.minX(), v.minZ(), v.maxX(), v.maxZ());
+            }
+        }
+        if (noBranchBlocks != null) {
+            for (var b : noBranchBlocks) {
+                markRect(mask, fmap, g, b.minX(), b.minZ(), b.maxX(), b.maxZ());
             }
         }
         return mask;
