@@ -132,9 +132,11 @@ public final class QuestCommand {
         Iterable<Identifier> ids = switch (kind) {
             case "hunt" -> BuiltInRegistries.ENTITY_TYPE.keySet();
             case "gather", "deliver" -> BuiltInRegistries.ITEM.keySet();
+            // listElements + key().identifier() — the PoiDiscovery registry-walk
+            // idiom (the in-repo precedent for enumerating a dynamic registry).
             case "explore" -> c.getSource().getLevel().registryAccess()
                     .lookupOrThrow(Registries.BIOME)
-                    .listElementIds().map(ResourceKey::identifier).toList();
+                    .listElements().map(h -> h.key().identifier()).toList();
             default -> List.of();
         };
         String rem = b.getRemaining().toLowerCase(Locale.ROOT);
