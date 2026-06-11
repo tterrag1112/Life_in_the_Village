@@ -185,7 +185,50 @@ public final class ReligionDebugCommand {
                 // Saints & Relics SR3 — pray for a saint's intercession at their grave.
                 .then(Commands.literal("pray")
                         .executes(ReligionDebugCommand::handlePray))
+
+                // Gate-0 — /religion debug canonize <god> [name]: mint a canonized
+                // saint via the EXISTING SR2 Canonization routine (synthetic record,
+                // grave at/near the player, SR4 relic minted), so SR3 (pray at
+                // grave), SR4 (relic carry / portable prayer / enshrine) and the
+                // F2a-2 pilgrimage/relic quests are testable solo, without waiting
+                // for a qualifying NPC death.
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("canonize")
+                                .then(Commands.argument("godId", StringArgumentType.word())
+                                        .suggests((c, b) -> {
+                                            for (var g : tterrag1112.life_in_the_village.Npc.Religion
+                                                    .GodRegistry.all()) b.suggest(g.id());
+                                            return b.buildFuture();
+                                        })
+                                        .executes(ctx -> handleCanonize(ctx, null))
+                                        .then(Commands.argument("name", StringArgumentType.greedyString())
+                                                .executes(ctx -> handleCanonize(ctx,
+                                                        StringArgumentType.getString(ctx, "name")))))))
         );
+    }
+
+    // ── /religion debug canonize (Gate-0 — SR-phase test mint) ───────────────
+
+    private static int handleCanonize(CommandContext<CommandSourceStack> ctx, String nameOrNull) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        var player = src.getPlayer();
+        if (player == null) { src.sendFailure(Component.literal("Run as a player.")); return 0; }
+        String godId = StringArgumentType.getString(ctx, "godId");
+        var saint = tterrag1112.life_in_the_village.Npc.Religion.Saints.Canonization
+                .debugCanonize(level, godId, nameOrNull, player.blockPosition(),
+                        level.getGameTime());
+        if (saint.isEmpty()) {
+            src.sendFailure(Component.literal("Unknown god '" + godId
+                    + "' or no world faith venerates it (see /religion gods)."));
+            return 0;
+        }
+        var s = saint.get();
+        src.sendSuccess(() -> Component.literal("§aCanonized St. " + s.name() + " of " + s.godId()
+                + " — grave at " + s.gravePos().toShortString()
+                + ", relic " + (s.relicId().isPresent() ? "minted at the grave" : "pending")
+                + ", saint's day " + s.saintDay() + "."), false);
+        return 1;
     }
 
     // ── /religion gods (F1a) ─────────────────────────────────────────────────

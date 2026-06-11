@@ -127,6 +127,41 @@ public final class Canonization {
                 v.martyr(), v.deathTick(), v.gravePos(), now);
     }
 
+    // ── Gate-0 debug seam (the SR-phase test mint) ───────────────────────────
+
+    /**
+     * Gate-0 debug — mints a canonized saint of {@code godId} through the SAME
+     * canonization routine the death paths use ({@link #canonizeNow} →
+     * {@link #buildSaint} + {@link #applyTieIns}: epitaph, permanent grave
+     * imprint, SR4 relic mint at the grave, saint's day, chronicle). It
+     * synthesizes only the inputs a dead NPC would have supplied: a fresh UUID,
+     * {@code name}, the god's primary faith, and a grave — a REAL graveyard
+     * burial in the village at {@code near} when one exists (so the epitaph
+     * inscription lands on an actual grave), else {@code near} itself as the
+     * grave position (SR3 prayer + SR4 relic read the saint's gravePos, not
+     * the graveyard store). No parallel creation path.
+     *
+     * @return the canonized saint (relicId minted), or empty for an unknown
+     *         god / a god no world faith venerates.
+     */
+    public static Optional<SaintsSavedData.Saint> debugCanonize(
+            ServerLevel level, String godId, String name, BlockPos near, long now) {
+        God god = GodRegistry.get(godId);
+        if (god == null) return Optional.empty();
+        Religion faith = GodRegistry.primaryReligionOf(level, godId).orElse(null);
+        if (faith == null) return Optional.empty();
+        UUID id = UUID.randomUUID();
+        String saintName = (name == null || name.isBlank())
+                ? "Beloved of " + god.displayName() : name;
+        BlockPos gravePos = VillageSavedData.get(level).getVillageAt(near)
+                .flatMap(v -> GraveyardSavedData.get(level)
+                        .bury(v.getId(), id, saintName, now))
+                .map(g -> g.slot())
+                .orElse(near);
+        canonizeNow(level, id, saintName, faith.id(), god.id(), false, now, gravePos, now);
+        return SaintsSavedData.get(level).saint(id);
+    }
+
     private static boolean hasHighPriestOfFaith(ServerLevel level, VillageSavedData data, String faith) {
         for (Village v : data.getAllVillages()) {
             if (BuildingFaith.hasSeatedPriestOfFaith(level, v, faith)) return true;
