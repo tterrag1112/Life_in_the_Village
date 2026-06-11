@@ -679,6 +679,199 @@ public final class ResidentialArranger {
         return new HousePlacement(centre, face);
     }
 
+    // =========================================================================
+    // QUARTER (4c-c) — the workshop quarter: a demand-guided BSP over the
+    // shared core. Cells are sized to each member's footprint (crafts vary
+    // widely), customer-facing crafts front the central street (the depth-0
+    // cut), storage takes the back/alley cells, and one cell near the street
+    // midpoint is reserved OPEN as the shared work-yard.
+    // =========================================================================
+
+    /** 4c-c — one workshop-quarter member: {@code cellSide} is the demanded
+     *  BSP cell side (footprint max-dim + the planner's gap),
+     *  {@code footprintDim} the raw footprint max-dim (for the corridor
+     *  pull — conservative under either facing rotation), {@code storage}
+     *  marks back/alley preference (stockpile/warehouse). List order is the
+     *  planner's craft order; {@link QuarterArrangement#buildings} is
+     *  index-aligned to it (1:1 — every member gets a cell, or the
+     *  arrangement is null and the planner falls back). */
+    public record QuarterMember(int cellSide, int footprintDim, boolean storage) {}
+
+    /** 4c-c — the arranged workshop quarter: per-member placements
+     *  (index-aligned with the input members), the central street + the
+     *  edge-node entry stitch (the planner renders these VILLAGE_PATH), the
+     *  alleys (FOOTPATH), and the shared work-yard cell left OPEN (the
+     *  planner stamps the well at {@code yardCentre}). */
+    public record QuarterArrangement(List<HousePlacement> buildings,
+                                     List<List<BlockPos>> streets,
+                                     List<List<BlockPos>> alleys,
+                                     BlockPos yardCentre,
+                                     Polygon.AABB yard) {}
+
+    /**
+     * Arranges the workshop QUARTER inside {@code block}: a demand-guided
+     * BSP cells the block to the member footprints (+ one {@code yardSide}
+     * work-yard cell), then assigns cells — the yard takes the fitting cell
+     * nearest the central street's midpoint (the quarter's heart),
+     * customer-facing crafts the cells nearest the central street, storage
+     * the cells farthest from it. Returns {@code null} when the block cannot
+     * cell every member + the yard (the planner falls back to the craft
+     * row); a non-null result covers every member by construction.
+     */
+    public static QuarterArrangement arrangeQuarter(Polygon.AABB block,
+                                                    List<QuarterMember> members,
+                                                    int yardSide,
+                                                    BlockPos edgeNode,
+                                                    long seed) {
+        if (members.isEmpty()) return null;
+        Random rng = new Random(seed);
+        int x0 = block.minX() + 1, x1 = block.maxX() - 1;
+        int z0 = block.minZ() + 1, z1 = block.maxZ() - 1;
+        // Demand multiset (descending): every member's cell + the work-yard.
+        List<Integer> demands = new ArrayList<>(members.size() + 1);
+        for (QuarterMember m : members) demands.add(m.cellSide());
+        demands.add(yardSide);
+        demands.sort(Collections.reverseOrder());
+        List<int[]> leaves = new ArrayList<>();
+        List<List<BlockPos>> streets = new ArrayList<>();
+        List<List<BlockPos>> alleys = new ArrayList<>();
+        boolean[] failed = {false};
+        bsp(x0, z0, x1, z1, 0, demands, quarterGuide(leaves, failed), rng,
+                streets, alleys);
+        if (failed[0] || streets.isEmpty()
+                || leaves.size() != members.size() + 1) {
+            return null;
+        }
+        // The central street is the root (depth-0) cut — the only entry in
+        // streets at this point (every deeper cut is an alley).
+        List<BlockPos> central = streets.get(0);
+        BlockPos cA = central.get(0), cB = central.get(central.size() - 1);
+        BlockPos streetMid = new BlockPos((cA.getX() + cB.getX()) / 2, 0,
+                (cA.getZ() + cB.getZ()) / 2);
+
+        // Assignment — greedy by descending demand, fit-constrained (the cell
+        // must hold the demand side on BOTH axes), preference-scored: yard →
+        // nearest the street midpoint; fronts → nearest the central street;
+        // storage → farthest from it (back/alley cells).
+        int n = members.size();                       // item n = the yard
+        Integer[] order = new Integer[n + 1];
+        for (int i = 0; i <= n; i++) order[i] = i;
+        java.util.Arrays.sort(order, (p, q) -> Integer.compare(
+                q == n ? yardSide : members.get(q).cellSide(),
+                p == n ? yardSide : members.get(p).cellSide()));
+        boolean[] taken = new boolean[leaves.size()];
+        int[] assigned = new int[n + 1];
+        for (int item : order) {
+            int want = item == n ? yardSide : members.get(item).cellSide();
+            boolean storage = item != n && members.get(item).storage();
+            int best = -1;
+            long bestScore = 0;
+            for (int li = 0; li < leaves.size(); li++) {
+                if (taken[li]) continue;
+                int[] lf = leaves.get(li);
+                if (lf[2] - lf[0] < want || lf[3] - lf[1] < want) continue;
+                BlockPos lc = new BlockPos((lf[0] + lf[2]) / 2, 0,
+                        (lf[1] + lf[3]) / 2);
+                long d = item == n
+                        ? horizDistSqr(lc, streetMid)
+                        : horizDistSqr(lc, projectToSegment(lc, cA, cB));
+                long score = storage ? -d : d;
+                if (best < 0 || score < bestScore) {
+                    best = li;
+                    bestScore = score;
+                }
+            }
+            if (best < 0) return null;                // an item can't fit
+            taken[best] = true;
+            assigned[item] = best;
+        }
+
+        // Placements — each member pulled from its cell centre to the
+        // corridor-facing edge: fronts face the CENTRAL STREET, storage its
+        // serving alley (the street when no alley was cut).
+        HousePlacement[] placements = new HousePlacement[n];
+        for (int i = 0; i < n; i++) {
+            int[] lf = leaves.get(assigned[i]);
+            BlockPos centre = new BlockPos((lf[0] + lf[2]) / 2, 0,
+                    (lf[1] + lf[3]) / 2);
+            QuarterMember m = members.get(i);
+            BlockPos face = m.storage() && !alleys.isEmpty()
+                    ? nearestCorridorPoint(centre, alleys)
+                    : projectToSegment(centre, cA, cB);
+            placements[i] = pullToCorridor(lf, centre, face, m.footprintDim());
+        }
+        int[] ylf = leaves.get(assigned[n]);
+        BlockPos yardCentre = new BlockPos((ylf[0] + ylf[2]) / 2, 0,
+                (ylf[1] + ylf[3]) / 2);
+        Polygon.AABB yard = new Polygon.AABB(ylf[0], ylf[1], ylf[2], ylf[3]);
+        // Entry — stitch the block's road-facing edge node to the central
+        // street (same stitch GRID_BLOCKS uses for its internal streets).
+        streets.add(List.of(edgeNode, projectToSegment(edgeNode, cA, cB)));
+        return new QuarterArrangement(List.of(placements),
+                List.copyOf(streets), List.copyOf(alleys), yardCentre, yard);
+    }
+
+    /** 4c-c — the quarter's BSP guide: demand-guided cuts over the shared
+     *  core. Each node carries the (descending) demand sides of the cells it
+     *  must still produce; a cut splits them into two area-balanced halves
+     *  and lands proportionally to their areas, clamped so each side can
+     *  still hold its biggest demand. Leaf when one demand remains. Sets
+     *  {@code failed[0]} (and stops cutting) when a node can't host its
+     *  demands — the caller returns null and the planner falls back to the
+     *  craft row. Deterministic (no jitter): the cut positions are fully
+     *  demand-derived. */
+    private static BspGuide<List<Integer>> quarterGuide(List<int[]> leaves,
+                                                        boolean[] failed) {
+        return new BspGuide<>() {
+            @Override
+            public BspCut<List<Integer>> plan(int x0, int z0, int x1, int z1,
+                                              boolean cutX, int corridor,
+                                              int depth, List<Integer> node,
+                                              Random rng) {
+                int len = cutX ? x1 - x0 : z1 - z0;
+                int cross = cutX ? z1 - z0 : x1 - x0;
+                for (int d : node) {
+                    if (d > cross || d > len) {
+                        failed[0] = true;
+                        return null;
+                    }
+                }
+                if (node.size() <= 1) return null;
+                // Greedy area-balanced split (node is descending, so each
+                // side's first element is its biggest demand).
+                List<Integer> a = new ArrayList<>(), b = new ArrayList<>();
+                long areaA = 0, areaB = 0;
+                for (int d : node) {
+                    if (areaA <= areaB) {
+                        a.add(d);
+                        areaA += (long) d * d;
+                    } else {
+                        b.add(d);
+                        areaB += (long) d * d;
+                    }
+                }
+                int half = corridor / 2 + 1;
+                int base = cutX ? x0 : z0;
+                int lo = base + a.get(0) + half;       // low side holds maxA
+                int hi = base + len - b.get(0) - half; // high side holds maxB
+                if (lo > hi) {
+                    failed[0] = true;
+                    return null;
+                }
+                int c = base + (int) Math.round(
+                        len * (double) areaA / (double) (areaA + areaB));
+                c = clamp(c, lo, hi);
+                return new BspCut<>(c, a, b);
+            }
+
+            @Override
+            public void leaf(int x0, int z0, int x1, int z1,
+                             List<Integer> node, int depth) {
+                leaves.add(new int[]{x0, z0, x1, z1});
+            }
+        };
+    }
+
     /** Nearest point to {@code p} on any corridor centerline (segment-projected),
      *  or null when {@code corridors} is empty. */
     private static BlockPos nearestCorridorPoint(BlockPos p,
