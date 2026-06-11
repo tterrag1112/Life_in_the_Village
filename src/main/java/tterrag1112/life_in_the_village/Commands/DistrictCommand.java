@@ -33,9 +33,10 @@ import java.util.Optional;
  * reference); the residential blocks place beyond it and tile as {@code count}
  * grows. {@code DISTRICT_ONLY_MODE} keeps rural + loose buildings off.
  *
- * <p>{@code [variant]} is parsed + echoed now so the arg path exists; it is a
- * no-op until residential internal-layout variants land (a later pass threads
- * it into the placement once a variant enum/consumer exists).
+ * <p>{@code [variant]} forces every placed block to that
+ * {@link ResidentialVariant} (A1 stage 1 — the forced value reaches
+ * {@code PhasedPlanner.reserveResidentialDistricts} through the spawn
+ * adapter); absent/unknown → per-block auto-selection (size + seed, mixed).
  *
  * <p>Op-only (permission 2). Re-running near a prior test village fails the
  * spawn proximity check — move away (or remove the test village) between runs.
@@ -55,6 +56,14 @@ public final class DistrictCommand {
                                                 null))
                                         .then(Commands.argument("variant",
                                                         StringArgumentType.word())
+                                                .suggests((c, b) -> {
+                                                    for (ResidentialVariant v
+                                                            : ResidentialVariant.values()) {
+                                                        b.suggest(v.name().toLowerCase(
+                                                                java.util.Locale.ROOT));
+                                                    }
+                                                    return b.buildFuture();
+                                                })
                                                 .executes(ctx -> runResidential(ctx,
                                                         IntegerArgumentType.getInteger(ctx, "count"),
                                                         StringArgumentType.getString(ctx, "variant"))))))));

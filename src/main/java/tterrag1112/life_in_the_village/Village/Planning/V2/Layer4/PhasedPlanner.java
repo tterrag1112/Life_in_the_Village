@@ -309,14 +309,16 @@ public final class PhasedPlanner {
         // road network to serve them + the gateways, and wrap it as the
         // skeleton. NetworkPlanner's network stays on the SiteContext for
         // bindings/batches; only its road GEOMETRY is superseded here.
-        // Courtyard blocks suppress the emergent per-house branching: their
-        // houses are served by the deliberate ring path, so the router skips
-        // their terminals (they still connect through the district node).
-        List<Polygon.AABB> courtyardBlocks = state.courtyardDecor.stream()
-                .map(CourtyardDecor::block).toList();
+        // Courtyard / green / cluster / grid blocks suppress the emergent
+        // per-house branching: their houses are served by their deliberate
+        // internal lanes, so the router skips their terminals (they still
+        // connect through the district node). STREET_ROW stays unsuppressed.
+        List<Polygon.AABB> noBranchBlocks = new ArrayList<>(
+                state.courtyardDecor.stream().map(CourtyardDecor::block).toList());
+        noBranchBlocks.addAll(state.servedBlocks);
         NetworkSpec routed = BlockServingRouter.route(
                 state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids(),
-                districtConnectionNodes(state), courtyardBlocks);
+                districtConnectionNodes(state), noBranchBlocks);
         state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
                 ctx.anchor(), SPINE_WIDTH);
         LOGGER.info("routed network: {} nodes, {} edges → {} road segments",
@@ -362,6 +364,7 @@ public final class PhasedPlanner {
                 state.civicSquare, state.marketSquare,
                 List.copyOf(state.internalLanes),
                 List.copyOf(state.courtyardDecor),
+                List.copyOf(state.greenDecor),
                 state.residentialBand,
                 state.districtAccum.freeze());
     }
@@ -2082,11 +2085,17 @@ public final class PhasedPlanner {
                     (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
         }
         int bandInnerR = civicReach + DISTRICT_GAP;
-        int[] cdims = districtDims(ResidentialVariant.COURTYARD,
-                RESIDENTIAL_BLOCK_TARGET, cellPitch, houseDepth, COURTYARD_GROW_SQUARE);
-        int courtyardDepth = 2 * Math.min(cdims[0], cdims[1]);   // block short axis
+        // A1 stage 1 — size the band to the DEEPEST auto-selectable variant
+        // (GREEN/CLUSTER/GRID_BLOCKS are deeper than COURTYARD), so the squarish
+        // variants get a band they can actually seat in where the extent allows.
+        int districtDepth = 0;
+        for (ResidentialVariant v : AUTO_VARIANTS) {
+            int[] vd = districtDims(v, RESIDENTIAL_BLOCK_TARGET, cellPitch,
+                    houseDepth, COURTYARD_GROW_SQUARE);
+            districtDepth = Math.max(districtDepth, 2 * Math.min(vd[0], vd[1]));
+        }
         int extentCap = state.villageRadius;
-        // Residential gets the ring outside civic up to courtyard depth, but
+        // Residential gets the ring outside civic up to the variant depth, but
         // never past (extent − farm reserve) so farms keep a ring. If the extent
         // can't host a usable band that still leaves farm room, the band is
         // DISABLED (fall back to 3a's open sweep, bounded only to the extent;
@@ -2100,18 +2109,18 @@ public final class PhasedPlanner {
         int bandOuterR;
         boolean bandActive = (bandCap - bandInnerR) >= RESIDENTIAL_MIN_BAND_DEPTH;
         if (bandActive) {
-            bandOuterR = Math.min(bandInnerR + courtyardDepth + DISTRICT_GAP, bandCap);
+            bandOuterR = Math.min(bandInnerR + districtDepth + DISTRICT_GAP, bandCap);
             state.residentialBandOuterR = bandOuterR;   // farms kept beyond
         } else {
             bandOuterR = Math.max(bandInnerR + RESIDENTIAL_MIN_BAND_DEPTH, extentCap);
             state.residentialBandOuterR = 0;            // farms unconstrained
         }
-        boolean bandFitsCourtyard = bandActive
-                && (bandOuterR - bandInnerR) >= courtyardDepth;
+        boolean bandFitsDistrict = bandActive
+                && (bandOuterR - bandInnerR) >= districtDepth;
         LOGGER.info("residential band: [{}, {}] depth={} active={} (civicReach={},"
-                + " courtyardDepth={}, extentCap={}, fitsCourtyard={})",
+                + " districtDepth={}, extentCap={}, fitsDistrict={})",
                 bandInnerR, bandOuterR, bandOuterR - bandInnerR, bandActive,
-                civicReach, courtyardDepth, extentCap, bandFitsCourtyard);
+                civicReach, districtDepth, extentCap, bandFitsDistrict);
 
         // Stage 3a — RESIDENTIAL PRECINCTS. Reserve several pockets around the
         // civic core and seat a district in each, biased to the DIAGONAL/corner
@@ -2119,10 +2128,12 @@ public final class PhasedPlanner {
         // skipping the market's cardinal. Distributing houses into TARGET-ish
         // shares (instead of growing one district to swallow them all) is what
         // gives the city SEVERAL pockets rather than one squeezed street. The
-        // variant is COURTYARD-preferred — the seat-or-STREET_ROW-fallback below
-        // IS the per-precinct depth test (a courtyard that seats had the depth;
-        // one that doesn't degrades to a street). The forced channel (/litv
-        // district) overrides to a single precinct of the forced variant.
+        // variant is AUTO-SELECTED per block (size + seed, mixed across blocks —
+        // see chooseVariant); the seat-or-STREET_ROW-fallback below IS the
+        // per-precinct depth test (a squarish variant that seats had the depth;
+        // one that doesn't degrades to a street — the "elongated piece" case).
+        // The forced channel (/litv district) overrides to a single precinct of
+        // the forced variant.
         boolean forced = state.forcedResidentialVariant != null;
         java.util.List<Double> directions = residentialDirections(state, anchor);
         int nPrecincts = forced ? 1 : Math.max(1, Math.min(directions.size(),
@@ -2139,15 +2150,16 @@ public final class PhasedPlanner {
         int reserved = 0;
         int placedHouses = 0;
         boolean noSpace = false;
+        ResidentialVariant prevVariant = null;
         for (int k = 0; remaining > 0; k++) {
             // The first district always seats; overflow districts only when the
             // remainder is worth a district (avoids a runt of 1–2).
             if (reserved > 0 && remaining < MIN_DISTRICT_HOUSES) break;
-            // Courtyard-preferred (forced overrides); the street fallback below
-            // handles directions too thin for a courtyard.
+            // Auto-selected (forced overrides); the street fallback below
+            // handles directions too thin for the squarish variants.
             ResidentialVariant variant = forced
                     ? state.forcedResidentialVariant
-                    : ResidentialVariant.COURTYARD;
+                    : chooseVariant(state, k, Math.min(share, remaining), prevVariant);
             // Direction-ordered seating: precinct k prefers directions[k]
             // (diagonals first); seatDistrict sweeps around it if blocked.
             double startAngle = directions.get(k % directions.size());
@@ -2179,6 +2191,7 @@ public final class PhasedPlanner {
             int placed = placeArrangedBlock(state, gate, seatedOut[0],
                     cellPitch, houseDepth, placedVariant, k);
             if (placed == 0) { noSpace = true; break; }   // guard infinite loop
+            prevVariant = placedVariant;
             placedHouses += placed;
             remaining -= placed;
         }
@@ -2307,7 +2320,7 @@ public final class PhasedPlanner {
             BlockPos edgeNode = edgePointToward(rowGate, anchor);
             ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
                     rowGate, workshopCount, cellPitch, craftDepth, edgeNode,
-                    ResidentialVariant.STREET_ROW);
+                    ResidentialVariant.STREET_ROW, 0L);
             int placed = 0;
             for (int i = 0; i < craftList.size() && i < arr.houses().size(); i++) {
                 ResidentialArranger.HousePlacement hp = arr.houses().get(i);
@@ -2477,6 +2490,70 @@ public final class PhasedPlanner {
         return Math.min(d, 2 * Math.PI - d);
     }
 
+    /** A1 stage 1 — the variants the auto-selector picks from. STREET_ROW is
+     *  NOT in the pool: it is the seat-fallback shape (a bearing too thin for a
+     *  squarish block degrades to the street row), i.e. the "elongated piece"
+     *  case. TERRACE/HILLSIDE are reserved (stage 2 / deferred). */
+    private static final ResidentialVariant[] AUTO_VARIANTS = {
+            ResidentialVariant.COURTYARD, ResidentialVariant.GREEN,
+            ResidentialVariant.CLUSTER, ResidentialVariant.GRID_BLOCKS};
+
+    /**
+     * A1 stage 1 — auto-selection: block size + seed → variant, MIXED across a
+     * village's blocks. Squarish-large blocks (≥6 houses) weight toward
+     * GREEN/GRID_BLOCKS (room for a communal green / internal street grid);
+     * squarish-small toward COURTYARD/CLUSTER; below 4 houses only
+     * COURTYARD/CLUSTER (a green or grid needs ≥4 to read). Never repeats the
+     * previous block's variant back-to-back (re-roll, then forced-different),
+     * so consecutive precincts always mix. Deterministic per (village seed,
+     * block index).
+     */
+    private static ResidentialVariant chooseVariant(State state, int blockIndex,
+                                                    int want,
+                                                    ResidentialVariant previous) {
+        java.util.Random rng = new java.util.Random(
+                state.ctx.seed() ^ (0x9E3779B97F4A7C15L * (blockIndex + 1)));
+        ResidentialVariant[] pool;
+        int[] weights;
+        if (want >= 6) {
+            pool = new ResidentialVariant[]{ResidentialVariant.GREEN,
+                    ResidentialVariant.GRID_BLOCKS, ResidentialVariant.COURTYARD,
+                    ResidentialVariant.CLUSTER};
+            weights = new int[]{30, 30, 20, 20};
+        } else if (want >= 4) {
+            pool = new ResidentialVariant[]{ResidentialVariant.COURTYARD,
+                    ResidentialVariant.CLUSTER, ResidentialVariant.GREEN,
+                    ResidentialVariant.GRID_BLOCKS};
+            weights = new int[]{30, 30, 20, 20};
+        } else {
+            pool = new ResidentialVariant[]{ResidentialVariant.COURTYARD,
+                    ResidentialVariant.CLUSTER};
+            weights = new int[]{50, 50};
+        }
+        ResidentialVariant pick = weightedPick(pool, weights, rng);
+        if (pick == previous) pick = weightedPick(pool, weights, rng);
+        if (pick == previous) {
+            for (ResidentialVariant v : pool) {
+                if (v != previous) { pick = v; break; }
+            }
+        }
+        return pick;
+    }
+
+    /** Weighted draw from {@code pool} (weights parallel, sum > 0). */
+    private static ResidentialVariant weightedPick(ResidentialVariant[] pool,
+                                                   int[] weights,
+                                                   java.util.Random rng) {
+        int total = 0;
+        for (int w : weights) total += w;
+        int r = rng.nextInt(total);
+        for (int i = 0; i < pool.length; i++) {
+            r -= weights[i];
+            if (r < 0) return pool[i];
+        }
+        return pool[pool.length - 1];
+    }
+
     /**
      * Phase 2 — variant-aware district half-dims {@code {halfX, halfZ}} (X is the
      * long/lane axis). The variant's GROWTH STRATEGY drives the shape:
@@ -2518,6 +2595,38 @@ public final class PhasedPlanner {
                     houses * cellPitch / 4 - shortHalf + 2 * inset + margin);
             return new int[]{longHalf, shortHalf};
         }
+        if (variant == ResidentialVariant.GREEN) {
+            // Angerdorf: like the courtyard's one-axis rectangle, but the short
+            // axis hosts the communal green + skirt lane instead of a fenced
+            // yard. shortHalf = house depth + edge clearance + lane band + green
+            // half (mirrors ResidentialArranger.green()'s inside-out geometry).
+            int insetG = houseDepth / 2 + 1 + ResidentialArranger.GREEN_EDGE_CLEARANCE;
+            int shortHalf = Math.max(MIN_PLAZA_HALF,
+                    houseDepth + 1 + ResidentialArranger.GREEN_EDGE_CLEARANCE
+                            + 2 + ResidentialArranger.GREEN_YARD_HALF);
+            int longHalf = Math.max(shortHalf,
+                    houses * cellPitch / 4 - shortHalf + 2 * insetG + margin);
+            return new int[]{longHalf, shortHalf};
+        }
+        if (variant == ResidentialVariant.CLUSTER) {
+            // Haufendorf: a squarish relaxed grid of ceil(sqrt(n))² cells at
+            // (cellPitch + 2) pitch, padded so jittered footprints stay inside.
+            int n = (int) Math.ceil(Math.sqrt(houses));
+            int half = Math.max(MIN_PLAZA_HALF,
+                    (n * (cellPitch + 2)) / 2
+                            + ResidentialArranger.CLUSTER_JITTER + margin);
+            return new int[]{half, half};
+        }
+        if (variant == ResidentialVariant.GRID_BLOCKS) {
+            // BSP grid: ceil(sqrt(n)) cells per axis + alley overhead between
+            // them + one street corridor's width of slack.
+            int n = (int) Math.ceil(Math.sqrt(houses));
+            int side = n * cellPitch
+                    + (n - 1) * ResidentialArranger.GRID_ALLEY_WIDTH
+                    + ResidentialArranger.GRID_STREET_WIDTH;
+            int half = Math.max(MIN_PLAZA_HALF, side / 2 + margin);
+            return new int[]{half, half};
+        }
         // STREET_ROW (and reserved variants, which arrange falls back to street):
         // two rows fronting a central lane — long axis grows, short axis fixed.
         int perRow = (houses + 1) / 2;
@@ -2551,7 +2660,7 @@ public final class PhasedPlanner {
         // flows out to the main street (same node the router branches to).
         BlockPos edgeNode = edgePointToward(gate, state.ctx.anchor());
         ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
-                gate, houses, cellPitch, houseDepth, edgeNode, variant);
+                gate, houses, cellPitch, houseDepth, edgeNode, variant, seed);
         int placed = 0;
         List<Polygon.AABB> footprints = new ArrayList<>(arr.houses().size());
         for (ResidentialArranger.HousePlacement p : arr.houses()) {
@@ -2579,6 +2688,21 @@ public final class PhasedPlanner {
                 blockLanes.add(snapped);
             }
         }
+        // A1 stage 1 — variant STREETS render one tier up (VILLAGE_PATH):
+        // GRID_BLOCKS' internal streets + GREEN's skirt loop and entry. Same
+        // truncate/snap treatment as the FOOTPATH lanes.
+        for (List<BlockPos> street : arr.streets()) {
+            boolean closed = street.size() > 2
+                    && street.get(0).equals(street.get(street.size() - 1));
+            List<BlockPos> trimmed = closed
+                    ? street : truncateAtFootprints(street, footprints);
+            List<BlockPos> snapped = snapPathToSurface(state, trimmed);
+            if (snapped.size() >= 2) {
+                state.internalLanes.add(new InternalPath(snapped,
+                        RoadShape.RoadTier.VILLAGE_PATH));
+                blockLanes.add(snapped);
+            }
+        }
         // COURTYARD decoration (well + border enclosure) carried to render. The
         // well sits on the surface (floor-Y +1, matching the civic plaza
         // fountain); the borders gap wherever a path crosses (blockLanes).
@@ -2591,9 +2715,34 @@ public final class PhasedPlanner {
                     new BlockPos(yard.getX(), floorY, yard.getZ()), gate,
                     List.copyOf(footprints), List.copyOf(blockLanes), seed));
         }
-        LOGGER.info("residential block #{} variant={} houses={}/{} lanes={} yard={} centre=({},{})",
+        // A1 stage 1 — GREEN decoration: the communal green renders as flora
+        // (COTTAGE_GREEN GardenPlot) with an optional well at its centre
+        // (seeded ~2/3 of greens) + a FOUNTAIN GatheringPoint, via the adapter.
+        if (variant == ResidentialVariant.GREEN && arr.green() != null) {
+            java.util.Random decorRng = new java.util.Random(seed * 31L + 17L);
+            BlockPos wellCentre = null;
+            if (decorRng.nextInt(3) < 2) {
+                int gx = (arr.green().minX() + arr.green().maxX()) / 2;
+                int gz = (arr.green().minZ() + arr.green().maxZ()) / 2;
+                int wellY = (state.fmap.inBounds(gx, gz)
+                        ? state.fmap.cellAt(gx, gz).elevationY() : 0) + 1;
+                wellCentre = new BlockPos(gx, wellY, gz);
+            }
+            state.greenDecor.add(new GreenDecor(arr.green(), wellCentre, seed));
+        }
+        // A1 stage 1 — router branch-suppression for the variants whose lanes
+        // serve their houses (courtyards suppress via their decor blocks;
+        // STREET_ROW intentionally stays unsuppressed, exactly as shipped).
+        if (variant == ResidentialVariant.GREEN
+                || variant == ResidentialVariant.CLUSTER
+                || variant == ResidentialVariant.GRID_BLOCKS) {
+            state.servedBlocks.add(gate);
+        }
+        LOGGER.info("residential block #{} variant={} houses={}/{} lanes={}"
+                + " streets={} yard={} green={} centre=({},{})",
                 blockIndex, variant, placed, houses, arr.lanes().size(),
-                arr.yardCentre() != null, (gate.minX() + gate.maxX()) / 2,
+                arr.streets().size(), arr.yardCentre() != null,
+                arr.green() != null, (gate.minX() + gate.maxX()) / 2,
                 (gate.minZ() + gate.maxZ()) / 2);
         return placed;
     }
@@ -3083,6 +3232,12 @@ public final class PhasedPlanner {
         /** COURTYARD decoration (well + border enclosure) — rendered by the
          *  adapter via the plaza well stamp + farm border generators. */
         final List<CourtyardDecor> courtyardDecor = new ArrayList<>();
+        /** A1 stage 1 — GREEN decoration (flora + optional well), planner→adapter. */
+        final List<GreenDecor> greenDecor = new ArrayList<>();
+        /** A1 stage 1 — blocks whose houses are served by their own internal
+         *  lanes (GREEN / CLUSTER / GRID_BLOCKS); the router suppresses
+         *  emergent per-house branches inside these. */
+        final List<Polygon.AABB> servedBlocks = new ArrayList<>();
         /** Read-only district-reservation diagnostics — written by the
          *  reserve passes, frozen onto {@link Result} at emit. Pure
          *  observation; never read by placement (zero behaviour impact). */
@@ -3142,6 +3297,9 @@ public final class PhasedPlanner {
                          /* Layout Rework — COURTYARD decoration (well + borders);
                           * the adapter stamps the well + paints borders. */
                          List<CourtyardDecor> courtyardDecor,
+                         /* A1 stage 1 — GREEN (Angerdorf) decoration: communal
+                          * green flora + optional well; adapter render. */
+                         List<GreenDecor> greenDecor,
                          /* Part 2a — residential band + green-commons fill (the
                           * adapter renders greens + de-dups the park finder). */
                          ResidentialBand residentialBand,
@@ -3172,7 +3330,7 @@ public final class PhasedPlanner {
                       java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
                       java.util.Set<BuildingType> droppedBindings) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    null, null, List.of(), List.of(), null,
+                    null, null, List.of(), List.of(), List.of(), null,
                     DistrictReport.empty());
         }
 
@@ -3183,8 +3341,8 @@ public final class PhasedPlanner {
                       java.util.Set<BuildingType> droppedBindings,
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, List.of(), List.of(), null,
-                    DistrictReport.empty());
+                    civicSquare, marketSquare, List.of(), List.of(), List.of(),
+                    null, DistrictReport.empty());
         }
 
         /** Pre-courtyard-decor 8-arg constructor (lanes but no courtyard decor). */
@@ -3195,8 +3353,8 @@ public final class PhasedPlanner {
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare,
                       List<InternalPath> internalLanes) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, internalLanes, List.of(), null,
-                    DistrictReport.empty());
+                    civicSquare, marketSquare, internalLanes, List.of(),
+                    List.of(), null, DistrictReport.empty());
         }
 
         /** Pre-Part-2a 9-arg constructor (courtyard decor but no band fill). */
@@ -3208,8 +3366,8 @@ public final class PhasedPlanner {
                       List<InternalPath> internalLanes,
                       List<CourtyardDecor> courtyardDecor) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, internalLanes, courtyardDecor, null,
-                    DistrictReport.empty());
+                    civicSquare, marketSquare, internalLanes, courtyardDecor,
+                    List.of(), null, DistrictReport.empty());
         }
     }
 

@@ -426,6 +426,25 @@ public final class V2VillageSpawnerAdapter {
                             java.util.List.of(), level.getGameTime()));
                 }
             }
+            // A1 stage 1 — GREEN (Angerdorf) communal greens: register each as
+            // a COTTAGE_GREEN GardenPlot (open lawn + scattered flora via
+            // ParkRenderer's primitives — the same path the band greens use).
+            // The optional well stamps after building placement, below,
+            // alongside the courtyard decor.
+            for (tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.GreenDecor gd
+                    : phased.greenDecor()) {
+                var gb = new tterrag1112.life_in_the_village.Village.Decoration.Parks
+                        .GardenPlot.Bounds(gd.green().minX(), gd.green().minZ(),
+                        gd.green().maxX(), gd.green().maxZ());
+                tterrag1112.life_in_the_village.Village.Decoration.Parks.GardenStyle
+                        gstyle = tterrag1112.life_in_the_village.Village.Decoration
+                                .Parks.GardenStyle.COTTAGE_GREEN;
+                data.addGardenPlot(new tterrag1112.life_in_the_village.Village
+                        .Decoration.Parks.GardenPlot(
+                        java.util.UUID.randomUUID(), village.getId(), gb, gstyle,
+                        gstyle.preserveBias(), java.util.List.of(),
+                        java.util.List.of(), level.getGameTime()));
+            }
         } catch (Exception e) {
             LOGGER.warn("V2: ParkCandidateFinder failed for {}: {}",
                     village.getName(), e.getMessage());
@@ -567,6 +586,25 @@ public final class V2VillageSpawnerAdapter {
                                 cd.houseFootprints(), cd.pathLines(), cd.seed(), culture.id());
             } catch (Exception e) {
                 LOGGER.warn("V2: courtyard decoration failed: {}", e.getMessage());
+            }
+        }
+
+        // A1 stage 1 — GREEN decoration: the optional well at the communal
+        // green's centre (plaza well stamp) + a FOUNTAIN GatheringPoint. The
+        // green's flora is already registered as a GardenPlot above.
+        for (tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.GreenDecor gd
+                : phased.greenDecor()) {
+            if (gd.wellCentre() == null) continue;
+            try {
+                tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPieceRenderer
+                        .stampWell(level, gd.wellCentre());
+                village.addGatheringPoint(
+                        new tterrag1112.life_in_the_village.Village.Decoration.TownSquare
+                                .GatheringPoint(java.util.UUID.randomUUID(), gd.wellCentre(),
+                                tterrag1112.life_in_the_village.Village.Decoration.TownSquare
+                                        .GatheringPointKind.FOUNTAIN, 6));
+            } catch (Exception e) {
+                LOGGER.warn("V2: green decoration failed: {}", e.getMessage());
             }
         }
 
