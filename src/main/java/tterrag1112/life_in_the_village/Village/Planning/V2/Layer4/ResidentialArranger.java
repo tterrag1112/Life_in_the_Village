@@ -523,7 +523,8 @@ public final class ResidentialArranger {
         List<int[]> leaves = new ArrayList<>();
         List<List<BlockPos>> streets = new ArrayList<>();
         List<List<BlockPos>> alleys = new ArrayList<>();
-        subdivide(x0, z0, x1, z1, 0, cellPitch, rng, leaves, streets, alleys);
+        bsp(x0, z0, x1, z1, 0, null, gridGuide(cellPitch, leaves), rng,
+                streets, alleys);
         if (streets.isEmpty() && alleys.isEmpty()) {
             // Too small for even one cut — degrade to the street row rather
             // than an unreadable single-cell "grid".
@@ -549,76 +550,133 @@ public final class ResidentialArranger {
                 face = faceAlley;
             }
             // A1 fix-up — city-grid density: pull the house from the leaf
-            // CENTRE up to its corridor-facing leaf edge (front edge
-            // GRID_FRONT_SETBACK inside the boundary), so houses front their
-            // street/alley tightly instead of floating mid-plot. Only the
-            // facing axis shifts; the cross axis stays centred (leaves are
-            // ~cellPitch wide, leaving ~1 block to each neighbour). The
-            // faceTarget is rebuilt AXIS-ALIGNED straight out the front edge:
-            // keeping the raw corridor projection could flip chooseFacing's
-            // dominant axis once the front-axis delta shrinks below the
-            // projection's along-corridor offset, turning the house sideways.
-            if (face != null) {
-                int dx = face.getX() - centre.getX();
-                int dz = face.getZ() - centre.getZ();
-                if (Math.abs(dx) >= Math.abs(dz)) {
-                    int cx = dx > 0
-                            ? leaf[2] - houseDepth / 2 - GRID_FRONT_SETBACK
-                            : leaf[0] + houseDepth / 2 + GRID_FRONT_SETBACK;
-                    centre = new BlockPos(cx, 0, centre.getZ());
-                    face = new BlockPos(dx > 0 ? leaf[2] + 2 : leaf[0] - 2,
-                            0, centre.getZ());
-                } else {
-                    int cz = dz > 0
-                            ? leaf[3] - houseDepth / 2 - GRID_FRONT_SETBACK
-                            : leaf[1] + houseDepth / 2 + GRID_FRONT_SETBACK;
-                    centre = new BlockPos(centre.getX(), 0, cz);
-                    face = new BlockPos(centre.getX(), 0,
-                            dz > 0 ? leaf[3] + 2 : leaf[1] - 2);
-                }
-            }
-            houses.add(new HousePlacement(centre, face != null ? face : edgeNode));
+            // CENTRE up to its corridor-facing leaf edge (shared with the
+            // 4c-c quarter — see pullToCorridor).
+            houses.add(face != null
+                    ? pullToCorridor(leaf, centre, face, houseDepth)
+                    : new HousePlacement(centre, edgeNode));
         }
         return new Arrangement(houses, List.copyOf(alleys), List.copyOf(streets),
                 null, null);
     }
 
-    /** Recursive BSP cut across the longer axis: emits the corridor centerline
-     *  (street at depth 0, alley deeper) and recurses into both halves, until
-     *  a cell can no longer host two {@code cellPitch} cells + the corridor. */
-    private static void subdivide(int x0, int z0, int x1, int z1, int depth,
-                                  int cellPitch, Random rng, List<int[]> leaves,
-                                  List<List<BlockPos>> streets,
-                                  List<List<BlockPos>> alleys) {
-        int w = x1 - x0, h = z1 - z0;
-        boolean cutX = w >= h;                 // cut across the longer axis
+    /** One planned BSP cut: the cut coordinate (across the rect's longer
+     *  axis) + the per-side payloads carried into the two halves. */
+    private record BspCut<T>(int cut, T low, T high) {}
+
+    /** 4c-c — policy seam for the shared rect-BSP core ({@link #bsp}). The
+     *  guide decides where to cut (or {@code null} to finish the rect as a
+     *  leaf) and receives finished leaves; the core owns everything
+     *  GRID_BLOCKS established — cut across the longer axis, corridor width
+     *  by depth (street at depth 0, alleys deeper), centerline emission, the
+     *  corridor/2+1 footprint margin, and the recursion. */
+    private interface BspGuide<T> {
+        /** The cut plan for this rect, or null to finish it as a leaf. */
+        BspCut<T> plan(int x0, int z0, int x1, int z1, boolean cutX,
+                       int corridor, int depth, T node, Random rng);
+
+        /** A finished leaf cell. */
+        void leaf(int x0, int z0, int x1, int z1, T node, int depth);
+    }
+
+    /** Recursive rect-BSP core shared by GRID_BLOCKS ({@link #gridGuide}) and
+     *  the 4c-c workshop quarter ({@link #arrangeQuarter}): asks the guide
+     *  for a cut, emits the corridor centerline (street at depth 0, alley
+     *  deeper) and recurses into both halves with the guide's per-side
+     *  payloads. */
+    private static <T> void bsp(int x0, int z0, int x1, int z1, int depth,
+                                T node, BspGuide<T> guide, Random rng,
+                                List<List<BlockPos>> streets,
+                                List<List<BlockPos>> alleys) {
+        boolean cutX = (x1 - x0) >= (z1 - z0); // cut across the longer axis
         int corridor = depth == 0 ? GRID_STREET_WIDTH : GRID_ALLEY_WIDTH;
-        int len = cutX ? w : h;
-        if (len < 2 * cellPitch + corridor) {
-            leaves.add(new int[]{x0, z0, x1, z1});
+        BspCut<T> cut = guide.plan(x0, z0, x1, z1, cutX, corridor, depth,
+                node, rng);
+        if (cut == null) {
+            guide.leaf(x0, z0, x1, z1, node, depth);
             return;
         }
-        int lo = (cutX ? x0 : z0) + cellPitch + corridor / 2;
-        int hi = (cutX ? x1 : z1) - cellPitch - corridor / 2;
-        // A1 fix-up — midpoint-biased cut (small jitter) instead of uniform
-        // random: uniform cuts spread leaf sizes across [pitch, 2*pitch +
-        // corridor), and the wide leaves read as suburban plots (house adrift
-        // in the middle). Near-even cuts converge every leaf to ~cellPitch so
-        // houses dominate their cells — a city grid, not a plot grid.
-        int mid = (lo + hi) / 2;
-        int c = mid + (hi > lo ? jitter(rng, Math.min(2, (hi - lo) / 2)) : 0);
+        int c = cut.cut();
         List<BlockPos> line = cutX
                 ? List.of(new BlockPos(c, 0, z0), new BlockPos(c, 0, z1))
                 : List.of(new BlockPos(x0, 0, c), new BlockPos(x1, 0, c));
         (depth == 0 ? streets : alleys).add(line);
         int half = corridor / 2 + 1;           // keep footprints off the corridor
         if (cutX) {
-            subdivide(x0, z0, c - half, z1, depth + 1, cellPitch, rng, leaves, streets, alleys);
-            subdivide(c + half, z0, x1, z1, depth + 1, cellPitch, rng, leaves, streets, alleys);
+            bsp(x0, z0, c - half, z1, depth + 1, cut.low(), guide, rng, streets, alleys);
+            bsp(c + half, z0, x1, z1, depth + 1, cut.high(), guide, rng, streets, alleys);
         } else {
-            subdivide(x0, z0, x1, c - half, depth + 1, cellPitch, rng, leaves, streets, alleys);
-            subdivide(x0, c + half, x1, z1, depth + 1, cellPitch, rng, leaves, streets, alleys);
+            bsp(x0, z0, x1, c - half, depth + 1, cut.low(), guide, rng, streets, alleys);
+            bsp(x0, c + half, x1, z1, depth + 1, cut.high(), guide, rng, streets, alleys);
         }
+    }
+
+    /** GRID_BLOCKS' guide — the original pitch-driven policy as a thin guide
+     *  over the shared core (4c-c seam generalization): leaf when a rect can
+     *  no longer host two {@code cellPitch} cells + the corridor; cut
+     *  midpoint-biased with small jitter. Behaviour (including the per-cut
+     *  RNG draw order) is identical to the pre-4c-c {@code subdivide}. */
+    private static BspGuide<Void> gridGuide(int cellPitch, List<int[]> leaves) {
+        return new BspGuide<>() {
+            @Override
+            public BspCut<Void> plan(int x0, int z0, int x1, int z1,
+                                     boolean cutX, int corridor, int depth,
+                                     Void node, Random rng) {
+                int len = cutX ? x1 - x0 : z1 - z0;
+                if (len < 2 * cellPitch + corridor) return null;
+                int lo = (cutX ? x0 : z0) + cellPitch + corridor / 2;
+                int hi = (cutX ? x1 : z1) - cellPitch - corridor / 2;
+                // A1 fix-up — midpoint-biased cut (small jitter) instead of
+                // uniform random: uniform cuts spread leaf sizes across
+                // [pitch, 2*pitch + corridor), and the wide leaves read as
+                // suburban plots (house adrift in the middle). Near-even cuts
+                // converge every leaf to ~cellPitch so houses dominate their
+                // cells — a city grid, not a plot grid.
+                int mid = (lo + hi) / 2;
+                int c = mid + (hi > lo ? jitter(rng, Math.min(2, (hi - lo) / 2)) : 0);
+                return new BspCut<>(c, null, null);
+            }
+
+            @Override
+            public void leaf(int x0, int z0, int x1, int z1, Void node,
+                             int depth) {
+                leaves.add(new int[]{x0, z0, x1, z1});
+            }
+        };
+    }
+
+    /** A1 fix-up (shared with the 4c-c quarter) — pulls a placement from its
+     *  leaf CENTRE up to the corridor-facing leaf edge (front edge
+     *  GRID_FRONT_SETBACK inside the boundary), so buildings front their
+     *  street/alley tightly instead of floating mid-plot. Only the facing
+     *  axis shifts; the cross axis stays centred. The faceTarget is rebuilt
+     *  AXIS-ALIGNED straight out the front edge: keeping the raw corridor
+     *  projection could flip chooseFacing's dominant axis once the
+     *  front-axis delta shrinks below the projection's along-corridor
+     *  offset, turning the building sideways. {@code footDepth} is the
+     *  front-to-back span kept inside the leaf (HOUSE depth for GRID_BLOCKS;
+     *  the member's footprint max-dim for the quarter — conservative under
+     *  either facing rotation). */
+    private static HousePlacement pullToCorridor(int[] leaf, BlockPos centre,
+                                                 BlockPos face, int footDepth) {
+        int dx = face.getX() - centre.getX();
+        int dz = face.getZ() - centre.getZ();
+        if (Math.abs(dx) >= Math.abs(dz)) {
+            int cx = dx > 0
+                    ? leaf[2] - footDepth / 2 - GRID_FRONT_SETBACK
+                    : leaf[0] + footDepth / 2 + GRID_FRONT_SETBACK;
+            centre = new BlockPos(cx, 0, centre.getZ());
+            face = new BlockPos(dx > 0 ? leaf[2] + 2 : leaf[0] - 2,
+                    0, centre.getZ());
+        } else {
+            int cz = dz > 0
+                    ? leaf[3] - footDepth / 2 - GRID_FRONT_SETBACK
+                    : leaf[1] + footDepth / 2 + GRID_FRONT_SETBACK;
+            centre = new BlockPos(centre.getX(), 0, cz);
+            face = new BlockPos(centre.getX(), 0,
+                    dz > 0 ? leaf[3] + 2 : leaf[1] - 2);
+        }
+        return new HousePlacement(centre, face);
     }
 
     /** Nearest point to {@code p} on any corridor centerline (segment-projected),
