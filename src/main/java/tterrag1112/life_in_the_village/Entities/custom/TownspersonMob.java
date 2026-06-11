@@ -1495,6 +1495,19 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 MemoryModuleType.ATTACK_COOLING_DOWN,
                 MemoryModuleType.LOOK_TARGET,
                 MemoryModuleType.WALK_TARGET,
+                // Gate-0 fix — vanilla MoveToTargetSink (CORE) DECLARES
+                // PATH (VALUE_ABSENT) and CANT_REACH_WALK_TARGET_SINCE
+                // (REGISTERED) in its requirement map. Brain.checkMemory
+                // returns false for any module absent from this list, so
+                // without these two the sink can NEVER start: WALK_TARGET
+                // is written but never consumed and no NPC walks via the
+                // Brain idiom (the village-wide freeze; LOOK still works
+                // because LookAtTargetSink only requires LOOK_TARGET).
+                // Same registration trap as the L1/R2b notes below, but on
+                // a vanilla behavior's DECLARED memories rather than a
+                // custom write.
+                MemoryModuleType.PATH,
+                MemoryModuleType.CANT_REACH_WALK_TARGET_SINCE,
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
                         .NEAREST_FREE_SEAT.get(),
                 tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes
