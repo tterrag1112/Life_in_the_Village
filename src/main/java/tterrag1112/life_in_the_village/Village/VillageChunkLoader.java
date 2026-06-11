@@ -89,7 +89,12 @@ public final class VillageChunkLoader {
         MinecraftServer server = player.level().getServer();
         if (server == null) return;
         long now = server.overworld().getGameTime();
-        if (now - lastReconcileTick < RECONCILE_INTERVAL) return;
+        // Gate-0 fix: the Long.MIN_VALUE sentinel must be checked explicitly.
+        // (now - Long.MIN_VALUE) overflows to a large NEGATIVE long, which is
+        // always < RECONCILE_INTERVAL — so this guard early-returned on every
+        // call and the loader never forced a single chunk.
+        if (lastReconcileTick != Long.MIN_VALUE
+                && now - lastReconcileTick < RECONCILE_INTERVAL) return;
         lastReconcileTick = now;
         reconcile(server, null);
     }
@@ -178,9 +183,16 @@ public final class VillageChunkLoader {
                                    UUID vid, Village v) {
         Set<ChunkPos> want = footprintChunks(v, data);
         Set<ChunkPos> have = forcedByVillage.computeIfAbsent(vid, k -> new HashSet<>());
+        boolean firstForce = have.isEmpty() && !want.isEmpty();
         // Add newly-wanted chunks.
         for (ChunkPos cp : want) {
             if (have.add(cp)) force(level, cp);
+        }
+        // One INFO line on the first force per village occupation (not per-tick)
+        // so the loader is diagnosable in-world via the log + /forceload query.
+        if (firstForce) {
+            LOGGER.info("[VillageChunkLoader] force-loaded {} chunk(s) for village {}",
+                    have.size(), v.getName());
         }
         // Drop chunks that left the footprint (village shrank / buildings removed).
         for (Iterator<ChunkPos> it = have.iterator(); it.hasNext(); ) {
@@ -194,6 +206,10 @@ public final class VillageChunkLoader {
         Set<ChunkPos> have = forcedByVillage.remove(vid);
         if (have == null) return;
         for (ChunkPos cp : have) unforce(level, cp);
+        if (!have.isEmpty()) {
+            LOGGER.info("[VillageChunkLoader] released {} chunk(s) for village {}",
+                    have.size(), vid);
+        }
     }
 
     // ── Ref-counted force/unforce (overlapping villages share chunks safely) ──
