@@ -362,7 +362,8 @@ public final class PhasedPlanner {
                 state.civicSquare, state.marketSquare,
                 List.copyOf(state.internalLanes),
                 List.copyOf(state.courtyardDecor),
-                state.residentialBand);
+                state.residentialBand,
+                state.districtAccum.freeze());
     }
 
     // =========================================================================
@@ -1191,6 +1192,82 @@ public final class PhasedPlanner {
     public record NucleusContext(NucleusKind kind, String anchorId,
                                   BuildingType buildingType, double distance) {}
 
+    /**
+     * Read-only diagnostic snapshot of the district-era reservation
+     * outcomes, populated as a side effect of the (unchanged) reserve
+     * passes and emitted on {@link Result}. Pure observation — every
+     * field is a value the reserve methods already compute for their
+     * own log lines; nothing here feeds back into placement, so the
+     * live spawn path is byte-identical whether or not anyone reads it.
+     *
+     * <p>The headless harness reads this to gate the district-era
+     * metrics (reserve rates, plaza paved-area collapse, market
+     * NO_REGION, workshop row vs lot fallback). Areas are AABB block
+     * areas of the reserved voids ({@code width × length}); 0 means the
+     * square collapsed (the paves-0 bug class) or was never reserved.
+     */
+    public record DistrictReport(
+            boolean civicReserved,
+            int civicArea,
+            boolean marketSelected,
+            boolean marketReserved,
+            int marketArea,
+            int residentialHousesRequested,
+            int residentialPrecinctsReserved,
+            int residentialHousesPlaced,
+            int residentialHousesDropped,
+            boolean residentialBandActive,
+            int workshopCraftsRequested,
+            WorkshopSeating workshopSeating,
+            int workshopCraftsPlaced,
+            int workshopCraftsDropped) {
+
+        /** How the craft set seated: as a single shared STREET_ROW block,
+         *  as per-craft LOTS (row block didn't fit), or NONE (no craft
+         *  set in the roster, so the workshop pass never ran). */
+        public enum WorkshopSeating { ROW, LOTS, NONE }
+
+        /** Empty report — UNVIABLE aborts and pre-district callers. */
+        public static DistrictReport empty() {
+            return new DistrictReport(false, 0, false, false, 0,
+                    0, 0, 0, 0, false, 0, WorkshopSeating.NONE, 0, 0);
+        }
+    }
+
+    /**
+     * Mutable accumulator the reserve passes write their already-computed
+     * outcome counters into; {@link #run} freezes it into the immutable
+     * {@link DistrictReport} at emit. Separate from {@link DistrictReport}
+     * so the reserve methods can fill fields incrementally without
+     * rebuilding a 14-arg record each step. Zero behaviour impact: the
+     * fields are written, never read by placement.
+     */
+    static final class DistrictAccum {
+        boolean civicReserved;
+        int civicArea;
+        boolean marketSelected;
+        boolean marketReserved;
+        int marketArea;
+        int residentialHousesRequested;
+        int residentialPrecinctsReserved;
+        int residentialHousesPlaced;
+        int residentialHousesDropped;
+        boolean residentialBandActive;
+        int workshopCraftsRequested;
+        DistrictReport.WorkshopSeating workshopSeating = DistrictReport.WorkshopSeating.NONE;
+        int workshopCraftsPlaced;
+        int workshopCraftsDropped;
+
+        DistrictReport freeze() {
+            return new DistrictReport(civicReserved, civicArea,
+                    marketSelected, marketReserved, marketArea,
+                    residentialHousesRequested, residentialPrecinctsReserved,
+                    residentialHousesPlaced, residentialHousesDropped,
+                    residentialBandActive, workshopCraftsRequested,
+                    workshopSeating, workshopCraftsPlaced, workshopCraftsDropped);
+        }
+    }
+
     /** Compute spatial fit for the cell+type. Inspects the strategy's
      *  nucleus rules, evaluates each affinity (with single-level
      *  fallback), adds a small road-frontage bonus, subtracts any
@@ -1796,6 +1873,10 @@ public final class PhasedPlanner {
         Polygon.AABB civicAabb = squareAt(anchor.getX(), anchor.getZ(), civic.half());
         state.civicSquare = civicAabb;
         state.civicRingRadius = civic.ring();
+        // Diagnostics (read-only) — civic void reserved + its paved area.
+        state.districtAccum.civicReserved = true;
+        state.districtAccum.civicArea = civicAabb.width() * civicAabb.length();
+        state.districtAccum.marketSelected = present.contains(BuildingType.MARKET);
         // Void reservation: footprint == frontage == the square; type null
         // (a void has no building — type is never dereferenced).
         state.reservations.add(new Reservation(toAabb(civicAabb), toAabb(civicAabb), null));
@@ -1835,6 +1916,10 @@ public final class PhasedPlanner {
                 state.reservations.add(
                         new Reservation(toAabb(marketAabb), toAabb(marketAabb), null));
                 reserved = true;
+                // Diagnostics (read-only) — market sub-district reserved + area.
+                state.districtAccum.marketReserved = true;
+                state.districtAccum.marketArea =
+                        marketAabb.width() * marketAabb.length();
             }
         }
         LOGGER.info("market sub-district: {} ({}x{})",
@@ -2154,6 +2239,13 @@ public final class PhasedPlanner {
         LOGGER.info("residential band fill: {} green-commons subdistrict(s) (active={})",
                 greens.size(), bandActive);
 
+        // Diagnostics (read-only) — residential reserve outcome.
+        state.districtAccum.residentialHousesRequested = houseCount;
+        state.districtAccum.residentialPrecinctsReserved = reserved;
+        state.districtAccum.residentialHousesPlaced = placedHouses;
+        state.districtAccum.residentialHousesDropped = remaining;
+        state.districtAccum.residentialBandActive = bandActive;
+
         LOGGER.info("residential districts: {} assigned / {} precincts / {} placed"
                 + " / {} dropped (cellPitch={}, nPrecincts={}, share={}, dirs={})",
                 houseCount, reserved, placedHouses, remaining, cellPitch,
@@ -2183,6 +2275,8 @@ public final class PhasedPlanner {
                                                  List<BuildingType> selection) {
         int workshopCount = 0;
         for (BuildingType t : selection) if (CRAFT_SET.contains(t)) workshopCount++;
+        // Diagnostics (read-only) — craft set size; seating filled below.
+        state.districtAccum.workshopCraftsRequested = workshopCount;
         if (workshopCount == 0) {
             LOGGER.info("workshop districts: none (no craft set selected)");
             return;
@@ -2255,6 +2349,11 @@ public final class PhasedPlanner {
                             RoadShape.RoadTier.FOOTPATH));
                 }
             }
+            // Diagnostics (read-only) — craft set seated as one shared row.
+            state.districtAccum.workshopSeating =
+                    DistrictReport.WorkshopSeating.ROW;
+            state.districtAccum.workshopCraftsPlaced = placed;
+            state.districtAccum.workshopCraftsDropped = workshopCount - placed;
             LOGGER.info("workshop craft row: {}/{} crafts placed (block={}x{})",
                     placed, workshopCount, 2 * rowHalfX, 2 * rowHalfZ);
             return;
@@ -2280,6 +2379,10 @@ public final class PhasedPlanner {
                 dropped++;
             }
         }
+        // Diagnostics (read-only) — row block didn't fit; per-craft lots.
+        state.districtAccum.workshopSeating = DistrictReport.WorkshopSeating.LOTS;
+        state.districtAccum.workshopCraftsPlaced = placed;
+        state.districtAccum.workshopCraftsDropped = dropped;
         LOGGER.info("workshop lots (row fallback): {}/{} crafts placed, {} dropped",
                 placed, workshopCount, dropped);
     }
@@ -3034,6 +3137,10 @@ public final class PhasedPlanner {
         /** COURTYARD decoration (well + border enclosure) — rendered by the
          *  adapter via the plaza well stamp + farm border generators. */
         final List<CourtyardDecor> courtyardDecor = new ArrayList<>();
+        /** Read-only district-reservation diagnostics — written by the
+         *  reserve passes, frozen onto {@link Result} at emit. Pure
+         *  observation; never read by placement (zero behaviour impact). */
+        final DistrictAccum districtAccum = new DistrictAccum();
 
         /** The reserved square voids, for the router's obstacle mask. */
         List<Polygon.AABB> voids() {
@@ -3091,7 +3198,12 @@ public final class PhasedPlanner {
                          List<CourtyardDecor> courtyardDecor,
                          /* Part 2a — residential band + green-commons fill (the
                           * adapter renders greens + de-dups the park finder). */
-                         ResidentialBand residentialBand) {
+                         ResidentialBand residentialBand,
+                         /* Harness refresh (2026-06) — read-only district-era
+                          * reservation diagnostics. Never null; defaults to
+                          * DistrictReport.empty() through the back-compat
+                          * constructors. Pure observation (see DistrictReport). */
+                         DistrictReport districtReport) {
         /** Backwards-compat 3-arg constructor for callers that don't
          *  care about the nucleus attribution. */
         public Result(PlacementResult placement, RoadNetwork network,
@@ -3114,7 +3226,8 @@ public final class PhasedPlanner {
                       java.util.Map<PlacedBuilding, NucleusContext> nucleusContexts,
                       java.util.Set<BuildingType> droppedBindings) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    null, null, List.of(), List.of(), null);
+                    null, null, List.of(), List.of(), null,
+                    DistrictReport.empty());
         }
 
         /** Pre-Layout-Rework 7-arg constructor (no internal lanes). */
@@ -3124,7 +3237,8 @@ public final class PhasedPlanner {
                       java.util.Set<BuildingType> droppedBindings,
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, List.of(), List.of(), null);
+                    civicSquare, marketSquare, List.of(), List.of(), null,
+                    DistrictReport.empty());
         }
 
         /** Pre-courtyard-decor 8-arg constructor (lanes but no courtyard decor). */
@@ -3135,7 +3249,8 @@ public final class PhasedPlanner {
                       Polygon.AABB civicSquare, Polygon.AABB marketSquare,
                       List<InternalPath> internalLanes) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, internalLanes, List.of(), null);
+                    civicSquare, marketSquare, internalLanes, List.of(), null,
+                    DistrictReport.empty());
         }
 
         /** Pre-Part-2a 9-arg constructor (courtyard decor but no band fill). */
@@ -3147,7 +3262,8 @@ public final class PhasedPlanner {
                       List<InternalPath> internalLanes,
                       List<CourtyardDecor> courtyardDecor) {
             this(placement, network, events, nucleusContexts, droppedBindings,
-                    civicSquare, marketSquare, internalLanes, courtyardDecor, null);
+                    civicSquare, marketSquare, internalLanes, courtyardDecor, null,
+                    DistrictReport.empty());
         }
     }
 
