@@ -124,6 +124,16 @@ public class QuestSavedData extends SavedData {
         setDirty();
     }
 
+    /** Gate-0 — removes a quest entirely (the {@code /quest abandon} path). Returns
+     *  true when a quest with {@code questId} was found and removed (persisted). */
+    public boolean remove(UUID playerId, UUID questId) {
+        List<Quest> list = playerId == null ? null : questsByPlayer.get(playerId);
+        if (list == null || questId == null) return false;
+        boolean removed = list.removeIf(q -> q.questId().equals(questId));
+        if (removed) setDirty();
+        return removed;
+    }
+
     /** Replaces the player's quest of the same {@code questId} (immutable-quest update). */
     public void replace(UUID playerId, Quest quest) {
         if (playerId == null || quest == null) return;

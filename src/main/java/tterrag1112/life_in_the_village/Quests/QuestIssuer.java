@@ -125,19 +125,35 @@ public final class QuestIssuer {
                                    QuestDifficulty difficulty) {
         QuestDifficulty diff = difficulty == null ? QuestDifficulty.EASY : difficulty;
         int n = Math.max(1, count);
+        // Gate-0 — normalize registry-id targets to namespaced form ("zombie" →
+        // "minecraft:zombie") so the stored id compares like-for-like with the
+        // namespaced ids the event hooks emit (QuestEventHooks MOB_DEATH uses
+        // BuiltInRegistries...getKey(...).toString()) and the poll helpers parse.
+        // Escort destinations are free strings, not registry ids — left alone.
+        String kindKey = kind == null ? "" : kind;
+        String target0 = target;
+        switch (kindKey) {
+            case "hunt", "gather", "deliver", "explore" -> {
+                net.minecraft.resources.Identifier nid =
+                        net.minecraft.resources.Identifier.tryParse(target == null ? "" : target);
+                if (nid != null) target0 = nid.toString();
+            }
+            default -> { }
+        }
+        final String normalizedTarget = target0;
         Objective objective;
         String title;
-        switch (kind == null ? "" : kind) {
-            case "hunt"    -> { objective = new Objective.Hunt(target, 0, n);
-                                title = "Hunt " + n + "× " + target; }
-            case "gather"  -> { objective = new Objective.Gather(target, n);
-                                title = "Gather " + n + "× " + target; }
-            case "deliver" -> { objective = new Objective.Deliver(target, currentVillageId(level, player));
-                                title = "Deliver " + target; }
-            case "explore" -> { objective = new Objective.Explore(target);
-                                title = "Explore " + target; }
-            case "escort"  -> { objective = new Objective.Escort("", target, false);
-                                title = "Escort to " + target; }
+        switch (kindKey) {
+            case "hunt"    -> { objective = new Objective.Hunt(normalizedTarget, 0, n);
+                                title = "Hunt " + n + "× " + normalizedTarget; }
+            case "gather"  -> { objective = new Objective.Gather(normalizedTarget, n);
+                                title = "Gather " + n + "× " + normalizedTarget; }
+            case "deliver" -> { objective = new Objective.Deliver(normalizedTarget, currentVillageId(level, player));
+                                title = "Deliver " + normalizedTarget; }
+            case "explore" -> { objective = new Objective.Explore(normalizedTarget);
+                                title = "Explore " + normalizedTarget; }
+            case "escort"  -> { objective = new Objective.Escort("", normalizedTarget, false);
+                                title = "Escort to " + normalizedTarget; }
             default -> { return null; }
         }
         Quest quest = new Quest(
