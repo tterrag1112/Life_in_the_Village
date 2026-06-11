@@ -1569,32 +1569,6 @@ public final class PhasedPlanner {
         return new FrontageStrip(buildingFront, frontDir, roadWidth, fp.width());
     }
 
-    private static Aabb frontageAabb(FrontageStrip strip) {
-        // Strip extends from buildingFront outward in frontDir by `width`
-        // (= roadWidth). Length runs perpendicular to frontDir.
-        Vec3 d = strip.frontDirection();
-        int outwardX = (int) Math.round(d.x * strip.width());
-        int outwardZ = (int) Math.round(d.z * strip.width());
-        // Perpendicular to frontDir (XZ rotation by 90°).
-        int perpX = (int) Math.round(-d.z);
-        int perpZ = (int) Math.round(d.x);
-        int halfLen = strip.length() / 2;
-        // Strip rectangle corners.
-        int aX = strip.buildingFront().getX() + perpX * halfLen;
-        int aZ = strip.buildingFront().getZ() + perpZ * halfLen;
-        int bX = strip.buildingFront().getX() - perpX * halfLen;
-        int bZ = strip.buildingFront().getZ() - perpZ * halfLen;
-        int cX = aX + outwardX;
-        int cZ = aZ + outwardZ;
-        int dX = bX + outwardX;
-        int dZ = bZ + outwardZ;
-        int minX = Math.min(Math.min(aX, bX), Math.min(cX, dX));
-        int maxX = Math.max(Math.max(aX, bX), Math.max(cX, dX));
-        int minZ = Math.min(Math.min(aZ, bZ), Math.min(cZ, dZ));
-        int maxZ = Math.max(Math.max(aZ, bZ), Math.max(cZ, dZ));
-        return new Aabb(minX, minZ, maxX, maxZ);
-    }
-
     private static boolean overlapsAnyReservation(Aabb fpAabb, Aabb stripAabb,
                                                   List<Reservation> reservations) {
         for (Reservation r : reservations) {
@@ -2967,19 +2941,6 @@ public final class PhasedPlanner {
                 new BlockPos(a.minX, y, a.maxZ)));
     }
 
-    /** True iff {@code fpAabb} intersects any road segment's corridor.
-     *  Shared with {@code OverlapAuditor} via {@link RoadCorridors}. */
-    private static boolean intersectsAnyCorridor(Aabb fpAabb, List<RoadSegment> segments) {
-        for (RoadSegment seg : segments) {
-            int corridorHalf = (seg.width() + 1) / 2;
-            if (RoadCorridors.intersects(seg.start(), seg.end(), corridorHalf,
-                    fpAabb.minX(), fpAabb.minZ(), fpAabb.maxX(), fpAabb.maxZ())) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /** Returns the closest road segment to {@code pos} along with the
      *  closest point on it and the (geometric) distance. */
     private static NearestRoad nearestRoadOf(BlockPos pos, List<RoadSegment> roads) {
@@ -3027,21 +2988,6 @@ public final class PhasedPlanner {
         double dx = a.getX() - b.getX();
         double dz = a.getZ() - b.getZ();
         return Math.sqrt(dx * dx + dz * dz);
-    }
-
-    private static Vec3 unit(BlockPos a, BlockPos b) {
-        double dx = b.getX() - a.getX();
-        double dz = b.getZ() - a.getZ();
-        double len = Math.sqrt(dx * dx + dz * dz);
-        if (len < 1e-9) return new Vec3(1, 0, 0);
-        return new Vec3(dx / len, 0, dz / len);
-    }
-
-    private static BlockPos average(List<BlockPos> points) {
-        long sx = 0, sz = 0;
-        for (BlockPos p : points) { sx += p.getX(); sz += p.getZ(); }
-        int n = Math.max(1, points.size());
-        return new BlockPos((int) (sx / n), points.get(0).getY(), (int) (sz / n));
     }
 
     // =========================================================================
