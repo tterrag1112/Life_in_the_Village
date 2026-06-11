@@ -111,6 +111,12 @@ public final class ResidentialArranger {
      *  ground past the finished gable). Public so the district sizer pads
      *  the block's long axis by the same amount. */
     public static final int TERRACE_END_SETBACK = 2;
+    /** TERRACE — segment count at which the terrace splits into TWO facing
+     *  rows. Below it everything goes in one row, so counts 3–5 build a
+     *  proper cap + interior(s) + cap run instead of two caps-only pairs
+     *  (the canonical row is LEFT cap + >=1 interior + RIGHT cap). Public
+     *  so the district sizer mirrors the same split. */
+    public static final int TERRACE_TWO_ROW_MIN = 6;
 
     /**
      * Arranges {@code houseCount} houses in {@code block} per {@code variant},
@@ -240,10 +246,11 @@ public final class ResidentialArranger {
         int alongHalfLimit = Math.max(0, halfLong - TERRACE_END_SETBACK);
 
         int rowOffset = pieces.depth() / 2 + LANE_HALF;
-        // Two parallel rows when both can host a full row (LEFT + RIGHT cap,
-        // i.e. >= 2 segments each); below 4 segments a single row keeps the
-        // caps meaningful. count >= 2 is guaranteed by arrange()'s gate.
-        int front = count >= 4 ? (count + 1) / 2 : count;
+        // Two parallel rows only when both can host a CANONICAL row (cap +
+        // interior + cap, >= 3 segments each); below that a single run keeps
+        // interiors in play (4–5 → one row of 4–5, never two caps-only
+        // pairs). count >= 2 is guaranteed by arrange()'s gate.
+        int front = count >= TERRACE_TWO_ROW_MIN ? (count + 1) / 2 : count;
         int back = count - front;
 
         List<HousePlacement> houses = new ArrayList<>(count);

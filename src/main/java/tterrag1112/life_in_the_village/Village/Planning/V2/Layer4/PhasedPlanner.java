@@ -2491,7 +2491,8 @@ public final class PhasedPlanner {
      */
     private static int[] terraceDims(ResidentialArranger.TerracePieces tp,
                                      int houses) {
-        int perRow = houses >= 4 ? (houses + 1) / 2 : houses;
+        int perRow = houses >= ResidentialArranger.TERRACE_TWO_ROW_MIN
+                ? (houses + 1) / 2 : houses;
         int widestMid = 0;
         for (ResidentialArranger.TerracePiece p : tp.interiors()) {
             widestMid = Math.max(widestMid, span(p.width()));
@@ -2634,7 +2635,7 @@ public final class PhasedPlanner {
      * squarish-small toward COURTYARD/CLUSTER; below 4 houses only
      * COURTYARD/CLUSTER (a green or grid needs ≥4 to read). A1 stage 2 —
      * TERRACE joins both ≥4 pools when the row_house pieces are authored
-     * (a terrace needs ≥2 segments per row; ≥4 gives two facing rows),
+     * (4–5 segments build one cap+interiors+cap run; ≥6 two facing rows),
      * tier-weighted via {@link #terraceWeight}. Never repeats the
      * previous block's variant back-to-back (re-roll, then forced-different),
      * so consecutive precincts always mix. Deterministic per (village seed,
