@@ -264,24 +264,36 @@ public final class CultureResolver {
                                               ServerLevel world) {
         String typeFolder = type.name().toLowerCase();
         String defaultVariant = BuildingVariant.defaultVariantId(type);
-        String levelTail = "/level_" + level;
         String styleSeg = style.folder();
+
+        // A1 stage 2 — piece variant ids ({@code folder:piece}, e.g.
+        // {@code row_house:left}) resolve to the piece file
+        // {@code <folder>/<piece>_level_<n>.nbt} instead of the plain
+        // {@code <variantId>/level_<n>.nbt}. Steps 1–4 walk the same
+        // culture/style chain with the piece tail; steps 5–6 still fall
+        // back to the type's DEFAULT variant (a whole house) so a
+        // missing piece degrades to a standalone home, not a hole.
+        String variantFolder = BuildingVariant.baseId(variantId);
+        String piece = BuildingVariant.pieceOf(variantId);
+        String levelTail = piece == null
+                ? "/level_" + level
+                : "/" + piece + "_level_" + level;
 
         // Step 1: {culture}/{style}/{type}/{variant}/level_{n}
         Identifier step1 = buildId(culture + "/" + styleSeg + "/"
-                + typeFolder + "/" + variantId + levelTail);
+                + typeFolder + "/" + variantFolder + levelTail);
         if (templateExists(world, step1)) return step1;
 
         // Step 2: {culture}/{type}/{variant}/level_{n}  (style-agnostic)
         Identifier step2 = buildId(culture + "/"
-                + typeFolder + "/" + variantId + levelTail);
+                + typeFolder + "/" + variantFolder + levelTail);
         if (templateExists(world, step2)) return step2;
 
         // Step 3: default/{style}/{type}/{variant}/level_{n}
         Identifier step3 = null;
         if (!DEFAULT_CULTURE.equals(culture)) {
             step3 = buildId(DEFAULT_CULTURE + "/" + styleSeg + "/"
-                    + typeFolder + "/" + variantId + levelTail);
+                    + typeFolder + "/" + variantFolder + levelTail);
             if (templateExists(world, step3)) return step3;
         }
 
@@ -289,7 +301,7 @@ public final class CultureResolver {
         Identifier step4 = null;
         if (!DEFAULT_CULTURE.equals(culture)) {
             step4 = buildId(DEFAULT_CULTURE + "/"
-                    + typeFolder + "/" + variantId + levelTail);
+                    + typeFolder + "/" + variantFolder + levelTail);
             if (templateExists(world, step4)) return step4;
         }
 
@@ -298,9 +310,13 @@ public final class CultureResolver {
         // useful diagnostic ("authored variant missing, used default").
         // If neither matches, step 7 logs the harder error instead.
 
+        // Steps 5–6 always use the PLAIN level tail: the default
+        // variant is a whole building, never a piece file.
+        String defaultTail = "/level_" + level;
+
         // Step 5: default/{style}/{type}/{type}/level_{n}
         Identifier step5 = buildId(DEFAULT_CULTURE + "/" + styleSeg + "/"
-                + typeFolder + "/" + defaultVariant + levelTail);
+                + typeFolder + "/" + defaultVariant + defaultTail);
         if (templateExists(world, step5)) {
             warnDefaultVariantFallback(type, variantId, culture, style, level);
             return step5;
@@ -308,7 +324,7 @@ public final class CultureResolver {
 
         // Step 6: default/{type}/{type}/level_{n}  (style-agnostic)
         Identifier step6 = buildId(DEFAULT_CULTURE + "/"
-                + typeFolder + "/" + defaultVariant + levelTail);
+                + typeFolder + "/" + defaultVariant + defaultTail);
         if (templateExists(world, step6)) {
             warnDefaultVariantFallback(type, variantId, culture, style, level);
             return step6;

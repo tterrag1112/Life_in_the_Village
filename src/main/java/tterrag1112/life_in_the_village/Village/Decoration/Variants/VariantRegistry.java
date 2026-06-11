@@ -111,8 +111,13 @@ public final class VariantRegistry {
      */
     public Optional<BuildingVariant> resolve(BuildingType type, String variantId) {
         if (variantId == null) return Optional.empty();
+        // A1 stage 2 — a piece variant id ({@code row_house:left})
+        // resolves to its variant FOLDER's manifest entry: pieces share
+        // the folder's metadata (repaint colour slots, tags) and never
+        // register individually.
+        final String folderId = BuildingVariant.baseId(variantId);
         return byType.getOrDefault(type, List.of()).stream()
-                .filter(v -> variantId.equals(v.id()))
+                .filter(v -> folderId.equals(v.id()))
                 .findFirst();
     }
 

@@ -247,8 +247,12 @@ public final class VariantResolver {
      */
     public static BuildingVariant findById(String culture, Style style,
                                            BuildingType type, String variantId) {
+        // A1 stage 2 — piece variant ids ({@code row_house:left}) take
+        // their manifest metadata (tint colour slots, tags) from the
+        // piece's variant FOLDER; only NBT resolution is piece-aware.
+        final String folderId = BuildingVariant.baseId(variantId);
         return VariantRegistry.INSTANCE
-                .find(culture, style, type, variantId)
+                .find(culture, style, type, folderId)
                 .or(() -> VariantRegistry.INSTANCE
                         .defaultVariant(type, culture, style))
                 .or(() -> VariantRegistry.INSTANCE

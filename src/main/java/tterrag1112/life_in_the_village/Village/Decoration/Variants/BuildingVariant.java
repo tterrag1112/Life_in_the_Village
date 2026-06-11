@@ -52,6 +52,44 @@ public record BuildingVariant(
         return type.name().toLowerCase();
     }
 
+    // ── Piece variant ids (A1 stage 2 — terrace segments) ────────────────
+
+    /**
+     * Delimiter for PIECE variant ids of the form
+     * {@code <variantFolder>:<piece>} (e.g. {@code row_house:left}).
+     * A piece id names the authored file
+     * {@code .../<type>/<variantFolder>/<piece>_level_<n>.nbt} instead
+     * of the plain {@code level_<n>.nbt}. The colon cannot occur in a
+     * resource path segment, so a piece id is never mistaken for a
+     * plain variant folder. {@code CultureResolver} translates the id
+     * to the piece file path; registry lookups normalise through
+     * {@link #baseId} so manifest metadata (tint colour slots, tags)
+     * comes from the piece's variant folder.
+     */
+    public static final char PIECE_DELIMITER = ':';
+
+    /** Composes a piece variant id ({@code folder:piece}). */
+    public static String pieceVariantId(String variantFolder, String piece) {
+        return variantFolder + PIECE_DELIMITER + piece;
+    }
+
+    /** The variant-folder part of {@code variantId} — strips a
+     *  {@code :piece} suffix when present, otherwise returns the id
+     *  unchanged (also for null). */
+    public static String baseId(String variantId) {
+        if (variantId == null) return null;
+        int sep = variantId.indexOf(PIECE_DELIMITER);
+        return sep > 0 ? variantId.substring(0, sep) : variantId;
+    }
+
+    /** The piece part of {@code variantId}, or null when the id has no
+     *  {@code :piece} suffix. */
+    public static String pieceOf(String variantId) {
+        if (variantId == null) return null;
+        int sep = variantId.indexOf(PIECE_DELIMITER);
+        return sep > 0 ? variantId.substring(sep + 1) : null;
+    }
+
     /**
      * Builds a {@link BuildingVariant} from a folder key and parsed
      * manifest. Style/culture/type come from the folder; everything

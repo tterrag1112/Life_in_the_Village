@@ -1,0 +1,13 @@
+{
+  "description": "Terrace segment pieces, not a standalone whole-house variant. Files follow <placement>_level_<n>.nbt: a placement prefix of left_ or right_ marks an END CAP; ANY other prefix (center_, and future interiors like bakeryfront_) is an interior piece. The TERRACE residential arranger composes a row as LEFT cap + N interior pieces + RIGHT cap, placed flush (shared walls by construction). This folder intentionally has no plain level_<n>.nbt, so the pieces never enter the normal HOUSE variant pool; they are only reachable through the piece index (BuildingAvailability.availablePieces) and the row_house:<piece> forced-variant ids.",
+  "id": "row_house",
+  "displayName": "Row House",
+  "minTier": "TOWN",
+  "maxTier": "CITY",
+  "weight": 0.6,
+  "stylePreference": "RURAL",
+  "tags": ["townhouse", "narrow", "share_wall_ready", "terrace_segment_pieces"],
+  "preferredTags": ["RESIDENTIAL_CORE"],
+  "colorSlots": ["PRIMARY", "ACCENT", "ROOF"],
+  "maxPerVillage": 999
+}
