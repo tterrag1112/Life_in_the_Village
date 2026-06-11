@@ -1225,10 +1225,12 @@ public final class PhasedPlanner {
             int workshopCraftsPlaced,
             int workshopCraftsDropped) {
 
-        /** How the craft set seated: as a single shared STREET_ROW block,
-         *  as per-craft LOTS (row block didn't fit), or NONE (no craft
-         *  set in the roster, so the workshop pass never ran). */
-        public enum WorkshopSeating { ROW, LOTS, NONE }
+        /** How the craft set seated: as the CITY-tier QUARTER (4c-c — a
+         *  demand-guided BSP block with a central street + work-yard), as a
+         *  single shared STREET_ROW block (TOWN, or CITY fallback), as
+         *  per-craft LOTS (HAMLET, or the row didn't fit), or NONE (no
+         *  craft set in the roster, so the workshop pass never ran). */
+        public enum WorkshopSeating { QUARTER, ROW, LOTS, NONE }
 
         /** Empty report — UNVIABLE aborts and pre-district callers. */
         public static DistrictReport empty() {
@@ -1986,6 +1988,16 @@ public final class PhasedPlanner {
      *  workshop precincts; NOT batch 3, so they leave the civic precinct). */
     private static final int WORKSHOP_BATCH = 4;
 
+    /** 4c-c — craft types that take the quarter's BACK/alley cells (goods
+     *  in/out, not customer-facing). The rest of {@link #CRAFT_SET} fronts
+     *  the quarter's central street. */
+    private static final EnumSet<BuildingType> CRAFT_STORAGE_SET = EnumSet.of(
+            BuildingType.STOCKPILE, BuildingType.WAREHOUSE);
+    /** 4c-c — demand side (blocks) of the quarter's shared work-yard cell:
+     *  the well_hamlet stamp (~5×5) + a working apron around it. The yard is
+     *  reserved OPEN — well + open ground is the v1 look. */
+    private static final int WORKSHOP_YARD_SIDE = 13;
+
     /** Houses per residential district. Kept SMALL (4) so a block holding the
      *  big HOUSE footprint (≈20×11) stays a compact ~44×44 — small enough to
      *  seat in the band between the footprint-sized core and the grid edge
@@ -2303,55 +2315,67 @@ public final class PhasedPlanner {
         java.util.List<BuildingType> craftList = new ArrayList<>();
         for (BuildingType t : selection) if (CRAFT_SET.contains(t)) craftList.add(t);
 
-        // 4c-b — the CRAFT ROW (a "smith's row"): one STREET_ROW block holding all
-        // crafts in two rows fronting a shared internal lane, reusing the
-        // residential arranger. It seats at a free band bearing the same way a
-        // residential street-row does (reach-based range, overlap-rejected to a
-        // clear bearing — NOT the thin outer ring). The arranger places each craft
-        // at a row position, so all crafts place. Falls back to per-craft lots if
-        // no clear bearing fits the row block (tight band → 4c-c cap bump / a
-        // one-sided row is the deeper lever).
-        int[] rd = districtDims(ResidentialVariant.STREET_ROW, workshopCount,
-                cellPitch, craftDepth, false);
-        int rowHalfX = rd[0], rowHalfZ = rd[1];
-        int rowReach = Math.max(rowHalfX, rowHalfZ);
-        int rowInner = Math.max(civicReach + DISTRICT_GAP, rowReach + DISTRICT_GAP);
-        int rowOuter = Math.max(rowInner, state.villageRadius - rowReach);
-        Polygon.AABB rowGate = seatDistrict(state, anchor,
-                dirs.get(0) + Math.PI / 8.0, rowInner, rowOuter,
-                rowHalfX, rowHalfZ, state.workshopGates);
-
-        if (rowGate != null) {
-            BlockPos edgeNode = edgePointToward(rowGate, anchor);
-            ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
-                    rowGate, workshopCount, cellPitch, craftDepth, edgeNode,
-                    ResidentialVariant.STREET_ROW, 0L);
-            int placed = 0;
-            for (int i = 0; i < craftList.size() && i < arr.houses().size(); i++) {
-                ResidentialArranger.HousePlacement hp = arr.houses().get(i);
-                if (materializeBuilding(state, craftList.get(i),
-                        hp.centre(), hp.faceTarget()) != null) placed++;
-            }
-            // Lane fronting the row → FOOTPATH (connects via the workshop gate's
-            // district node, same as residential street-row lanes).
-            for (List<BlockPos> lane : arr.lanes()) {
-                List<BlockPos> snapped = snapPathToSurface(state, lane);
-                if (snapped.size() >= 2) {
-                    state.internalLanes.add(new InternalPath(snapped,
-                            RoadShape.RoadTier.FOOTPATH));
-                }
-            }
-            // Diagnostics (read-only) — craft set seated as one shared row.
-            state.districtAccum.workshopSeating =
-                    DistrictReport.WorkshopSeating.ROW;
-            state.districtAccum.workshopCraftsPlaced = placed;
-            state.districtAccum.workshopCraftsDropped = workshopCount - placed;
-            LOGGER.info("workshop craft row: {}/{} crafts placed (block={}x{})",
-                    placed, workshopCount, 2 * rowHalfX, 2 * rowHalfZ);
+        // 4c-c — TIER GATE (Garrett-approved design): CITY seats the workshop
+        // QUARTER (falling back to the row, then lots); TOWN keeps the 4c-b
+        // craft row (falling back to lots); HAMLET/OUTPOST go straight to
+        // per-craft lots (a row block never fit their tight bands anyway).
+        ViabilityTier tier = state.ctx.tier();
+        if (tier == ViabilityTier.CITY
+                && reserveWorkshopQuarter(state, craftList)) {
             return;
         }
+        if (tier == ViabilityTier.CITY || tier == ViabilityTier.TOWN) {
+            // 4c-b — the CRAFT ROW (a "smith's row"): one STREET_ROW block
+            // holding all crafts in two rows fronting a shared internal lane,
+            // reusing the residential arranger. It seats at a free band bearing
+            // the same way a residential street-row does (reach-based range,
+            // overlap-rejected to a clear bearing — NOT the thin outer ring).
+            // The arranger places each craft at a row position, so all crafts
+            // place. Falls back to per-craft lots if no clear bearing fits the
+            // row block.
+            int[] rd = districtDims(ResidentialVariant.STREET_ROW, workshopCount,
+                    cellPitch, craftDepth, false);
+            int rowHalfX = rd[0], rowHalfZ = rd[1];
+            int rowReach = Math.max(rowHalfX, rowHalfZ);
+            int rowInner = Math.max(civicReach + DISTRICT_GAP, rowReach + DISTRICT_GAP);
+            int rowOuter = Math.max(rowInner, state.villageRadius - rowReach);
+            Polygon.AABB rowGate = seatDistrict(state, anchor,
+                    dirs.get(0) + Math.PI / 8.0, rowInner, rowOuter,
+                    rowHalfX, rowHalfZ, state.workshopGates);
 
-        // Fallback — per-craft lots (one small gate per craft, explicit 1:1).
+            if (rowGate != null) {
+                BlockPos edgeNode = edgePointToward(rowGate, anchor);
+                ResidentialArranger.Arrangement arr = ResidentialArranger.arrange(
+                        rowGate, workshopCount, cellPitch, craftDepth, edgeNode,
+                        ResidentialVariant.STREET_ROW, 0L);
+                int placed = 0;
+                for (int i = 0; i < craftList.size() && i < arr.houses().size(); i++) {
+                    ResidentialArranger.HousePlacement hp = arr.houses().get(i);
+                    if (materializeBuilding(state, craftList.get(i),
+                            hp.centre(), hp.faceTarget()) != null) placed++;
+                }
+                // Lane fronting the row → FOOTPATH (connects via the workshop
+                // gate's district node, same as residential street-row lanes).
+                for (List<BlockPos> lane : arr.lanes()) {
+                    List<BlockPos> snapped = snapPathToSurface(state, lane);
+                    if (snapped.size() >= 2) {
+                        state.internalLanes.add(new InternalPath(snapped,
+                                RoadShape.RoadTier.FOOTPATH));
+                    }
+                }
+                // Diagnostics (read-only) — craft set seated as one shared row.
+                state.districtAccum.workshopSeating =
+                        DistrictReport.WorkshopSeating.ROW;
+                state.districtAccum.workshopCraftsPlaced = placed;
+                state.districtAccum.workshopCraftsDropped = workshopCount - placed;
+                LOGGER.info("workshop craft row: {}/{} crafts placed (block={}x{})",
+                        placed, workshopCount, 2 * rowHalfX, 2 * rowHalfZ);
+                return;
+            }
+        }
+
+        // Per-craft lots — HAMLET/OUTPOST's primary seating, and the terminal
+        // fallback of the tier-aware chain (one small gate per craft, 1:1).
         int lotHalf = Math.max(MIN_PLAZA_HALF, (cellPitch + HOUSE_GAP) / 2);
         int lotInner = Math.max(civicReach + DISTRICT_GAP, lotHalf + DISTRICT_GAP);
         int lotOuter = Math.max(lotInner, state.villageRadius - lotHalf);
@@ -2377,6 +2401,131 @@ public final class PhasedPlanner {
         state.districtAccum.workshopCraftsDropped = dropped;
         LOGGER.info("workshop lots (row fallback): {}/{} crafts placed, {} dropped",
                 placed, workshopCount, dropped);
+    }
+
+    /**
+     * 4c-c — the workshop QUARTER (CITY tier): one footprint-sized district
+     * holding the whole craft set as a demand-guided BSP — cells sized to
+     * each member's footprint, customer-facing crafts fronting the central
+     * street (VILLAGE_PATH — one tier up from the row's FOOTPATH lane, the
+     * quarter's spine reads as a real street), storage (stockpile/warehouse)
+     * on back/alley cells (FOOTPATH alleys), and the cell nearest the street
+     * midpoint reserved OPEN as the shared work-yard: a well_hamlet stamp +
+     * FOUNTAIN GatheringPoint via the GREEN decor path, open ground
+     * otherwise (v1 — no invented yard props). Returns false (un-seating its
+     * gate) when the quarter can't seat or arrange, so the caller falls back
+     * to the 4c-b craft row, then lots — the existing chain, now tier-aware.
+     */
+    private static boolean reserveWorkshopQuarter(State state,
+                                                  List<BuildingType> craftList) {
+        BlockPos anchor = state.ctx.anchor();
+        List<ResidentialArranger.QuarterMember> members =
+                new ArrayList<>(craftList.size());
+        for (BuildingType t : craftList) {
+            StructureSizeCache.FootprintInfo f = defaultFootprint(state, t);
+            int dim = Math.max(f.width(), f.length());
+            members.add(new ResidentialArranger.QuarterMember(
+                    dim + HOUSE_GAP, dim, CRAFT_STORAGE_SET.contains(t)));
+        }
+        // Block size estimate: each cell demand padded by its corridor share,
+        // floored so the root (street) cut can host the two biggest demands
+        // side by side. Misestimates are safe — an unfittable BSP fails the
+        // arrangement below and the caller falls back to the row.
+        long cellArea = 0;
+        int max1 = 0, max2 = 0;
+        List<Integer> sides = new ArrayList<>(members.size() + 1);
+        for (ResidentialArranger.QuarterMember m : members) sides.add(m.cellSide());
+        sides.add(WORKSHOP_YARD_SIDE);
+        for (int d : sides) {
+            cellArea += (long) (d + 4) * (d + 4);
+            if (d >= max1) { max2 = max1; max1 = d; }
+            else if (d > max2) { max2 = d; }
+        }
+        int side = (int) Math.ceil(Math.sqrt((double) cellArea));
+        side = Math.max(side, max1 + max2
+                + ResidentialArranger.GRID_STREET_WIDTH + 4);
+        int half = side / 2 + 1;
+
+        int civicReach = 0;
+        if (state.civicPrecinct != null) {
+            civicReach = Math.max(
+                    (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
+                    (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
+        }
+        java.util.List<Double> dirs = residentialDirections(state, anchor);
+        int inner = Math.max(civicReach + DISTRICT_GAP, half + DISTRICT_GAP);
+        int outer = Math.max(inner, state.villageRadius - half);
+        Polygon.AABB gate = seatDistrict(state, anchor,
+                dirs.get(0) + Math.PI / 8.0, inner, outer, half, half,
+                state.workshopGates);
+        if (gate == null) {
+            LOGGER.info("workshop quarter: no clear band position for a {}x{}"
+                    + " block — falling back to the craft row", side, side);
+            return false;
+        }
+        long seed = state.ctx.seed()
+                ^ ((long) gate.minX() * 31L + gate.minZ()) ^ 0x4CCL;
+        BlockPos edgeNode = edgePointToward(gate, anchor);
+        ResidentialArranger.QuarterArrangement arr =
+                ResidentialArranger.arrangeQuarter(gate, members,
+                        WORKSHOP_YARD_SIDE, edgeNode, seed);
+        if (arr == null) {
+            // Un-seat — the gate must not linger in the masks/connection
+            // nodes, and the lots fallback indexes workshopGates 1:1.
+            state.workshopGates.remove(gate);
+            LOGGER.info("workshop quarter: block {}x{} seated but the demand"
+                    + " BSP couldn't cell every member — falling back to the"
+                    + " craft row", side, side);
+            return false;
+        }
+        int placed = 0;
+        List<Polygon.AABB> footprints = new ArrayList<>(craftList.size());
+        for (int i = 0; i < craftList.size(); i++) {
+            ResidentialArranger.HousePlacement hp = arr.buildings().get(i);
+            Polygon.AABB fp = materializeBuilding(state, craftList.get(i),
+                    hp.centre(), hp.faceTarget());
+            if (fp != null) { placed++; footprints.add(fp); }
+        }
+        // Central street + entry render one tier up (VILLAGE_PATH); alleys at
+        // FOOTPATH. Same truncate/snap treatment as the residential variants;
+        // all connect through the unified realizer + the gate's district node.
+        for (List<BlockPos> street : arr.streets()) {
+            List<BlockPos> snapped = snapPathToSurface(state,
+                    truncateAtFootprints(street, footprints));
+            if (snapped.size() >= 2) {
+                state.internalLanes.add(new InternalPath(snapped,
+                        RoadShape.RoadTier.VILLAGE_PATH));
+            }
+        }
+        for (List<BlockPos> alley : arr.alleys()) {
+            List<BlockPos> snapped = snapPathToSurface(state,
+                    truncateAtFootprints(alley, footprints));
+            if (snapped.size() >= 2) {
+                state.internalLanes.add(new InternalPath(snapped,
+                        RoadShape.RoadTier.FOOTPATH));
+            }
+        }
+        // Shared work-yard: OPEN ground + well_hamlet at the centre + a
+        // FOUNTAIN GatheringPoint — a WELL-ONLY GreenDecor entry (null green
+        // bounds → the adapter stamps the well but registers no flora).
+        BlockPos yc = arr.yardCentre();
+        int wellY = (state.fmap.inBounds(yc.getX(), yc.getZ())
+                ? state.fmap.cellAt(yc.getX(), yc.getZ()).elevationY()
+                : yc.getY()) + 1;
+        state.greenDecor.add(new GreenDecor(null,
+                new BlockPos(yc.getX(), wellY, yc.getZ()), seed));
+        // The quarter's street/alleys serve its members — join the router's
+        // no-branch obstacle mask like GREEN/CLUSTER/GRID/TERRACE blocks.
+        state.servedBlocks.add(gate);
+        // Diagnostics (read-only) — craft set seated as the quarter.
+        state.districtAccum.workshopSeating =
+                DistrictReport.WorkshopSeating.QUARTER;
+        state.districtAccum.workshopCraftsPlaced = placed;
+        state.districtAccum.workshopCraftsDropped = craftList.size() - placed;
+        LOGGER.info("workshop quarter: {}/{} crafts placed (block={}x{},"
+                + " alleys={}, yard=({},{}))", placed, craftList.size(),
+                2 * half, 2 * half, arr.alleys().size(), yc.getX(), yc.getZ());
+        return true;
     }
 
     /** Phase 2 fix-up — fraction of the village radius at which to resolve the

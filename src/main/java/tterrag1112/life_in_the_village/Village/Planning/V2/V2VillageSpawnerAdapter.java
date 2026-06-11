@@ -433,6 +433,9 @@ public final class V2VillageSpawnerAdapter {
             // alongside the courtyard decor.
             for (tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.GreenDecor gd
                     : phased.greenDecor()) {
+                // 4c-c — well-only entry (the workshop quarter's work-yard):
+                // no green bounds, no flora; the well loop below stamps it.
+                if (gd.green() == null) continue;
                 var gb = new tterrag1112.life_in_the_village.Village.Decoration.Parks
                         .GardenPlot.Bounds(gd.green().minX(), gd.green().minZ(),
                         gd.green().maxX(), gd.green().maxZ());
