@@ -36,15 +36,21 @@ public final class Table {
 
         StringBuilder out = new StringBuilder();
         out.append("\n=== HEADLESS LAYOUT HARNESS — BATTERY RESULT ===\n");
-        out.append(String.format("%-14s %-12s %-6s %-7s %-7s %-7s %-7s %-7s %-5s %-7s %-7s %s%n",
+        out.append(String.format(
+                "%-14s %-12s %-6s %-7s %-7s %-7s %-7s %-7s %-5s %-7s %-7s %-10s "
+                        + "%-7s %-7s %-7s %-7s%n",
                 "TERRAIN", "CONFIG", "seed", "plc/req", "rate", "HOUSE%", "cmpct",
-                "frUtil", "comp", "onMain", "tViol", "topDrop"));
+                "frUtil", "comp", "onMain", "tViol", "topDrop",
+                "civA", "mktA", "resvP", "wkSeat"));
 
         for (RunMetrics r : current) {
             String key = r.terrain() + "/" + r.configLabel();
             RunMetrics b = baseByKey.get(key);
+            RunMetrics.DistrictMetrics d = r.district();
+            RunMetrics.DistrictMetrics bd = b == null ? null : b.district();
             out.append(String.format(
-                    "%-14s %-12s %-6d %-7s %-7s %-7s %-7s %-7s %-5s %-7s %-7s %s%n",
+                    "%-14s %-12s %-6d %-7s %-7s %-7s %-7s %-7s %-5s %-7s %-7s %-10s "
+                            + "%-7s %-7s %-7s %-7s%n",
                     r.terrain(),
                     r.configLabel(),
                     r.seed(),
@@ -58,7 +64,13 @@ public final class Table {
                     intStr(r.networkComponents()),
                     fmt(r.fracBuildingsOnMainComponent()),
                     fmt(r.terrainViolence()),
-                    topDrop(r.dropHistogram())));
+                    topDrop(r.dropHistogram()),
+                    areaCol(d.civicReserved(), d.civicArea(),
+                            bd == null ? -1 : (bd.civicReserved() ? bd.civicArea() : -1)),
+                    areaCol(d.marketReserved(), d.marketArea(),
+                            bd == null ? -1 : (bd.marketReserved() ? bd.marketArea() : -1)),
+                    resvCol(d, bd),
+                    seatCol(d, bd)));
         }
 
         // Summary line.
@@ -114,6 +126,46 @@ public final class Table {
     private static String intDelta(String cur, String base) {
         if (base == null || base.equals(cur)) return cur;
         return cur + "(was " + base + ")";
+    }
+
+    /** Plaza area column: "-" when not reserved, the area otherwise,
+     *  with "(0!)" flagged when a baseline area collapsed to 0 here
+     *  (the paves-0 regression). */
+    private static String areaCol(boolean reserved, int area, int baseArea) {
+        if (!reserved || area == 0) {
+            if (baseArea > 0) return "0!";   // collapsed from a reserved baseline
+            return "-";
+        }
+        return Integer.toString(area);
+    }
+
+    /** Residential reserve column: precincts/housesRequested, with a
+     *  "!" when precincts dropped vs baseline at equal-or-higher demand. */
+    private static String resvCol(RunMetrics.DistrictMetrics d,
+                                  RunMetrics.DistrictMetrics bd) {
+        if (d.residentialHousesRequested() == 0) return "-";
+        String s = d.residentialPrecinctsReserved() + "/"
+                + d.residentialHousesRequested();
+        if (bd != null
+                && d.residentialHousesRequested() >= bd.residentialHousesRequested()
+                && d.residentialPrecinctsReserved() < bd.residentialPrecinctsReserved()) {
+            s += "!";
+        }
+        return s;
+    }
+
+    /** Workshop seating column: ROW / LOTS / NONE, with a "!" when it
+     *  regressed from a baseline ROW to a fallback. */
+    private static String seatCol(RunMetrics.DistrictMetrics d,
+                                  RunMetrics.DistrictMetrics bd) {
+        if (d.workshopCraftsRequested() == 0) return "-";
+        String s = d.workshopSeating();
+        if (bd != null && "ROW".equals(bd.workshopSeating())
+                && !"ROW".equals(s)
+                && d.workshopCraftsRequested() >= bd.workshopCraftsRequested()) {
+            s += "!";
+        }
+        return s;
     }
 
     private static String topDrop(Map<DropReason, Integer> dh) {

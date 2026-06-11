@@ -6,6 +6,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DropReason;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer5.TerrainAdapter;
@@ -42,6 +43,7 @@ public final class MetricsComputer {
                                      PlacementResult placement,
                                      RoadNetwork roads,
                                      List<TerrainAdapter.AdaptationDecision> terrainDecisions,
+                                     PhasedPlanner.Result phased,
                                      long elapsedMs) {
         Map<BuildingType, Integer> requested = countByType(requestedSelection);
         Map<BuildingType, Integer> placedCounts = new EnumMap<>(BuildingType.class);
@@ -82,6 +84,12 @@ public final class MetricsComputer {
             drops.merge(d.reason(), 1, Integer::sum);
         }
 
+        // 8. District-era metrics — read straight off the planner's
+        // read-only DistrictReport (zero new computation; the planner
+        // already measured these as it reserved). On an aborted/no-result
+        // run the report is absent → empty district metrics.
+        RunMetrics.DistrictMetrics district = districtMetrics(phased);
+
         return new RunMetrics(
                 run.shape().name(),
                 run.config().label(),
@@ -103,7 +111,39 @@ public final class MetricsComputer {
                 0.0,
                 clustering,
                 drops,
+                district,
                 elapsedMs);
+    }
+
+    /**
+     * Maps the planner's {@link PhasedPlanner.DistrictReport} to the
+     * test-side {@link RunMetrics.DistrictMetrics}. Null-safe: an
+     * aborted run (no {@code PhasedPlanner.Result}) or a Result with a
+     * null report (defensive) yields the empty metrics, which the
+     * baseline diff treats as "no districts measured". The enum is
+     * stored as its {@code name()} string so the baseline JSON stays
+     * decoupled from the production enum's ordinal.
+     */
+    private static RunMetrics.DistrictMetrics districtMetrics(PhasedPlanner.Result phased) {
+        if (phased == null || phased.districtReport() == null) {
+            return RunMetrics.DistrictMetrics.empty();
+        }
+        PhasedPlanner.DistrictReport r = phased.districtReport();
+        return new RunMetrics.DistrictMetrics(
+                r.civicReserved(),
+                r.civicArea(),
+                r.marketSelected(),
+                r.marketReserved(),
+                r.marketArea(),
+                r.residentialHousesRequested(),
+                r.residentialPrecinctsReserved(),
+                r.residentialHousesPlaced(),
+                r.residentialHousesDropped(),
+                r.residentialBandActive(),
+                r.workshopCraftsRequested(),
+                r.workshopSeating().name(),
+                r.workshopCraftsPlaced(),
+                r.workshopCraftsDropped());
     }
 
     // =========================================================================

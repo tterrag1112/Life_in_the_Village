@@ -92,9 +92,14 @@ public final class Baseline {
     // IO
     // =========================================================================
 
+    /** Bumped to 2 when the district-era metrics block was added
+     *  (2026-06 harness refresh). A v1 baseline (pre-district) reads
+     *  back with empty district metrics — see {@link #readDistrict}. */
+    public static final int SCHEMA_VERSION = 2;
+
     public static void write(Path path, List<RunMetrics> runs) throws Exception {
         JsonObject root = new JsonObject();
-        root.addProperty("schemaVersion", 1);
+        root.addProperty("schemaVersion", SCHEMA_VERSION);
         root.addProperty("recordedAt", System.currentTimeMillis());
         root.addProperty("runCount", runs.size());
         JsonArray arr = new JsonArray();
@@ -142,6 +147,7 @@ public final class Baseline {
             dh.addProperty(e.getKey().name(), e.getValue());
         }
         o.add("dropHistogram", dh);
+        o.add("district", districtJson(r.district()));
         // elapsedMs deliberately omitted from the JSON — wall time
         // varies run-to-run on different hardware and would create
         // noise in the diff.
@@ -179,7 +185,59 @@ public final class Baseline {
                 fromNanSafe(o, "fracBuildingsOnMainComponent"),
                 fromNanSafe(o, "terrainViolence"),
                 fromNanSafe(o, "vegetationPerPlaced"),
-                clust, dh, 0L);
+                clust, dh,
+                readDistrict(o),
+                0L);
+    }
+
+    private static JsonObject districtJson(RunMetrics.DistrictMetrics d) {
+        JsonObject o = new JsonObject();
+        o.addProperty("civicReserved", d.civicReserved());
+        o.addProperty("civicArea", d.civicArea());
+        o.addProperty("marketSelected", d.marketSelected());
+        o.addProperty("marketReserved", d.marketReserved());
+        o.addProperty("marketArea", d.marketArea());
+        o.addProperty("residentialHousesRequested", d.residentialHousesRequested());
+        o.addProperty("residentialPrecinctsReserved", d.residentialPrecinctsReserved());
+        o.addProperty("residentialHousesPlaced", d.residentialHousesPlaced());
+        o.addProperty("residentialHousesDropped", d.residentialHousesDropped());
+        o.addProperty("residentialBandActive", d.residentialBandActive());
+        o.addProperty("workshopCraftsRequested", d.workshopCraftsRequested());
+        o.addProperty("workshopSeating", d.workshopSeating());
+        o.addProperty("workshopCraftsPlaced", d.workshopCraftsPlaced());
+        o.addProperty("workshopCraftsDropped", d.workshopCraftsDropped());
+        return o;
+    }
+
+    /** Read the district block; absent (v1 baseline) → empty metrics. */
+    private static RunMetrics.DistrictMetrics readDistrict(JsonObject root) {
+        if (!root.has("district") || root.get("district").isJsonNull()) {
+            return RunMetrics.DistrictMetrics.empty();
+        }
+        JsonObject o = root.getAsJsonObject("district");
+        return new RunMetrics.DistrictMetrics(
+                bool(o, "civicReserved"),
+                intOf(o, "civicArea"),
+                bool(o, "marketSelected"),
+                bool(o, "marketReserved"),
+                intOf(o, "marketArea"),
+                intOf(o, "residentialHousesRequested"),
+                intOf(o, "residentialPrecinctsReserved"),
+                intOf(o, "residentialHousesPlaced"),
+                intOf(o, "residentialHousesDropped"),
+                bool(o, "residentialBandActive"),
+                intOf(o, "workshopCraftsRequested"),
+                o.has("workshopSeating") ? o.get("workshopSeating").getAsString() : "NONE",
+                intOf(o, "workshopCraftsPlaced"),
+                intOf(o, "workshopCraftsDropped"));
+    }
+
+    private static boolean bool(JsonObject o, String f) {
+        return o.has(f) && o.get(f).getAsBoolean();
+    }
+
+    private static int intOf(JsonObject o, String f) {
+        return o.has(f) ? o.get(f).getAsInt() : 0;
     }
 
     private static JsonObject typeMap(Map<BuildingType, Integer> in) {
@@ -333,7 +391,81 @@ public final class Baseline {
                         base.fracBuildingsOnMainComponent(), Double.NaN,
                         Double.NaN));
             }
+
+            // Gating metrics 5-8: district-era reservations. Same
+            // asymmetric philosophy — only the bad direction fails;
+            // areas/counts moving UP, or districts newly reserving, are
+            // improvements and never fail.
+            diffDistrict(key, base.district(), cur.district(), failures);
         }
         return new DiffResult(failures, false);
+    }
+
+    /**
+     * District-era gates (asymmetric). Fires a {@link Failure} on the
+     * regression direction only:
+     *
+     * <ul>
+     *   <li><b>Plaza paves-0</b> — a civic or market square whose
+     *       baseline area was &gt; 0 collapsing to 0 in current. The
+     *       paves-0 bug class.</li>
+     *   <li><b>Market NO_REGION</b> — MARKET still selected, baseline
+     *       reserved a sub-district, current didn't (the market that
+     *       used to seed now finds no region).</li>
+     *   <li><b>Residential reserve-rate</b> — houses still requested,
+     *       precincts reserved dropped below baseline (districts that
+     *       used to reserve now don't).</li>
+     *   <li><b>Workshop row→fallback</b> — craft set still requested,
+     *       seating regressed ROW → LOTS/NONE, or crafts placed dropped
+     *       below baseline.</li>
+     * </ul>
+     *
+     * Each gate is conditioned on the baseline having had the thing in
+     * the first place, so a run that legitimately has no market / no
+     * houses / no craft set never trips on absence.
+     */
+    private static void diffDistrict(String key, RunMetrics.DistrictMetrics b,
+                                     RunMetrics.DistrictMetrics c,
+                                     List<Failure> failures) {
+        // Plaza paves-0 (civic).
+        if (b.civicArea() > 0 && c.civicArea() == 0) {
+            failures.add(new Failure(key, "district.civicArea(paves-0)",
+                    b.civicArea(), c.civicArea(), c.civicArea() - b.civicArea()));
+        }
+        // Plaza paves-0 (market) — only when the market was reserved before.
+        if (b.marketReserved() && b.marketArea() > 0 && c.marketArea() == 0) {
+            failures.add(new Failure(key, "district.marketArea(paves-0)",
+                    b.marketArea(), c.marketArea(), c.marketArea() - b.marketArea()));
+        }
+        // Market NO_REGION — selected both sides, reserved before, not now.
+        if (b.marketSelected() && c.marketSelected()
+                && b.marketReserved() && !c.marketReserved()) {
+            failures.add(new Failure(key, "district.marketReserved(NO_REGION)",
+                    1.0, 0.0, -1.0));
+        }
+        // Residential reserve-rate — houses still requested, fewer precincts.
+        if (c.residentialHousesRequested() >= b.residentialHousesRequested()
+                && b.residentialHousesRequested() > 0
+                && c.residentialPrecinctsReserved() < b.residentialPrecinctsReserved()) {
+            failures.add(new Failure(key, "district.residentialPrecinctsReserved",
+                    b.residentialPrecinctsReserved(),
+                    c.residentialPrecinctsReserved(),
+                    c.residentialPrecinctsReserved()
+                            - b.residentialPrecinctsReserved()));
+        }
+        // Workshop row→fallback regression — craft set still requested.
+        if (b.workshopCraftsRequested() > 0
+                && c.workshopCraftsRequested() >= b.workshopCraftsRequested()) {
+            if ("ROW".equals(b.workshopSeating())
+                    && !"ROW".equals(c.workshopSeating())) {
+                failures.add(new Failure(key, "district.workshopSeating(ROW->fallback)",
+                        Double.NaN, Double.NaN, Double.NaN));
+            }
+            if (c.workshopCraftsPlaced() < b.workshopCraftsPlaced()) {
+                failures.add(new Failure(key, "district.workshopCraftsPlaced",
+                        b.workshopCraftsPlaced(), c.workshopCraftsPlaced(),
+                        c.workshopCraftsPlaced() - b.workshopCraftsPlaced()));
+            }
+        }
     }
 }

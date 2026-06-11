@@ -135,7 +135,7 @@ public final class RunExecutor {
 
         long elapsed = System.currentTimeMillis() - t0;
         RunMetrics metrics = MetricsComputer.compute(
-                run, sorted, placement, roads, decisions, elapsed);
+                run, sorted, placement, roads, decisions, phased, elapsed);
         return new ExecResult(metrics, contextFrom(siteCtx, roads),
                 new RunDetails(siteCtx, phased));
     }
@@ -181,6 +181,7 @@ public final class RunExecutor {
                 empty,
                 roads != null ? roads : emptyRoadNetwork(),
                 decisions != null ? decisions : List.of(),
+                /*phased*/ null,
                 elapsed);
     }
 
