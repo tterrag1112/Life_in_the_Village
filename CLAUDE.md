@@ -5,21 +5,25 @@ procedural worldgen, NPC professions.
 
 ## Before doing any rework work
 
-1. Read `UNIFIED_PLAN.md` — canonical sequencing across all reworks.
-2. Read `UNIFIED_PROGRESS.md` — current state.
-3. The per-rework PLAN/PROGRESS files (`ROADS_PLAN.md`, `NPC_PLAN.md`,
-   `DECORATION_PLAN.md`) remain authoritative for already-shipped work
-   and for individual phase specifications. New work is sequenced
-   through the unified plan.
+1. Read `STATE.md` — as-built systems overview (the code as it is,
+   regenerated per milestone).
+2. Read `ROADMAP.md` — the forward plan and track sequencing
+   (human-managed; do not edit without permission).
+3. Read `PROGRESS.md` — the single append-only ship log.
+4. Read `INVARIANTS.md` — the non-negotiables (roads invariants, firm
+   architectural constraints, locked decisions, districts-by-default,
+   religion locks, sim-ledger principles).
+
+Retired per-rework PLAN/PROGRESS files are under `docs/archive/` for
+history only; do not treat them as current.
 
 ## Before doing anything on the road system
 
-1. Read `ROADS_PLAN.md` — the canonical plan. Human-managed. Do not
-   edit without explicit permission.
-2. Read `ROADS_PROGRESS.md` — current state. Append-only log. You add
-   entries at the end of sessions.
-3. Honor the invariants section of `ROADS_PLAN.md`. They are not
-   suggestions.
+1. Read the roads section of `STATE.md` for current state and the
+   roads track in `ROADMAP.md` for forward work.
+2. Log shipped phases in the single `PROGRESS.md` (append-only).
+3. Honor the 12 roads invariants in `INVARIANTS.md` §5 (and the Old
+   Realm fiction they reference). They are not suggestions.
 
 ## Before writing NPC behavior code
 
@@ -41,25 +45,25 @@ intended convention layer. Profession behaviors must register in
 
 ## Placement pipeline (V1 → V2)
 
-The V1 → V2 placement migration is ongoing. Track A1b (2026-05-08)
-deleted the identified V1 machinery (`Village/Planning/Adaptive/`, the
-recipe set, slot-based `PlacementMatcher` paths, `ZoneRegistry`, the
-cascade engine remnants). V2 under `Village/Planning/V2/` is the
-canonical planner; `MinimalSpawner.spawn` is the only spawner path.
+V2 under `Village/Planning/V2/` is the canonical planner. The single
+spawner path is `V2VillageSpawnerAdapter.spawn` (older docs called this
+`MinimalSpawner.spawn`; no such class exists). V1 planning machinery is
+deleted from source.
 
 Encountering V1 vocabulary (`ShapeRecipe`, `LayoutPrimitive` cascade,
 slot intentions, `ZoneRegistry`-style zone claims) is a signal to
 convert, not to extend. Conversions delete the V1 source in the same
-commit; they do not leave the V1 class behind. See `docs/V2_OVERVIEW.md`
-for V2.
+commit; they do not leave the V1 class behind. See `INVARIANTS.md` §3
+for the convert-on-sight rule and §2 for the V2-only lock; `STATE.md`
+describes the live V2 layers.
 
 ## Workflow conventions
 
 - **Disposition before code.** Every non-trivial prompt opens with an
   investigation pass that reads current state and surfaces findings
   before drafting code.
-- **PROGRESS logs are append-only.** Add a new bottom entry per shipped
-  phase; do not edit prior entries.
+- **The PROGRESS log is append-only.** Add a new bottom entry to the
+  single `PROGRESS.md` per shipped phase; do not edit prior entries.
 - **Every shipped phase ends with "Deviations from prompt" and
   "Out-of-scope but flagged" sections.**
 - **Build verification disclosure.** When `./gradlew build` cannot run
@@ -127,7 +131,8 @@ confirmed orphans is part of the same change, not deferred work. The
 
 Every shipped phase's PROGRESS entry includes a user-executable
 smoke-test plan — numbered steps the user can run in-world. See the
-Detour-A 2026-05-23 entry for the format.
+format contract at the top of `PROGRESS.md` (the Detour-A 2026-05-23
+entry that originally modeled it is now in `docs/archive/`).
 
 Before committing a batch of changes, the final prompt in the batch is a
 pre-commit final check: re-read the diff, re-run preflight items
