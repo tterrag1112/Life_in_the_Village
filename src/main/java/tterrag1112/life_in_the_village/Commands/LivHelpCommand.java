@@ -76,7 +76,7 @@ public final class LivHelpCommand {
 
     private static final String SPAWN =
             "§b[spawn / planning]\n"
-                    + "§f/litv spawn§7 — full V2 pipeline at player position (B2.7-routed)\n"
+                    + "§f/litv spawn [tier] [typeOrCategory] [name]§7 — full V2 pipeline at player position (B2.7-routed; optional forced tier/category, Gate-0)\n"
                     + "§f/litv site§7 — Layer 1+2 site analysis only\n"
                     + "§f/litv place§7 — Layer 3 placement debug\n"
                     + "§f/litv layout§7 — Layer 4 PhasedPlanner output inspection\n"
