@@ -290,7 +290,7 @@ public final class HarnessDebugSink {
         out.append(String.format(
                 "%-14s %-6s %-5s %-4s %-4s %-4s %-8s %-22s %-4s %-10s%n",
                 "TYPE", "phase", "found", "att", "plc", "drp",
-                "cellsScan", "rej[res/cor/scr/adj]",
+                "cellsScan", "rej[zone/res/scr]",
                 "acc", "res@1..res@N"));
         for (TypeRow r : rows) {
             out.append(String.format(
@@ -302,7 +302,7 @@ public final class HarnessDebugSink {
                     r.placedCount,
                     r.droppedCount,
                     r.firstCellsScanned,
-                    "[" + r.rejReservation + "/" + r.rejCorridor + "/"
+                    "[" + r.rejZone + "/" + r.rejReservation + "/"
                             + r.rejScore + "]",
                     r.totalAccepted,
                     r.firstReservations,
@@ -341,12 +341,18 @@ public final class HarnessDebugSink {
 
     /** Compiled once for the slice parse. The planner format string is
      *  {@code "candidates type={} foundation={} cellsScanned={} "
-     *  + "rejected[reservation={} corridor={} score={}] "
-     *  + "accepted={} reservations={}"} — see PhasedPlanner candidate log
-     *  (Stage 2.5 removed the {@code adjunct=} reject counter). */
+     *  + "rejected[zone={} reservation={} score={}] "
+     *  + "accepted={} reservations={}"} — see PhasedPlanner candidate log.
+     *  District-era drift (2026-06): the reject buckets are now
+     *  {@code zone / reservation / score} (Stage 3c's roads-last flip
+     *  replaced the {@code corridor} reject — there are no roads during
+     *  placement — with the {@code zone} reject from the zone-scored
+     *  candidate loop). The {@code adjunct=} reject was removed earlier
+     *  (Stage 2.5). Capture groups: 1=type 2=foundation 3=cellsScanned
+     *  4=zone 5=reservation 6=score 7=accepted 8=reservations. */
     private static final Pattern CAND_LINE = Pattern.compile(
             "candidates type=(\\S+) foundation=(\\S+) cellsScanned=(\\d+) "
-                    + "rejected\\[reservation=(\\d+) corridor=(\\d+) "
+                    + "rejected\\[zone=(\\d+) reservation=(\\d+) "
                     + "score=(\\d+)\\] accepted=(\\d+) "
                     + "reservations=(\\d+)");
     /** PhasedPlanner.java:611. */
@@ -365,8 +371,8 @@ public final class HarnessDebugSink {
         int placedCount;
         int droppedCount;
         int firstCellsScanned;
+        int rejZone;
         int rejReservation;
-        int rejCorridor;
         int rejScore;
         int totalAccepted;
         int firstReservations = -1;
@@ -389,8 +395,8 @@ public final class HarnessDebugSink {
                     row.firstCellsScanned = Integer.parseInt(mc.group(3));
                     row.firstReservations = Integer.parseInt(mc.group(8));
                 }
-                row.rejReservation += Integer.parseInt(mc.group(4));
-                row.rejCorridor += Integer.parseInt(mc.group(5));
+                row.rejZone += Integer.parseInt(mc.group(4));
+                row.rejReservation += Integer.parseInt(mc.group(5));
                 row.rejScore += Integer.parseInt(mc.group(6));
                 row.totalAccepted += Integer.parseInt(mc.group(7));
                 row.lastReservations = Integer.parseInt(mc.group(8));

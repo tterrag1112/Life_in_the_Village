@@ -134,6 +134,7 @@ public final class Table {
             case REQUIRED_FAILED -> "reqfail";
             case ISOLATED_AFTER_REASSESS -> "isol";
             case TERRAIN_UNADAPTABLE -> "terra";
+            case NO_VIABLE_COMPLEX_PARCEL -> "noparcel";
         };
     }
 }

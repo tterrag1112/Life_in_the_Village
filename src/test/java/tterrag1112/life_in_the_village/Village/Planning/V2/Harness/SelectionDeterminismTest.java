@@ -25,9 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * being non-deterministic across JVM starts:
  *
  * <ol>
- *   <li>{@link InclinationProfile#baseCounts()} must iterate in
- *       {@link BuildingType#ordinal()} order. Pre-fix it was a
- *       {@code Map.copyOf}-backed {@code ImmutableCollections.MapN}
+ *   <li>{@link InclinationProfile#buildings()} must iterate in
+ *       {@link BuildingType#ordinal()} order. Pre-fix the
+ *       selection-driving collection (then {@code baseCounts()}, now
+ *       {@code buildings()}) was a {@code Map.copyOf} /
+ *       {@code Set.copyOf}-backed {@code ImmutableCollections} view
  *       whose iteration is salted by a per-JVM-startup random; that
  *       fed {@link
  *       tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingSelector}'s
@@ -54,18 +56,26 @@ public class SelectionDeterminismTest {
 
     @Test
     public void inclinationProfileIteratesInOrdinalOrder() {
-        // For every inclination, the baseCounts keyset must iterate
-        // in BuildingType.ordinal() order. Pre-fix this failed
+        // For every inclination, the selection-driving building set must
+        // iterate in BuildingType.ordinal() order. Pre-fix this failed
         // sometimes (and always varied across JVM starts) because
         // Map.copyOf returns an ImmutableCollections.MapN whose
         // iteration is salt-randomized.
+        //
+        // District-era drift (2026-06): InclinationProfile's old
+        // baseCounts() Map was replaced by the buildings() Set — the
+        // record's compact constructor copies it into an EnumSet
+        // explicitly "for deterministic ordinal iteration". That Set is
+        // now the collection whose iteration order seeds the selector's
+        // per-type Random draws, so the determinism invariant moved onto
+        // buildings() and is asserted here.
         for (Inclination inc : Inclination.values()) {
             InclinationProfile p = InclinationProfile.forInclination(inc);
-            List<BuildingType> iterOrder = new ArrayList<>(p.baseCounts().keySet());
+            List<BuildingType> iterOrder = new ArrayList<>(p.buildings());
             List<BuildingType> sortedOrder = new ArrayList<>(iterOrder);
             sortedOrder.sort(Comparator.comparingInt(Enum::ordinal));
             assertEquals(sortedOrder, iterOrder,
-                    "InclinationProfile.baseCounts must iterate in "
+                    "InclinationProfile.buildings must iterate in "
                     + "BuildingType.ordinal() order for "
                     + inc + " (selection composition determinism)");
         }
