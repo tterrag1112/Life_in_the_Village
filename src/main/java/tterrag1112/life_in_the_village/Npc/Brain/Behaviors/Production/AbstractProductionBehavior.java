@@ -104,7 +104,8 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
 
     // ── Phase 6.3.4.1.1 — diagnostic one-shot flags ─────────────────────────
     // Matches the o.3 / q.1 / r-style pattern from FarmerBehavior — each
-    // checkpoint emits a LOGGER.warn the first time it fires per behavior
+    // checkpoint emits a one-shot LOGGER.debug the first time it fires per
+    // behavior
     // instance, then sets the flag to suppress repeats. Operator can
     // diagnose silent failures in production behaviors (BAKER, MILLER,
     // BLACKSMITH, etc.) from a LOG without an attach-debugger pass. Flag
@@ -240,7 +241,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     .append('/').append(e.getValue());
             if (cur < e.getValue()) details.append(" (gated)");
         }
-        LOGGER.warn("[{}] {} skill-gated recipe={} ({})",
+        LOGGER.debug("[{}] {} skill-gated recipe={} ({})",
                 getClass().getSimpleName(), entity.getNpcName(),
                 recipe.output(), details);
     }
@@ -351,7 +352,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         // exact gate the first time it fires per behavior instance.
         if (isBlockedByRole()) {
             if (!warnedBlockedByRole) {
-                LOGGER.warn("[{}] {} blocked: isBlockedByRole=true (workshop role gate).",
+                LOGGER.debug("[{}] {} blocked: isBlockedByRole=true (workshop role gate).",
                         getClass().getSimpleName(), entity.getNpcName());
                 warnedBlockedByRole = true;
             }
@@ -372,7 +373,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 var weekly = tterrag1112.life_in_the_village.Npc.Schedule
                         .WeeklyScheduleLibrary.forProfession(entity.getProfession());
                 var daily = weekly.getForDay(gameTick);
-                LOGGER.warn("[{}] {} blocked: outside work hours " +
+                LOGGER.debug("[{}] {} blocked: outside work hours " +
                         "(profession={} dayTime={} resolvedPhase={} " +
                         "workPrimary={} meal={} workSecondary={}). " +
                         "If resolvedPhase is non-WORK during what should " +
@@ -388,7 +389,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         }
         if (entity.isWorkingBlocked()) {
             if (!warnedWorkBlocked) {
-                LOGGER.warn("[{}] {} blocked: isWorkingBlocked=true " +
+                LOGGER.debug("[{}] {} blocked: isWorkingBlocked=true " +
                         "(injury / sleep / other override).",
                         getClass().getSimpleName(), entity.getNpcName());
                 warnedWorkBlocked = true;
@@ -402,7 +403,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         if (GreetPlayerBehavior.isGreetPending(entity)) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) {
             if (!warnedNoNav) {
-                LOGGER.warn("[{}] {} blocked: BrainNavGuard denies steering — {}",
+                LOGGER.debug("[{}] {} blocked: BrainNavGuard denies steering — {}",
                         getClass().getSimpleName(), entity.getNpcName(),
                         BrainNavGuard.describeNavClaim(entity));
                 warnedNoNav = true;
@@ -549,7 +550,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             // the specific blocker: batch=0 (no inputs), output capped,
             // canStartProduction false, or empty step list.
             if (!loggedAnalyzeNoRecipe) {
-                LOGGER.warn("[{}] {} analyze: recipe={} found but cycle blocked " +
+                LOGGER.debug("[{}] {} analyze: recipe={} found but cycle blocked " +
                         "(batchSize={}, outputAtCapacity={}, canStart={}, " +
                         "stepsEmpty={}). Most often: input depletion " +
                         "(batchSize=0) — buy path attempted, see executeBuy " +
@@ -562,7 +563,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                 loggedAnalyzeNoRecipe = true;
             }
         } else if (!loggedAnalyzeNoRecipe) {
-            LOGGER.warn("[{}] {} analyze: chooseRecipe returned empty — no " +
+            LOGGER.debug("[{}] {} analyze: chooseRecipe returned empty — no " +
                     "viable recipe (workstation missing, output quota met, " +
                     "or no production target). Cycle stalls until that " +
                     "condition changes.",
@@ -580,7 +581,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         if (currentRecipe == null) { goIdle(); return; }
 
         if (!loggedGatheringStart) {
-            LOGGER.warn("[{}] {} GATHERING: recipe={} batch={} (will look for " +
+            LOGGER.debug("[{}] {} GATHERING: recipe={} batch={} (will look for " +
                     "inputs in stockpile/work-building/market in that order).",
                     getClass().getSimpleName(), entity.getNpcName(),
                     currentRecipe.output(), currentBatchSize);
@@ -612,7 +613,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
 
         if (missingAny) {
             if (!loggedGatheringMissing) {
-                LOGGER.warn("[{}] {} GATHERING: missing inputs (needed={}, " +
+                LOGGER.debug("[{}] {} GATHERING: missing inputs (needed={}, " +
                         "source={}). Returning gathered items to building and " +
                         "going idle; cycle stalls until inputs land in source " +
                         "or buyForward succeeds.",
@@ -659,7 +660,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         BlockPos target = stepTarget(step);
 
         if (!loggedRecipeStart) {
-            LOGGER.warn("[{}] {} WORKING_STEP: recipe={} at workstation {} " +
+            LOGGER.debug("[{}] {} WORKING_STEP: recipe={} at workstation {} " +
                     "(consumes={}, produces={}, ticks={}). NPC consumes from " +
                     "PERSONAL inventory and produces TO personal inventory — " +
                     "workstation block itself is never touched.",
@@ -682,7 +683,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
             step.produces().forEach((item, count) ->
                     entity.getPersonalInventory().addItem(new ItemStack(item, count)));
             if (!loggedFirstProduction) {
-                LOGGER.warn("[{}] {} WORKING_STEP: produced {} items (recipe={}). " +
+                LOGGER.debug("[{}] {} WORKING_STEP: produced {} items (recipe={}). " +
                         "Subsequent productions suppress this log.",
                         getClass().getSimpleName(), entity.getNpcName(),
                         step.produces(), currentRecipe.output());
@@ -716,7 +717,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         if (dest == null) { goIdle(); return; }
 
         if (!loggedDepositTarget) {
-            LOGGER.warn("[{}] {} DEPOSITING: target={} ({}). Items in personal " +
+            LOGGER.debug("[{}] {} DEPOSITING: target={} ({}). Items in personal " +
                     "inventory get pushed through BuildingStorageAccess.storeItem.",
                     getClass().getSimpleName(), entity.getNpcName(),
                     dest.getName(), dest.getType());
@@ -810,7 +811,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         if (village == null) return;
 
         if (!loggedBuyEntry) {
-            LOGGER.warn("[{}] {} executeBuy: needs={} treasury={}br wallet={}br village={}",
+            LOGGER.debug("[{}] {} executeBuy: needs={} treasury={}br wallet={}br village={}",
                     getClass().getSimpleName(), entity.getNpcName(),
                     toBuy, bEconomy.getTreasury(),
                     entity.getWallet().toBronze(), village.getName());
@@ -832,7 +833,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     .findBestChannel(intent, village, data, level).orElse(null);
             if (quote == null) {
                 if (!loggedBuyNoQuote) {
-                    LOGGER.warn("[{}] {} executeBuy: NO QUOTE for {}x{} " +
+                    LOGGER.debug("[{}] {} executeBuy: NO QUOTE for {}x{} " +
                             "(perUnitCeiling={}br). All channels declined; " +
                             "see per-channel diagnostic flags for reasons.",
                             getClass().getSimpleName(), entity.getNpcName(),
@@ -856,7 +857,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     Math.max(0L, maxAffordableUnits));
             if (affordableQty <= 0) {
                 if (!loggedBuyAffordFail) {
-                    LOGGER.warn("[{}] {} executeBuy: AFFORD FAIL for {}x{} " +
+                    LOGGER.debug("[{}] {} executeBuy: AFFORD FAIL for {}x{} " +
                             "from channel={} (price={}br/unit, treasury={}br, " +
                             "wallet={}br — combined budget insufficient for " +
                             "even 1 unit)",
@@ -895,7 +896,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     : channel.execute(partialQuote, intent, level);
             if (!result.success()) {
                 if (!loggedBuyExecuteFail) {
-                    LOGGER.warn("[{}] {} executeBuy: EXECUTE FAIL for {}x{} " +
+                    LOGGER.debug("[{}] {} executeBuy: EXECUTE FAIL for {}x{} " +
                             "from channel={} reason='{}'",
                             getClass().getSimpleName(), entity.getNpcName(),
                             affordableQty, item, partialQuote.channel(),
@@ -926,7 +927,7 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     new ItemStack(item, result.quantityTraded()));
             data.setDirty();
             if (!loggedBuyAccepted) {
-                LOGGER.warn("[{}] {} executeBuy: ACCEPTED {}x{} from channel={} " +
+                LOGGER.debug("[{}] {} executeBuy: ACCEPTED {}x{} from channel={} " +
                         "at {}br/unit (total={}br, fromTreasury={}br, fromWallet={}br)",
                         getClass().getSimpleName(), entity.getNpcName(),
                         result.quantityTraded(), item, partialQuote.channel(),

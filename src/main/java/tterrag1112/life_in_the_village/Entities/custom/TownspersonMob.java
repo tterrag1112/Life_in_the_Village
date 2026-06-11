@@ -1459,20 +1459,89 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                     .configureBrain(this, brain);
             professionBrainConfigured = true;
         }
-        if (brain.hasMemoryValue(net.minecraft.world.entity.ai.memory.MemoryModuleType.ATTACK_TARGET)) {
-            brain.setActiveActivityIfPossible(
-                    tterrag1112.life_in_the_village.Npc.Brain.NpcActivities.FIGHT.get());
-        } else {
-            tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules
-                    .tick(this, level.getDayTime());
+        // D1-minimal (city perf) — brain cadence LOD. Post Gate-0 every NPC
+        // runs a full Brain (10 sensors, ~40 memories) every tick; in a CITY
+        // village (~50+ NPCs, 240 force-loaded chunks) that dominated the
+        // tick (P50 ~252 ms). Far-from-player NPCs don't need per-tick
+        // brains: FULL within FULL_BRAIN_DIST of any player (tick every
+        // tick), REDUCED beyond (every 4th tick), FAR beyond FAR_BRAIN_DIST
+        // (every 8th) — staggered by entity id so cohorts don't sync.
+        // Correctness notes:
+        //  - Activity switching (NpcSchedules.tick / FIGHT push) runs on
+        //    every EXECUTED brain tick, so phase transitions land within at
+        //    most 8 ticks (0.4 s) of the schedule boundary.
+        //  - Combat forces FULL cadence (ATTACK_TARGET check below).
+        //  - In-progress navigation is NOT starved: PathNavigation.tick()
+        //    runs from vanilla Mob.serverAiStep every entity tick,
+        //    independent of brain.tick.
+        //  - Memory expiries (setMemoryWithExpiry) decrement once per
+        //    EXECUTED brain tick, so cooldowns last 4x/8x longer in wall
+        //    ticks at reduced cadence. Accepted: far NPCs idling on longer
+        //    cooldowns is invisible and strictly cheaper.
+        //  - Goal-selector (super.customServerAiStep), aging, house checks,
+        //    conversation locks and Goal-side look handling stay every-tick.
+        boolean inCombat = brain.hasMemoryValue(
+                net.minecraft.world.entity.ai.memory.MemoryModuleType.ATTACK_TARGET);
+        int cadence = inCombat ? 1 : brainTickInterval(level);
+        if (cadence == 1 || (this.tickCount + this.getId()) % cadence == 0) {
+            if (inCombat) {
+                brain.setActiveActivityIfPossible(
+                        tterrag1112.life_in_the_village.Npc.Brain.NpcActivities.FIGHT.get());
+            } else {
+                tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules
+                        .tick(this, level.getDayTime());
+            }
+            brain.tick(level, this);
         }
-        brain.tick(level, this);
         // Phase 6.3.2.a — expire TIMED role assignments.
         roles.tickRoles(level.getGameTime());
         super.customServerAiStep(level);
         tickAging(level);
         tickHouseCheck(level);
         tickConversationLock(level);
+    }
+
+    // ── D1-minimal brain cadence LOD ─────────────────────────────────────────
+
+    /** Players within this range get FULL per-tick brains. */
+    private static final double FULL_BRAIN_DIST = 48.0;
+    /** Beyond this range brains tick every 8th tick (FAR band);
+     *  between FULL and FAR they tick every 4th (REDUCED band). */
+    private static final double FAR_BRAIN_DIST = 96.0;
+    /** Band recomputation interval (ticks); per-NPC offset staggers it. */
+    private static final int CADENCE_REFRESH_TICKS = 20;
+
+    /** Cached brain-tick interval (1 / 4 / 8) for the current band. */
+    private int brainCadenceInterval = 1;
+    /** Entity tickCount at/after which the band is recomputed. */
+    private int nextCadenceRefreshTick = 0;
+
+    /**
+     * Current brain-tick interval from the player-distance band, cached
+     * and recomputed every {@link #CADENCE_REFRESH_TICKS} ticks (staggered
+     * by entity id so a city of NPCs doesn't recompute in lockstep). The
+     * scan is a flat pass over {@code level.players()} — a handful of
+     * entries — so even the refresh is near-free.
+     */
+    private int brainTickInterval(ServerLevel level) {
+        if (this.tickCount >= nextCadenceRefreshTick) {
+            nextCadenceRefreshTick = this.tickCount
+                    + CADENCE_REFRESH_TICKS + (this.getId() & 7);
+            double bestSqr = Double.MAX_VALUE;
+            for (net.minecraft.server.level.ServerPlayer p : level.players()) {
+                if (p.isSpectator()) continue;
+                double d = p.distanceToSqr(this);
+                if (d < bestSqr) bestSqr = d;
+            }
+            if (bestSqr <= FULL_BRAIN_DIST * FULL_BRAIN_DIST) {
+                brainCadenceInterval = 1;
+            } else if (bestSqr <= FAR_BRAIN_DIST * FAR_BRAIN_DIST) {
+                brainCadenceInterval = 4;
+            } else {
+                brainCadenceInterval = 8;
+            }
+        }
+        return brainCadenceInterval;
     }
 
     // =========================================================================
@@ -1632,8 +1701,11 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 ImmutableList.of(
                         new net.minecraft.world.entity.ai.behavior
                                 .LookAtTargetSink(45, 90),
-                        new net.minecraft.world.entity.ai.behavior
-                                .MoveToTargetSink(),
+                        // D1-minimal — budgeted subclass: global per-tick cap on
+                        // new path computations + cross-city leg clamping. See
+                        // BudgetedMoveToTargetSink. Vanilla semantics otherwise.
+                        new tterrag1112.life_in_the_village.Npc.Brain
+                                .BudgetedMoveToTargetSink(),
                         new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                 .CarryHoldAnimationBehavior()
                 );

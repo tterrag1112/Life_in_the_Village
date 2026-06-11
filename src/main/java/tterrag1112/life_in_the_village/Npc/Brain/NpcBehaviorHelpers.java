@@ -88,10 +88,27 @@ public final class NpcBehaviorHelpers {
      * @param speed  vanilla speed-modifier multiplier.
      * @return       true when navigation accepted the destination.
      */
+    /** Direct-moveTo backstop range — beyond this the leg is left entirely
+     *  to {@link BudgetedMoveToTargetSink}, which clamps it to a cheap
+     *  intermediate waypoint. Matches FOLLOW_RANGE (32). */
+    private static final int BACKSTOP_MAX_DIST = 32;
+
     public static boolean walkTo(TownspersonMob entity, BlockPos pos, double speed) {
         if (entity == null || pos == null) return false;
         entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
                 new WalkTarget(pos, (float) speed, 1));
+        // D1-minimal (city perf) — the moveTo backstop forces a path compute
+        // THIS tick, bypassing the CORE sink. Far legs and budget-denied
+        // ticks skip it: BudgetedMoveToTargetSink consumes the WALK_TARGET
+        // written above (leg-clamped, budget-gated) within a brain tick or
+        // two. Returning true here means "request accepted", which it is —
+        // it is merely deferred, not dropped.
+        double distSqr = entity.blockPosition().distSqr(pos);
+        if (distSqr > (double) BACKSTOP_MAX_DIST * BACKSTOP_MAX_DIST
+                || !(entity.level() instanceof ServerLevel serverLevel)
+                || !PathComputeBudget.tryAcquire(serverLevel)) {
+            return true;
+        }
         return entity.getNavigation().moveTo(
                 pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, speed);
     }

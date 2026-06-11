@@ -154,7 +154,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
     // Phase 6.3.3.o.3 — one-shot diagnostic flags for the early-exit
     // gates in checkExtraStartConditions. Each gate's first trigger
-    // per behavior instance emits a LOGGER.warn naming the gate, then
+    // per behavior instance emits a one-shot LOGGER.debug naming the gate, then
     // sets the matching flag to suppress repeats. The n.3 warning
     // lives INSIDE analyze(), so n.3 silence means one of these gates
     // is firing first — having them named makes that diagnosis
@@ -167,7 +167,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     // Phase 6.3.3.q.1 — harvest-phase diagnostic flags. NPC reports
     // active phase "Harvesting crops" but no blocks break and no
     // items appear in inventory. Each checkpoint in the harvest
-    // state machine emits a one-shot LOGGER.warn so the operator
+    // state machine emits a one-shot LOGGER.debug so the operator
     // can identify which step is silently failing without an
     // attach-debugger pass. Pattern matches the o.3 gate-naming
     // shape; the q.1 commit ships logging only — the fix lands in
@@ -238,7 +238,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // normal between-cycle pause, not a stuck state).
         if (!BrainNavGuard.canSteerNavigation(entity)) {
             if (!warnedNoNav) {
-                LOGGER.warn("[FarmerBehavior] {} blocked: BrainNavGuard denies "
+                LOGGER.debug("[FarmerBehavior] {} blocked: BrainNavGuard denies "
                         + "steering — {}",
                         entity.getNpcName(),
                         BrainNavGuard.describeNavClaim(entity));
@@ -259,7 +259,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (idleCooldown > 0) { idleCooldown--; return false; }
         if (!entity.isWorkTime()) {
             if (!warnedOffWorkTime) {
-                LOGGER.warn("[FarmerBehavior] {} blocked: outside work hours "
+                LOGGER.debug("[FarmerBehavior] {} blocked: outside work hours "
                         + "(profession={}, schedule says no work this tick). If this "
                         + "persists past a full daily cycle the schedule itself is "
                         + "the bug, not a temporary off-hours pause.",
@@ -373,7 +373,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // behavior instance.
         if (phase == Phase.REPLANTING && !toReplant.isEmpty()
                 && !loggedReplantPhaseSwitch) {
-            LOGGER.warn("[FarmerBehavior] {} REPLANTING interrupted at stop(): " +
+            LOGGER.debug("[FarmerBehavior] {} REPLANTING interrupted at stop(): " +
                     "{} positions still queued. Next session resumes via the " +
                     "field's transient state; if those positions don't get " +
                     "replanted on resume, hypothesis A (persistence) is in play.",
@@ -765,7 +765,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // (vs. some upstream short-circuit) and shows how many crops
         // were queued by scanPlotForTasks.
         if (!loggedHarvestEntered) {
-            LOGGER.warn("[FarmerBehavior] {} HARVESTING entered: {} crops queued (first at {})",
+            LOGGER.debug("[FarmerBehavior] {} HARVESTING entered: {} crops queued (first at {})",
                     entity.getNpcName(), toHarvest.size(),
                     toHarvest.isEmpty() ? "(none)" : toHarvest.get(0).toShortString());
             loggedHarvestEntered = true;
@@ -773,7 +773,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         if (toHarvest.isEmpty()) {
             if (!loggedHarvestExhausted) {
-                LOGGER.warn("[FarmerBehavior] {} HARVESTING: toHarvest emptied, " +
+                LOGGER.debug("[FarmerBehavior] {} HARVESTING: toHarvest emptied, " +
                         "harvested {} items this cycle; toReplant size={}",
                         entity.getNpcName(), harvestedThisCycle.size(),
                         toReplant.size());
@@ -805,7 +805,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
 
         if (distSq > INTERACT_RANGE_SQ) {
             if (!loggedHarvestWalking) {
-                LOGGER.warn("[FarmerBehavior] {} HARVESTING: walking to crop at {} " +
+                LOGGER.debug("[FarmerBehavior] {} HARVESTING: walking to crop at {} " +
                         "(distSq={}, INTERACT_RANGE_SQ={}). If 'arrived' never logs, " +
                         "pathfinding can't reach the plot.",
                         entity.getNpcName(), cropPos.toShortString(),
@@ -820,7 +820,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                     .NpcBehaviorHelpers.walkTo(entity, cropPos, 1.0);
             if (!loggedHarvestNavState) {
                 var path = entity.getNavigation().getPath();
-                LOGGER.warn("[FarmerBehavior] {} HARVESTING nav state: " +
+                LOGGER.debug("[FarmerBehavior] {} HARVESTING nav state: " +
                         "moveTo returned {}, path={}, isInProgress={}. " +
                         "moveTo=false OR path=null means pathfinding cannot " +
                         "reach the target — terrain / farm-complex border " +
@@ -835,7 +835,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
 
         if (!loggedHarvestArrived) {
-            LOGGER.warn("[FarmerBehavior] {} HARVESTING: arrived at crop {} (distSq={}), " +
+            LOGGER.debug("[FarmerBehavior] {} HARVESTING: arrived at crop {} (distSq={}), " +
                     "checking block state.",
                     entity.getNpcName(), cropPos.toShortString(),
                     String.format("%.2f", distSq));
@@ -846,7 +846,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         BlockState state = level.getBlockState(cropPos);
         if (!(state.getBlock() instanceof CropBlock crop)) {
             if (!loggedHarvestNotCrop) {
-                LOGGER.warn("[FarmerBehavior] {} HARVESTING: block at {} is {} " +
+                LOGGER.debug("[FarmerBehavior] {} HARVESTING: block at {} is {} " +
                         "(not a CropBlock). If this fires repeatedly, the scan picked " +
                         "stale positions or the farm-complex placed non-crop blocks " +
                         "above farmland.",
@@ -860,7 +860,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         }
         if (!crop.isMaxAge(state)) {
             if (!loggedHarvestImmature) {
-                LOGGER.warn("[FarmerBehavior] {} HARVESTING: crop at {} not mature " +
+                LOGGER.debug("[FarmerBehavior] {} HARVESTING: crop at {} not mature " +
                         "(age={}, max={}). scanPlotForTasks should have filtered this; " +
                         "may indicate per-tick growth race or stale queue entries.",
                         entity.getNpcName(), cropPos.toShortString(),
@@ -927,7 +927,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         if (!loggedHarvestBroke) {
             int dropCount = 0;
             for (ItemStack d : drops) dropCount += d.getCount();
-            LOGGER.warn("[FarmerBehavior] {} HARVESTING: broke crop at {} " +
+            LOGGER.debug("[FarmerBehavior] {} HARVESTING: broke crop at {} " +
                     "(yieldMult={}, raw drop count={}). Subsequent breaks suppress " +
                     "this log to avoid flooding.",
                     entity.getNpcName(), cropPos.toShortString(),
@@ -1037,7 +1037,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
         // (replant queue persists across logout — should fire after
         // each session resumption if the queue carries over).
         if (!loggedReplantEntered && !toReplant.isEmpty()) {
-            LOGGER.warn("[FarmerBehavior] {} REPLANTING entered: {} positions queued (first at {})",
+            LOGGER.debug("[FarmerBehavior] {} REPLANTING entered: {} positions queued (first at {})",
                     entity.getNpcName(), toReplant.size(),
                     toReplant.get(0).toShortString());
             loggedReplantEntered = true;
@@ -1050,7 +1050,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
             // behavior instance.
             if (!loggedReplantExhausted
                     && (replantSeedSuccessCount + replantSeedFailCount) > 0) {
-                LOGGER.warn("[FarmerBehavior] {} REPLANTING done: planted={} failed-no-seed={}. " +
+                LOGGER.debug("[FarmerBehavior] {} REPLANTING done: planted={} failed-no-seed={}. " +
                         "If failed > 0, harvested seeds in personal inventory may not " +
                         "be reaching the farmhouse (FarmerBehavior.replant only takes from " +
                         "farmhouse, not personal). Hypothesis C confirmed if failed > planted.",
@@ -1152,7 +1152,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
                 // takeItem call looked".
                 int farmhouseSeeds = countSeedsInFarmhouse(level, seedItem);
                 int personalSeeds  = countSeedsInPersonalInventory(seedItem);
-                LOGGER.warn("[FarmerBehavior] {} REPLANTING failed at {}: " +
+                LOGGER.debug("[FarmerBehavior] {} REPLANTING failed at {}: " +
                         "no seeds taken (farmhouse={}, personal={}, item={}). " +
                         "If personal > 0 but farmhouse = 0, harvested seeds " +
                         "didn't make it to the farmhouse — fix is to add a " +
