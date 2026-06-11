@@ -5,7 +5,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
@@ -76,7 +76,7 @@ public sealed interface QuestReward
         public String type() { return TYPE; }
 
         public void grant(ServerLevel level, ServerPlayer player, long now) {
-            ResourceLocation id = ResourceLocation.tryParse(itemId);
+            Identifier id = Identifier.tryParse(itemId);
             Item item = id == null ? null : BuiltInRegistries.ITEM.getOptional(id).orElse(null);
             if (item == null) {
                 LOGGER.warn("[Quest] reward item not found: {}", itemId);

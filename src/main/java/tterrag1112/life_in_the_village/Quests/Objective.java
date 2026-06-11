@@ -4,7 +4,7 @@ import com.mojang.serialization.Codec;
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.Item;
@@ -69,7 +69,7 @@ public sealed interface Objective
 
     /** Count of {@code itemId} (a registry id) in the player's inventory. */
     private static int playerItemCount(ServerPlayer player, String itemId) {
-        ResourceLocation id = ResourceLocation.tryParse(itemId);
+        Identifier id = Identifier.tryParse(itemId);
         Item item = id == null ? null : BuiltInRegistries.ITEM.getOptional(id).orElse(null);
         if (item == null) return 0;
         int n = 0;
@@ -90,7 +90,7 @@ public sealed interface Objective
     /** The registry id of the biome the player currently stands in. */
     private static String currentBiomeId(ServerLevel level, ServerPlayer player) {
         return level.getBiome(player.blockPosition()).unwrapKey()
-                .map(k -> k.location().toString()).orElse("");
+                .map(k -> k.identifier().toString()).orElse("");
     }
 
     // ── Kinds ────────────────────────────────────────────────────────────────

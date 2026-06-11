@@ -81,7 +81,7 @@ public sealed interface SacredSpaceRule
             implements SacredSpaceRule {
         public float potencyAt(ServerLevel level, BlockPos pos) {
             if (requireOpenSky && !level.canSeeSky(pos)) return 0f;
-            if (requireDay && !level.isDay()) return 0f;
+            if (requireDay && level.isDarkOutside()) return 0f;
             return potency;
         }
         public String label() { return "sky"; }
