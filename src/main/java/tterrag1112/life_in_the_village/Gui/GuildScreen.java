@@ -56,15 +56,15 @@ public class GuildScreen extends Screen {
         int xpToNext = registered ? member.xpToNextRank() : GuildRank.BRONZE.getMinXp();
         int completed = registered ? member.completedQuestIds().size() : 0;
 
+        // F2b-2 — quests now come from the F2 QuestSavedData store (guild pool + the
+        // player's active list), mapped onto the unchanged packet/GUI quest entry shape.
         List<OpenGuildScreenPacket.QuestEntry> available =
-                guildData.getAvailableQuestsForGuild(guildId, rank).stream()
-                        .map(q -> new OpenGuildScreenPacket.QuestEntry(q.getId(), q.getTitle(), q.getDescription(), q.getType().name(), q.getDifficulty().name(), q.getCoinReward(), q.getXpReward(), q.getStatus().name()))
-                        .toList();
+                GuildQuests.available(level, guildId, rank).stream()
+                        .map(GuildScreen::toEntry).toList();
 
         List<OpenGuildScreenPacket.QuestEntry> active =
-                guildData.getActiveQuestsForPlayer(player.getUUID()).stream()
-                        .map(q -> new OpenGuildScreenPacket.QuestEntry(q.getId(), q.getTitle(), q.getDescription(), q.getType().name(), q.getDifficulty().name(), q.getCoinReward(), q.getXpReward(), q.getStatus().name()))
-                        .toList();
+                GuildQuests.activeFor(level, player.getUUID()).stream()
+                        .map(GuildScreen::toEntry).toList();
 
         List<OpenGuildScreenPacket.PartyMemberEntry> party =
                 partyData.getPartyForPlayer(player.getUUID())
@@ -81,6 +81,16 @@ public class GuildScreen extends Screen {
         net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
                 new OpenGuildScreenPacket(guildId, villageName, registered, rank.name(),
                         xp, xpToNext, completed, available, active, party, roster));
+    }
+
+    /** Maps an F2 guild quest onto the (unchanged) packet/GUI quest-entry shape. */
+    private static OpenGuildScreenPacket.QuestEntry toEntry(
+            tterrag1112.life_in_the_village.Quests.Quest q) {
+        tterrag1112.life_in_the_village.Quests.QuestDifficulty diff = q.difficulty();
+        return new OpenGuildScreenPacket.QuestEntry(
+                q.questId(), q.title(), q.description(),
+                GuildQuests.kindLabel(q), diff.name(),
+                diff.baseCoinReward(), diff.baseXp(), q.status().name());
     }
 
     @Override

@@ -33,4 +33,9 @@ public record QuestContext(QuestEventKind kind, String godId, String religionId,
     public static QuestContext mobDeath(String mobId) {
         return new QuestContext(QuestEventKind.MOB_DEATH, null, null, mobId);
     }
+
+    /** F2b-2 — an escort reached its {@code destination} (a village id; the Escort subject). */
+    public static QuestContext escortArrived(String destination) {
+        return new QuestContext(QuestEventKind.ESCORT_ARRIVED, null, null, destination);
+    }
 }

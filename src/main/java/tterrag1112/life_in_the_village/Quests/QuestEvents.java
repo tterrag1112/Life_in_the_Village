@@ -43,12 +43,29 @@ public final class QuestEvents {
             Quest progressed = quest.withObjectives(updated);
             // EVENT completion: all objectives complete by progress (poll objectives, if
             // any, are finalized at turn-in via evaluate()).
-            if (progressed.allComplete()) {
+            //
+            // F2b-2 — GUILD ("turn-in") quests are an exception: their objectives still
+            // ADVANCE on events (kills, escort arrival), but they are only COMPLETED and
+            // REWARDED when the player returns to the guild and turns in (the party
+            // multiplier / purse-aware coins / rank-up flow lives there). So we save the
+            // progress and prompt the player to turn in, never auto-completing them here.
+            boolean turnInGiver = progressed.giver().type() == QuestGiver.Type.GUILD;
+            if (progressed.allComplete() && !turnInGiver) {
                 complete(store, level, player, progressed, now);
             } else {
                 store.replace(player.getUUID(), progressed);
-                player.displayClientMessage(Component.literal("Quest updated: " + progressed.title())
-                        .withStyle(ChatFormatting.GRAY), true);
+                if (turnInGiver) {
+                    // Mirror the legacy guild HUNT notice: silent on partial progress, a
+                    // "return to the guild" prompt once every objective is met.
+                    if (progressed.allComplete()) {
+                        player.displayClientMessage(Component.literal(
+                                "Objective complete: " + progressed.title()
+                                        + " — return to the guild to claim your reward!"), true);
+                    }
+                } else {
+                    player.displayClientMessage(Component.literal("Quest updated: " + progressed.title())
+                            .withStyle(ChatFormatting.GRAY), true);
+                }
             }
         }
     }

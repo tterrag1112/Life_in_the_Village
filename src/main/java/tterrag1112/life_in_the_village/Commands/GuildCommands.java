@@ -20,9 +20,10 @@ import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerR
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerReputationTier;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.Adventurers.AdventurerSavedData;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildMember;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildQuests;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.PlayerGuildData;
-import tterrag1112.life_in_the_village.Guilds.Adventurer.Quest;
+import tterrag1112.life_in_the_village.Quests.QuestSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.PlayerProfession;
 import tterrag1112.life_in_the_village.Profession.PlayerProfessionData;
@@ -233,10 +234,10 @@ public class GuildCommands {
                             + member.completedQuestIds().size()), false);
 
             // Active quests
-            guildData.getActiveQuestsForPlayer(player.getUUID())
+            QuestSavedData.get(level).activeGuildQuests(player.getUUID())
                     .forEach(q -> src.sendSuccess(() -> Component.literal(
-                                    "  [ACTIVE] " + q.getTitle()
-                                            + " (" + (int)(q.getCompletionFraction() * 100) + "%)"),
+                                    "  [ACTIVE] " + q.title()
+                                            + " (" + (int)(GuildQuests.completionFraction(q) * 100) + "%)"),
                             false));
         });
         return 1;
@@ -254,57 +255,59 @@ public class GuildCommands {
             return 0;
         }
 
-        // Find quest by ID prefix
-        Quest quest = guildData.getAllQuestsForGuild(
-                        guildData.getMember(player.getUUID())
-                                .map(GuildMember::guildId)
-                                .orElse(UUID.randomUUID())
-                ).stream()
-                .filter(q -> q.getId().toString()
-                        .startsWith(questIdPrefix)
-                        && q.getStatus() == Quest.QuestStatus.AVAILABLE)
-                .findFirst()
-                .orElse(null);
+        GuildMember member = guildData.getMember(player.getUUID()).orElse(null);
+        if (member == null) {
+            src.sendFailure(Component.literal(
+                    "You are not registered with any guild."));
+            return 0;
+        }
+        UUID guildId = member.guildId();
+        QuestSavedData store = QuestSavedData.get(level);
 
+        // Find a rank-acceptable offer by ID prefix; if only a too-high-rank one matches,
+        // report the rank requirement (legacy parity).
+        var quest = store.availableGuildQuests(guildId, member.currentRank()).stream()
+                .filter(q -> q.questId().toString().startsWith(questIdPrefix))
+                .findFirst().orElse(null);
         if (quest == null) {
-            src.sendFailure(Component.literal(
-                    "Quest not found or not available."));
+            var higher = store.guildOffers(guildId).stream()
+                    .filter(q -> q.questId().toString().startsWith(questIdPrefix))
+                    .findFirst().orElse(null);
+            if (higher != null) {
+                src.sendFailure(Component.literal(
+                        "Your rank is too low for this quest. Required: "
+                                + higher.difficulty().minRank().getDisplayName()));
+            } else {
+                src.sendFailure(Component.literal("Quest not found or not available."));
+            }
             return 0;
         }
 
-        // Check rank
-        GuildRank rank = guildData.getMember(player.getUUID())
-                .map(GuildMember::currentRank)
-                .orElse(GuildRank.BRONZE);
-
-        if (!rank.canAcceptQuest(quest.getDifficulty())) {
-            src.sendFailure(Component.literal(
-                    "Your rank is too low for this quest. "
-                            + "Required: "
-                            + quest.getDifficulty().minRank().getDisplayName()));
-            return 0;
-        }
-
-        // Check not already on a quest of same type
-        boolean hasActive = guildData
-                .getActiveQuestsForPlayer(player.getUUID())
-                .size() >= 3;
-        if (hasActive) {
-            src.sendFailure(Component.literal(
-                    "You already have 3 active quests. "
-                            + "Complete some first."));
-            return 0;
-        }
-
-        quest.setStatus(Quest.QuestStatus.ACTIVE);
-        quest.setAssignedPlayer(player.getUUID());
-        quest.setAcceptedTick(level.getGameTime());
-        guildData.setDirty();
-
-        src.sendSuccess(() -> Component.literal(
-                "Quest accepted: " + quest.getTitle() + "\n"
-                        + quest.getDescription()), false);
-        return 1;
+        // Command path allows up to 3 active quests.
+        GuildQuests.AcceptResult result =
+                GuildQuests.accept(level, player, guildId, quest.questId(), member, 3);
+        return switch (result) {
+            case OK -> {
+                src.sendSuccess(() -> Component.literal(
+                        "Quest accepted: " + quest.title() + "\n" + quest.description()), false);
+                yield 1;
+            }
+            case TOO_MANY_ACTIVE -> {
+                src.sendFailure(Component.literal(
+                        "You already have 3 active quests. Complete some first."));
+                yield 0;
+            }
+            case RANK_TOO_LOW -> {
+                src.sendFailure(Component.literal(
+                        "Your rank is too low for this quest. Required: "
+                                + quest.difficulty().minRank().getDisplayName()));
+                yield 0;
+            }
+            default -> {
+                src.sendFailure(Component.literal("Quest not found or not available."));
+                yield 0;
+            }
+        };
     }
 
     private static int completeQuests(CommandSourceStack src) {
@@ -313,7 +316,7 @@ public class GuildCommands {
         PlayerGuildData guildData = PlayerGuildData.get(level);
         VillageSavedData data = VillageSavedData.get(level);
 
-        var active = guildData.getActiveQuestsForPlayer(player.getUUID());
+        var active = QuestSavedData.get(level).activeGuildQuests(player.getUUID());
         if (active.isEmpty()) {
             src.sendFailure(Component.literal(
                     "You have no active quests."));
@@ -321,64 +324,26 @@ public class GuildCommands {
         }
 
         int completed = 0;
-        for (Quest quest : active) {
-            if (!isQuestComplete(player, quest, level, data)) continue;
+        for (var quest : active) {
+            GuildQuests.TurnInResult result = GuildQuests.turnIn(level, player, quest, data);
+            if (!result.completed()) continue;
 
-            // Award rewards
-            CurrencyValue reward = CurrencyValue.of(quest.getCoinReward());
-            var playerContainer = new net.minecraft.world.SimpleContainer(
-                    player.getInventory().getContainerSize());
-            for (int i = 0; i < player.getInventory()
-                    .getContainerSize(); i++) {
-                playerContainer.setItem(i,
-                        player.getInventory().getItem(i).copy());
+            // Command-path extras (not in the GUI flow): rank-up notice, village
+            // reputation gain, and the high-rank special reward.
+            if (result.rankedUp()) {
+                player.displayClientMessage(
+                        Component.literal("You have ranked up to "
+                                        + result.newRank().getDisplayName() + "!")
+                                .withStyle(net.minecraft.ChatFormatting.GOLD), false);
             }
-            CoinHelper.giveCoins(playerContainer, reward);
-            for (int i = 0; i < player.getInventory()
-                    .getContainerSize(); i++) {
-                player.getInventory().setItem(i,
-                        playerContainer.getItem(i));
-            }
+            ReputationEvents.modifyReputationForAllVillages(player, level, data);
+            giveSpecialReward(player, quest);
 
-            // XP reward
-            guildData.addXp(player.getUUID(), quest.getXpReward());
-
-            // Check rank up
-            guildData.getMember(player.getUUID()).ifPresent(member -> {
-                GuildRank oldRank = member.rank();
-                GuildRank newRank = member.currentRank();
-                if (oldRank != newRank) {
-                    player.displayClientMessage(
-                            Component.literal("You have ranked up to "
-                                            + newRank.getDisplayName() + "!")
-                                    .withStyle(net.minecraft.ChatFormatting.GOLD),
-                            false);
-                }
-            });
-
-            // Reputation gain
-            ReputationEvents
-                    .modifyReputationForAllVillages(player, level, data);
-
-            // Special reward for high ranks
-            if (quest.hasSpecialReward()) {
-                giveSpecialReward(player, quest);
-            }
-
-            // Consume items for gather/deliver quests
-            if (quest.getType() == Quest.QuestType.GATHER
-                    || quest.getType() == Quest.QuestType.DELIVER) {
-                consumeQuestItems(player, quest);
-            }
-
-            quest.setStatus(Quest.QuestStatus.COMPLETED);
-            guildData.setDirty();
             completed++;
-
             src.sendSuccess(() -> Component.literal(
-                    "Quest complete: " + quest.getTitle()
-                            + "\nReward: " + reward
-                            + " + " + quest.getXpReward() + " XP"), false);
+                    "Quest complete: " + quest.title()
+                            + "\nReward: " + CurrencyValue.of(result.coins())
+                            + " + " + result.xpGranted() + " XP"), false);
         }
 
         if (completed == 0) {
@@ -405,8 +370,8 @@ public class GuildCommands {
                 .orElse(null);
         if (member == null) return 0;
 
-        var available = guildData.getAvailableQuestsForGuild(
-                member.guildId(), member.currentRank());
+        var available = QuestSavedData.get(level)
+                .availableGuildQuests(member.guildId(), member.currentRank());
 
         if (available.isEmpty()) {
             src.sendSuccess(() -> Component.literal(
@@ -418,11 +383,11 @@ public class GuildCommands {
                 "=== Available Quests ==="), false);
         available.forEach(q ->
                 src.sendSuccess(() -> Component.literal(
-                                "[" + q.getDifficulty().name() + "] "
-                                        + q.getTitle()
-                                        + " | Reward: " + CurrencyValue.of(q.getCoinReward())
-                                        + " + " + q.getXpReward() + " XP"
-                                        + " | ID: " + q.getId().toString().substring(0, 8)),
+                                "[" + q.difficulty().name() + "] "
+                                        + q.title()
+                                        + " | Reward: " + CurrencyValue.of(q.difficulty().baseCoinReward())
+                                        + " + " + q.difficulty().baseXp() + " XP"
+                                        + " | ID: " + q.questId().toString().substring(0, 8)),
                         false)
         );
         return 1;
@@ -430,60 +395,10 @@ public class GuildCommands {
 
     // --- Helpers ---
 
-    private static boolean isQuestComplete(ServerPlayer player,
-                                           Quest quest, ServerLevel level, VillageSavedData data) {
-        return switch (quest.getType()) {
-            case GATHER -> playerHasItems(player, quest.getTargetItem(),
-                    quest.getTargetCount());
-            case HUNT   -> quest.getCurrentCount() >= quest.getTargetCount();
-            case EXPLORE -> quest.getCurrentCount() >= 1;
-            case DELIVER -> playerHasItems(player, quest.getTargetItem(), 1)
-                    && isNearTargetVillage(player, quest, data);
-            case ESCORT -> quest.getCurrentCount() >= 1;
-        };
-    }
-
-    private static boolean playerHasItems(ServerPlayer player,
-                                          net.minecraft.world.item.Item item,
-                                          int count) {
-        if (item == null) return true;
-        int total = 0;
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
-            ItemStack stack = player.getInventory().getItem(i);
-            if (stack.is(item)) total += stack.getCount();
-        }
-        return total >= count;
-    }
-
-    private static boolean isNearTargetVillage(ServerPlayer player,
-                                               Quest quest, VillageSavedData data) {
-        if (quest.getTargetVillageId() == null) return false;
-        return data.getVillageById(quest.getTargetVillageId())
-                .flatMap(v -> v.getBounds(data))
-                .map(b -> b.inflate(32).contains(
-                        player.getX(), player.getY(), player.getZ()))
-                .orElse(false);
-    }
-
-    private static void consumeQuestItems(ServerPlayer player,
-                                          Quest quest) {
-        if (quest.getTargetItem() == null) return;
-        int remaining = quest.getTargetCount();
-        for (int i = 0; i < player.getInventory().getContainerSize()
-                && remaining > 0; i++) {
-            ItemStack stack = player.getInventory().getItem(i);
-            if (stack.is(quest.getTargetItem())) {
-                int take = Math.min(remaining, stack.getCount());
-                stack.shrink(take);
-                remaining -= take;
-            }
-        }
-    }
-
+    /** High-rank special reward, by F2 quest difficulty (command-path only). */
     private static void giveSpecialReward(ServerPlayer player,
-                                          Quest quest) {
-        // High rank special rewards
-        ItemStack reward = switch (quest.getDifficulty()) {
+                                          tterrag1112.life_in_the_village.Quests.Quest quest) {
+        ItemStack reward = switch (quest.difficulty()) {
             case ELITE     -> new ItemStack(Items.ENCHANTED_GOLDEN_APPLE);
             case LEGENDARY -> new ItemStack(Items.NETHER_STAR);
             default        -> ItemStack.EMPTY;

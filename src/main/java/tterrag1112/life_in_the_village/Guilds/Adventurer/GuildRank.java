@@ -25,10 +25,6 @@ public enum GuildRank {
         return DIAMOND;
     }
 
-    public boolean canAcceptQuest(Quest.QuestDifficulty difficulty) {
-        return difficulty.minRank().ordinal() <= this.ordinal();
-    }
-
     public GuildRank next() {
         GuildRank[] values = values();
         int next = ordinal() + 1;

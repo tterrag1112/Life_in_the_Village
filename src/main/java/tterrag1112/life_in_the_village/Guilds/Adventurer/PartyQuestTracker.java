@@ -1,6 +1,7 @@
 // src/main/java/tterrag1112/life_in_the_village/Entities/Party/PartyQuestTracker.java
 package tterrag1112.life_in_the_village.Guilds.Adventurer;
 
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -9,6 +10,8 @@ import net.neoforged.neoforge.event.entity.living.LivingDeathEvent;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
+import tterrag1112.life_in_the_village.Quests.QuestContext;
+import tterrag1112.life_in_the_village.Quests.QuestEvents;
 
 
 import java.util.Optional;
@@ -50,48 +53,16 @@ public class PartyQuestTracker {
         // Record kill on the NPC member for levelling
         partyData.recordMemberKill(attacker.getUUID());
 
-        // Attribute to player's active quest
+        // Attribute the kill to the party leader's active quests. The F2 engine advances
+        // every matching Hunt objective and prompts the leader to turn in at the guild;
+        // the party XP multiplier is applied there (GuildQuests.turnIn), not on the kill.
         ServerPlayer leader = level.getServer()
                 .getPlayerList()
                 .getPlayer(party.getLeaderPlayerId());
         if (leader == null) return;
 
-        PlayerGuildData guildData = PlayerGuildData.get(level);
-        String killedType = event.getEntity().getType()
-                .builtInRegistryHolder().key().registry().toString();
-
-        guildData.getActiveQuestsForPlayer(leader.getUUID())
-                .stream()
-                .filter(q -> q.getType() == Quest.QuestType.HUNT)
-                .filter(q -> killedType.equals(q.getTargetMob()))
-                .filter(q -> q.getCurrentCount() < q.getTargetCount())
-                .findFirst()
-                .ifPresent(q -> {
-                    int newCount = q.getCurrentCount() + 1;
-                    q.setCurrentCount(newCount);
-                    guildData.setDirty();
-
-                    // Grant XP scaled by party multiplier
-                    if (newCount >= q.getTargetCount()) {
-                        float multiplier = party.getPartyXpMultiplier();
-                        int bonusXp = (int)(q.getXpReward()
-                                * (multiplier - 1.0f));
-                        if (bonusXp > 0) {
-                            leader.displayClientMessage(
-                                    net.minecraft.network.chat.Component
-                                            .literal("Quest complete! Party bonus: +"
-                                                    + bonusXp + " XP from "
-                                                    + party.getPartyName()),
-                                    false);
-                        } else {
-                            leader.displayClientMessage(
-                                    net.minecraft.network.chat.Component
-                                            .literal("Quest objective complete: "
-                                                    + q.getTitle()
-                                                    + " — return to the guild!"),
-                                    true);
-                        }
-                    }
-                });
+        String killedType = BuiltInRegistries.ENTITY_TYPE
+                .getKey(event.getEntity().getType()).toString();
+        QuestEvents.notify(leader, QuestContext.mobDeath(killedType));
     }
 }

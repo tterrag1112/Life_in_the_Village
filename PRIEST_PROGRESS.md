@@ -11277,3 +11277,158 @@ NeoForge watch-items on the user's build: `Holder.unwrapKey()` (biome id) and th
    its difficulty + rank requirement (`/quest` shows `[EASY]`).
 5. **Legacy untouched.** Confirm the legacy guild board still accepts/turns-in/HUNT-
    detects exactly as before (separate system). Save+reload → the new quests persist.
+
+## F2 — F2b-2: re-seat the player guild quests onto the F2 base (the migration) (2026-06-11)
+
+Behaviour-preserving migration of the working player guild quest system off the legacy
+`Guilds.Adventurer.Quest` and onto the F2 base built across F2a/F2b-1. The legacy `Quest`
+class is **narrowed to adventurer-only** (scope A — the NPC adventurer-group system keeps
+it), not deleted. The player path — generation, storage, the guild-hall GUI, the accept /
+turn-in packets, the player listeners, the `/guild` command surface — now runs on F2
+`QuestSavedData` + `Objective` + `QuestEvents`, with the reward flow (party XP multiplier,
+purse-aware coins, rank-up→regen, deliver-consume) preserved at turn-in.
+
+### Disposition (investigation)
+
+- **Wire format + GUI kept byte-for-byte.** The `OpenGuildScreenPacket` /
+  `GuildActionPacket` codecs and the entire `GuildScreen` renderer are UNCHANGED — only
+  the server-side data plumbing re-points to F2. An F2 `Quest` → `QuestEntry` mapper
+  (`GuildScreen.toEntry`, deriving the display coin/XP from `QuestDifficulty`) feeds the
+  same packet shape, so there is no multiplayer-protocol risk from this change.
+- **Storage model bridge.** Legacy stored quests per-GUILD (a shared AVAILABLE pool,
+  rank-gated) while F2 `QuestSavedData` is per-UUID. The re-seat keys a guild's OFFERED
+  pool under the guildId (a UUID) with giver `GUILD:<guildId>`; accepting moves an offer
+  into the player's ACTIVE list. New `QuestSavedData` guild helpers: `guildOffers`,
+  `availableGuildQuests`, `guildOffer`, `offerGuildQuest`, `removeGuildOffer`,
+  `clearExpiredGuildOffers`, `activeGuildQuests`.
+- **One caller-helper, no open-coded duplication.** `GuildQuests` (new) encapsulates
+  generate→offer / accept / turn-in(reward flow) / escort-arrival, shared by the packet
+  path and the `/guild` command path (per the cross-system-caller-helper convention).
+- **One sanctioned engine touch.** `QuestEvents.notify` now defers completion for GUILD
+  ("turn-in") givers: guild objectives still ADVANCE on events, but are only COMPLETED +
+  REWARDED at the guild turn-in (where the party multiplier / purse-aware coins / rank-up
+  live). DIVINE quests are unchanged (still auto-complete on `notify`). This generalises
+  the engine exactly as F2b-1's `evaluate` did, and preserves the legacy "return to the
+  guild to claim your reward" model.
+
+### Tie-In Audit
+
+1. **Upstream feeders.** Generation: `QuestGenerator.generateForGuild` (rewritten to emit
+   F2 quests, flavour tables preserved) → the guild pool, driven by `GuildWorkerBehavior`
+   (periodic refresh) and `GuildActionPacket` JOIN. Progress feeders: `QuestEventHooks`
+   (player kills, F2b-1) + `PartyQuestTracker` (party-member NPC kills bridged to the
+   leader) → `QuestEvents.notify`; the poll kinds (gather/deliver/explore) + escort are
+   satisfied at turn-in.
+2. **Downstream callers.** Every consumer of the removed `PlayerGuildData` quest API was
+   re-pointed: `GuildScreen.sendOpenPacket`, `GuildActionPacket` (join/accept/turn-in),
+   `GuildWorkerBehavior`, `GuildCommands` (status/accept/complete/list), `PartyQuestTracker`,
+   `PartyConversationGoal`. `QuestProgressEvents` (legacy player-HUNT detector) deleted —
+   replaced by `QuestEventHooks`. Grep confirms **zero** residual callers of `addQuest /
+   getQuestById / getAvailableQuestsForGuild / getActiveQuestsForPlayer /
+   getAllQuestsForGuild / removeExpiredQuests / generateQuestsForGuild` (single-line +
+   qualifier-split multi-line).
+3. **Sibling systems.** The adventurer NPC-group system (`Adventurers/*`, the
+   `Adventurer*Goal`s) keeps the legacy `Quest` untouched — it is a separate store
+   (`AdventurerSavedData`/`AdventurerQuestTracker`) and never used the player
+   `PlayerGuildData` quest list. The religious DIVINE quests are unaffected by the GUILD
+   turn-in rule. The economy (`CoinHelper.playerReceive`), party (`PlayerParty`), and
+   reputation (`ReputationEvents`) tie-ins are preserved in `GuildQuests.turnIn` /
+   `GuildCommands.completeQuests`.
+4. **Exhaustive switches.** No enum gained a value. The `GuildQuests.kindLabel` /
+   `completionFraction` / `giveSpecialReward` switches use a `default` arm (objective
+   `type()` STRING dispatch, F2 `QuestDifficulty`); the `PartyConversationGoal` role
+   switch keeps all six roles. Grep-clean.
+
+### Simplification Sweep
+
+- **Legacy `Quest` is now referenced only by the adventurer package** (the `Adventurer*Goal`s
+  + `Adventurers/*`). Confirmed by import grep; the `Commands` package no longer imports it
+  (the adventurer-group debug commands consume `AdventurerGroup.getActiveQuest()` via type
+  inference). `GuildCommands`'s stale `import …Adventurer.Quest` removed.
+- **Orphans deleted in the same change:** `QuestProgressEvents` (whole file),
+  `GuildWorkerBehavior.giveQuestBook` (never called; read removed API),
+  `GuildRank.canAcceptQuest` (last caller removed; it referenced the legacy
+  `Quest.QuestDifficulty`), and the four `GuildCommands` quest helpers
+  (`isQuestComplete`/`playerHasItems`/`isNearTargetVillage`/`consumeQuestItems`, now
+  subsumed by `Objective` poll-checks + `GuildQuests` consume).
+- **One generation path, one turn-in path.** `QuestGenerator.generateForGuild` is the sole
+  guild generator; `GuildQuests.turnIn` is the sole reward flow (the GUI packet and the
+  `/guild complete` command both call it; the command adds only its reputation + special
+  reward extras).
+- **New classes:** `GuildQuests`. **Touched:** `QuestSavedData` (guild helpers),
+  `QuestEvents` (turn-in-giver deferral), `QuestContext` (`escortArrived`), `QuestEventHooks`
+  (doc), `Quest`Generator (rewrite), `PlayerGuildData` (quests removed), `GuildScreen`,
+  `GuildActionPacket`, `GuildWorkerBehavior`, `GuildCommands`, `PartyQuestTracker`,
+  `PartyConversationGoal`, `GuildRank`. **Deleted:** `QuestProgressEvents`.
+
+### Deviations from prompt
+
+- **Escort source is the guild turn-in / a periodic village-presence scan, not an NPC
+  escortee.** Legacy guild escort was a return-to-the-guild no-op auto-complete (no
+  escortee entity exists for guild quests). The F2 `Escort` (EVENT/`ESCORT_ARRIVED`) is
+  satisfied when the player stands in the destination village (= the guild's own village):
+  `GuildWorkerBehavior` fires `ESCORT_ARRIVED` on the periodic tick, and `GuildQuests.turnIn`
+  resolves it inline (self-healing, race-free) so turning in at the guild always completes
+  it — faithfully reproducing the legacy "escort completes when you return" behaviour.
+- **Guild objective semantics follow F2b-1, which tightens two legacy looseness points:**
+  GATHER now actually checks the inventory at turn-in (legacy never tracked gather progress,
+  so legacy GATHER was effectively un-completable), and DELIVER checks in-village + holding
+  (legacy auto-completed DELIVER/EXPLORE/ESCORT at turn-in regardless). Player experience is
+  the same or better; no behaviour was lost.
+- **Rank-up uses the corrected post-add XP** (`GuildMember.currentRank()` after `addXp`) —
+  the legacy GUI turn-in double-counted the increment in its rank check (`fromXp(m.xp()+finalXp)`
+  after `addXp` already stored it). The command path was already correct; both now agree.
+- **`PartyQuestTracker` now uses the correct entity-type id** (`BuiltInRegistries.ENTITY_TYPE
+  .getKey(...)`, matching `QuestEventHooks`) — the legacy line read `…key().registry()`
+  (the registry name, not the mob id), so party-attributed HUNT never actually matched. The
+  party XP multiplier moved to the turn-in flow (where the reward is granted).
+- **`/quest guild` debug quests now defer to `/quest turnin`** (they carry the GUILD giver,
+  so the new turn-in rule applies) instead of auto-completing on the final kill. Consistent
+  with the re-seated model; `/quest turnin` (`evaluate`) still completes them.
+
+### Out-of-scope but flagged
+
+- **Adventurer NPC-group quests stay legacy (scope A)** — `Adventurers/*` + the
+  `Adventurer*Goal`s keep `Guilds.Adventurer.Quest` deliberately.
+- **The guild OFFERED pool grows by 5 per refresh** (expired entries are pruned, as legacy)
+  — unbounded-pool pruning beyond expiry is a separate cleanup if it ever matters.
+- **`GuildWorkerBehavior.handlePlayerInteraction` / `openGuildScreen` are dead** (no callers;
+  registration happens via the JOIN packet) but were LEFT (they touch only kept membership
+  API, not quests) — flagged rather than deleted to keep this change quest-scoped.
+- **Later** — staged/grand guild quests; a unified quest journal UI.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net — `./gradlew compileJava`
+returns HTTP 403 resolving `net.neoforged:neoform-runtime:2.0.18` before javac runs, so no
+javac diagnostics are available). [Container had drifted to the R9c base on resume; fetched
++ `git reset --hard` to the F2b-1 remote tip restored all pushed work — no loss.] Static
+review in place of the build: the wire codecs + GUI are unchanged (diff-confirmed); the
+removed `PlayerGuildData` quest API has **zero** callers (single-line + qualifier-split
+grep); legacy `Quest` imports remain only in the adventurer package; all `new Quest(...)`
+sites match their arity (F2 11-arg vs legacy 9-arg); the one engine touch is a guarded
+GUILD-defer branch in `notify`. Two NeoForge watch-items for the user's compile:
+`ServerLevel.players()` (used by the escort scan) and the unchanged `@EventBusSubscriber`
+game-bus handlers (`PartyQuestTracker`).
+
+### Smoke test (user-runnable)
+
+1. **Join + see offers.** Right-click a guild-hall worker / open the guild GUI → Join →
+   the Quests tab lists rank-appropriate offers (one per difficulty tier).
+2. **Accept (rank gate).** As Bronze, accept an EASY quest from the GUI → moves to Active;
+   try `/guild accept <id-prefix>` of a HARD quest → "rank too low" message.
+3. **Hunt turn-in.** Accept a hunt → kill the target mobs → at the count an actionbar
+   prompt says "return to the guild"; click **Turn In** (or `/guild complete`) → coins +
+   XP land, "Quest complete!" (with party bonus shown if in a party).
+4. **Gather / Deliver / Explore.** Accept gather → collect the items → Turn In consumes
+   them and pays out. Deliver → stand in the target village holding the item → Turn In.
+   Explore → stand in the target biome → Turn In.
+5. **Escort.** Accept escort → it completes on turn-in at the guild (you are in the
+   destination village).
+6. **Rank-up regen.** Earn enough XP to rank up on a turn-in → "Rank up!" message and the
+   guild's offer pool regenerates (higher-tier quests become acceptable).
+7. **Party attribution.** With an NPC party, let a member land kills on your active hunt →
+   progress is credited to you; the party XP multiplier applies at turn-in.
+8. **Persistence + legacy adventurers.** Save+reload → membership, the guild pool, and
+   active quests persist. `/guild listgroups` / adventurer NPC groups still work (legacy
+   `Quest`, untouched).

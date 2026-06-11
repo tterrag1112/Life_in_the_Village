@@ -56,7 +56,6 @@ public class GuildWorkerBehavior extends Behavior<TownspersonMob> {
         timer = 0;
 
         VillageSavedData data = VillageSavedData.get(level);
-        PlayerGuildData guildData = PlayerGuildData.get(level);
 
         // Find guild for this village
         GuildData guild = entity.getAssignedVillageName()
@@ -65,63 +64,28 @@ public class GuildWorkerBehavior extends Behavior<TownspersonMob> {
                 .orElse(null);
         if (guild == null) return;
 
-        // Refresh quests if needed
+        // Refresh the guild's offer pool if due
         if (level.getGameTime() - guild.lastQuestRefresh()
                 >= QUEST_REFRESH_INTERVAL) {
-            refreshQuests(level, guild, data, guildData);
+            refreshQuests(level, guild, data);
         }
 
-        // Check active quests for completion/failure
-        checkQuestProgress(level, guild, guildData);
+        // F2b-2 — escort objective completion source: fire ESCORT_ARRIVED for any player
+        // standing in the destination village of one of their active escort quests.
+        GuildQuests.notifyEscortArrivals(level);
     }
 
     private void refreshQuests(ServerLevel level, GuildData guild,
-                               VillageSavedData data,
-                               PlayerGuildData guildData) {
-        // Remove expired quests
-        guildData.removeExpiredQuests(level.getGameTime());
-
-        // Generate new quests
+                               VillageSavedData data) {
         var village = data.getVillageByName(
                 entity.getAssignedVillageName().orElse("")).orElse(null);
         if (village == null) return;
 
-        List<Quest> newQuests = QuestGenerator.generateQuestsForGuild(
-                level, guild.guildId(), village, data, level.getGameTime());
-
-        newQuests.forEach(guildData::addQuest);
+        GuildQuests.refreshOffers(level, guild, village, data);
         data.updateGuild(guild.withRefresh(level.getGameTime()));
 
         org.slf4j.LoggerFactory.getLogger(GuildWorkerBehavior.class).debug(
-                "Guild refreshed " + newQuests.size() + " quests");
-    }
-
-    private void checkQuestProgress(ServerLevel level,
-                                    GuildData guild,
-                                    PlayerGuildData guildData) {
-        // Check exploration quests — did player visit the biome?
-        guildData.getAllQuestsForGuild(guild.guildId()).stream()
-                .filter(Quest::isActive)
-                .filter(q -> q.getType() == Quest.QuestType.EXPLORE)
-                .forEach(quest -> {
-                    UUID playerId = quest.getAssignedPlayerId();
-                    if (playerId == null) return;
-
-                    ServerPlayer player = level.getServer()
-                            .getPlayerList().getPlayer(playerId);
-                    if (player == null) return;
-
-                    // Check if player is in target biome
-                    Holder<Biome> biomeHolder = level.getBiome(player.blockPosition());
-                    String biomeName = biomeHolder.unwrapKey()
-                            .map(k -> k.registry().toString())
-                            .orElse("");
-
-                    if (biomeName.equals(quest.getTargetBiome())) {
-                        quest.setCurrentCount(1);
-                        quest.setTargetCount(1);
-                    }
-                });
+                "Guild refreshed its quest pool");
     }
 
     // Called from mobInteract
@@ -157,108 +121,6 @@ public class GuildWorkerBehavior extends Behavior<TownspersonMob> {
         }
 
 
-    }
-
-    private void giveQuestBook(ServerPlayer player, GuildData guild,
-                               PlayerGuildData guildData,
-                               ServerLevel level) {
-        GuildMember member = guildData.getMember(player.getUUID()).orElse(null);
-        if (member == null) return;
-
-        GuildRank rank = member.currentRank();
-        List<Quest> available = guildData.getAvailableQuestsForGuild(guild.guildId(), rank);
-        List<Quest> active    = guildData.getActiveQuestsForPlayer(player.getUUID());
-
-        // Build pages
-        List<Component> pages = new ArrayList<>();
-
-        // Cover page
-        pages.add(Component.literal(
-                "=== Adventurers Guild ===\n\n"
-                        + "Rank: " + rank.getDisplayName() + "\n"
-                        + "XP: " + member.xp() + "\n"
-                        + "To next rank: " + member.xpToNextRank() + " XP\n"
-                        + "Quests completed: " + member.completedQuestIds().size()));
-
-        // Active quests page
-        if (!active.isEmpty()) {
-            StringBuilder sb = new StringBuilder("=== Active Quests ===\n\n");
-            for (Quest q : active) {
-                sb.append(q.getTitle()).append("\n");
-                sb.append("Progress: ")
-                        .append((int)(q.getCompletionFraction() * 100))
-                        .append("%\n");
-                sb.append("Reward: ")
-                        .append(CurrencyValue.of(q.getCoinReward()))
-                        .append("\n\n");
-            }
-            pages.add(Component.literal(sb.toString()));
-        }
-
-        // Available quests pages
-        if (available.isEmpty()) {
-            pages.add(Component.literal(
-                    "=== Available Quests ===\n\nNo quests available "
-                            + "at your rank right now.\nCheck back later."));
-        } else {
-            for (int i = 0; i < available.size(); i += 3) {
-                StringBuilder sb = new StringBuilder("=== Available Quests ===\n\n");
-                for (int j = i; j < Math.min(i + 3, available.size()); j++) {
-                    Quest q = available.get(j);
-                    sb.append("[").append(q.getDifficulty().name()).append("] ");
-                    sb.append(q.getTitle()).append("\n");
-                    sb.append(q.getDescription()).append("\n");
-                    sb.append("Reward: ")
-                            .append(CurrencyValue.of(q.getCoinReward()))
-                            .append(" + ").append(q.getXpReward()).append(" XP\n");
-                    sb.append("ID: ")
-                            .append(q.getId().toString().substring(0, 8))
-                            .append("\n\n");
-                }
-                pages.add(Component.literal(sb.toString()));
-            }
-        }
-
-        // Instructions page
-        pages.add(Component.literal(
-                "=== How to Accept Quests ===\n\n"
-                        + "Use /guild accept <quest-id> to accept a quest.\n\n"
-                        + "Use /guild complete to turn in completed quests.\n\n"
-                        + "Use /guild status to check your rank and active quests."));
-
-        // Convert pages to the format DataComponents expects
-        List<Filterable<Component>> filterablePages = pages.stream()
-                .map(Filterable::passThrough)
-                .toList();
-
-        // Build the book ItemStack using DataComponents
-        ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
-        book.set(DataComponents.WRITTEN_BOOK_CONTENT, new WrittenBookContent(
-                Filterable.passThrough(entity.getNpcName()),  // title
-                entity.getNpcName(),                           // author
-                0,                                             // generation
-                filterablePages,
-                true                                           // resolved
-        ));
-
-        // Replace existing guild book or give new one
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
-            ItemStack stack = player.getInventory().getItem(i);
-            if (stack.is(Items.WRITTEN_BOOK)) {
-                WrittenBookContent existing = stack.get(DataComponents.WRITTEN_BOOK_CONTENT);
-                if (existing != null
-                        && existing.title().raw().equals("Guild Quest Board")) {
-                    player.getInventory().setItem(i, book);
-                    player.displayClientMessage(
-                            Component.literal("Your quest book has been updated."), true);
-                    return;
-                }
-            }
-        }
-
-        player.addItem(book);
-        player.displayClientMessage(
-                Component.literal("You received a quest book!"), true);
     }
 
     private void openGuildScreen(){

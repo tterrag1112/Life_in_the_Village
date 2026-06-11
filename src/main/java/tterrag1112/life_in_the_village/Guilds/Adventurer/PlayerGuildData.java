@@ -11,14 +11,14 @@ import java.util.stream.Collectors;
 
 public class PlayerGuildData extends SavedData {
 
+    // F2b-2 — quests re-seated onto the F2 QuestSavedData store; this data now holds only
+    // guild membership (rank / XP). The legacy "quests" save key (if present on an old
+    // world) is simply ignored on load.
     public static final Codec<PlayerGuildData> CODEC =
             RecordCodecBuilder.create(instance -> instance.group(
                     GuildMember.CODEC.listOf()
                             .optionalFieldOf("members", new ArrayList<>())
-                            .forGetter(d -> d.members),
-                    Quest.CODEC.listOf()
-                            .optionalFieldOf("quests", new ArrayList<>())
-                            .forGetter(d -> d.quests)
+                            .forGetter(d -> d.members)
             ).apply(instance, PlayerGuildData::fromCodec));
 
     public static final SavedDataType<PlayerGuildData> TYPE =
@@ -29,15 +29,12 @@ public class PlayerGuildData extends SavedData {
             );
 
     private final List<GuildMember> members = new ArrayList<>();
-    private final List<Quest> quests = new ArrayList<>();
 
     public PlayerGuildData() {}
 
-    public static PlayerGuildData fromCodec(
-            List<GuildMember> members, List<Quest> quests) {
+    public static PlayerGuildData fromCodec(List<GuildMember> members) {
         PlayerGuildData data = new PlayerGuildData();
         data.members.addAll(members);
-        data.quests.addAll(quests);
         return data;
     }
 
@@ -74,44 +71,7 @@ public class PlayerGuildData extends SavedData {
         });
     }
 
-    // --- Quests ---
-    public void addQuest(Quest quest) {
-        quests.add(quest);
-        setDirty();
-    }
-
-    public Optional<Quest> getQuestById(UUID id) {
-        return quests.stream().filter(q -> q.getId().equals(id))
-                .findFirst();
-    }
-
-    public List<Quest> getAvailableQuestsForGuild(UUID guildId,
-                                                  GuildRank rank) {
-        return quests.stream()
-                .filter(q -> q.getGuildId().equals(guildId)
-                        && q.getStatus() == Quest.QuestStatus.AVAILABLE
-                        && rank.canAcceptQuest(q.getDifficulty()))
-                .collect(Collectors.toList());
-    }
-
-    public List<Quest> getActiveQuestsForPlayer(UUID playerId) {
-        return quests.stream()
-                .filter(q -> playerId.equals(q.getAssignedPlayerId())
-                        && q.isActive())
-                .collect(Collectors.toList());
-    }
-
-    public void removeExpiredQuests(long currentTick) {
-        quests.removeIf(q -> q.isExpired(currentTick));
-        setDirty();
-    }
-
-    public List<Quest> getAllQuestsForGuild(UUID guildId) {
-        return quests.stream()
-                .filter(q -> q.getGuildId().equals(guildId))
-                .collect(Collectors.toList());
-    }
-   public void setRank(UUID playerId, GuildRank rank) {
+    public void setRank(UUID playerId, GuildRank rank) {
         for (int i = 0; i < members.size(); i++) {
             if (members.get(i).playerId().equals(playerId)) {
                 members.set(i, members.get(i).withRank(rank));

@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.saveddata.SavedDataType;
+import tterrag1112.life_in_the_village.Guilds.Adventurer.GuildRank;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -132,6 +133,57 @@ public class QuestSavedData extends SavedData {
         for (int i = 0; i < list.size(); i++) {
             if (list.get(i).questId().equals(quest.questId())) { list.set(i, quest); setDirty(); return; }
         }
+    }
+
+    // ── Guild quest pool (F2b-2) ─────────────────────────────────────────────
+    // The legacy guild model is a per-GUILD shared AVAILABLE pool that members accept
+    // from (rank-gated); F2 storage is per-UUID. The re-seat reuses that per-UUID map,
+    // keying a guild's OFFERED pool under the guildId (a UUID) with giver GUILD:<guildId>.
+    // Accepting moves an offer out of the pool into the player's ACTIVE list.
+
+    /** A guild's OFFERED pool (every offer currently posted for {@code guildId}). */
+    public List<Quest> guildOffers(UUID guildId) {
+        List<Quest> out = new ArrayList<>();
+        for (Quest q : questsOf(guildId)) if (q.status() == QuestStatus.OFFERED) out.add(q);
+        return out;
+    }
+
+    /** The guild's OFFERED pool filtered to what {@code rank} may accept (rankRequirement). */
+    public List<Quest> availableGuildQuests(UUID guildId, GuildRank rank) {
+        List<Quest> out = new ArrayList<>();
+        for (Quest q : guildOffers(guildId)) {
+            if (q.rankRequirement().map(req -> rank.ordinal() >= req.ordinal()).orElse(true)) out.add(q);
+        }
+        return out;
+    }
+
+    /** A specific OFFERED quest in {@code guildId}'s pool. */
+    public Optional<Quest> guildOffer(UUID guildId, UUID questId) {
+        for (Quest q : guildOffers(guildId)) if (q.questId().equals(questId)) return Optional.of(q);
+        return Optional.empty();
+    }
+
+    /** Posts a quest to a guild's OFFERED pool. */
+    public void offerGuildQuest(UUID guildId, Quest quest) { add(guildId, quest); }
+
+    /** Removes an offer from a guild's pool (e.g. on accept). */
+    public void removeGuildOffer(UUID guildId, UUID questId) {
+        List<Quest> list = questsByPlayer.get(guildId);
+        if (list != null && list.removeIf(q -> q.questId().equals(questId))) setDirty();
+    }
+
+    /** Drops OFFERED pool entries whose deadline has passed. */
+    public void clearExpiredGuildOffers(UUID guildId, long now) {
+        List<Quest> list = questsByPlayer.get(guildId);
+        if (list != null && list.removeIf(q -> q.status() == QuestStatus.OFFERED
+                && q.deadlineTick() > 0 && now > q.deadlineTick())) setDirty();
+    }
+
+    /** A player's ACTIVE quests issued by a guild (giver type GUILD). */
+    public List<Quest> activeGuildQuests(UUID playerId) {
+        List<Quest> out = new ArrayList<>();
+        for (Quest q : active(playerId)) if (q.giver().type() == QuestGiver.Type.GUILD) out.add(q);
+        return out;
     }
 
     public void markDirty() { setDirty(); }

@@ -314,54 +314,49 @@ public class PartyConversationGoal extends Goal {
     // ── Quest milestone ───────────────────────────────────────────────────────
 
     private String checkQuestMilestone(PlayerParty party) {
-        UUID questId = party.getActiveQuestId();
-        if (questId == null) return null;
         if (!(entity.level() instanceof ServerLevel level)) return null;
-
-        PlayerGuildData
-                guildData = PlayerGuildData.get(level);
 
         ServerPlayer player = getPlayer(level, party);
         if (player == null) return null;
 
-        return guildData.getActiveQuestsForPlayer(player.getUUID())
-                .stream()
-                .findFirst()
-                .map(q -> {
-                    if (q.getTargetCount() <= 0) return null;
-                    float prog = (float) q.getCurrentCount()
-                            / q.getTargetCount();
+        // F2b-2 — read the leader's first active guild quest from the F2 store and report
+        // progress on its Hunt objective (the only kind with running count progress).
+        var quest = tterrag1112.life_in_the_village.Quests.QuestSavedData.get(level)
+                .activeGuildQuests(player.getUUID()).stream().findFirst().orElse(null);
+        if (quest == null) return null;
 
-                    // Comment at 50% and near completion
-                    if (prog >= 0.5f && prog < 0.55f) {
-                        return switch (getRole()) {
-                            case SWORDSMAN, SPEARMAN -> "Halfway there. Keep the pace.";
-                            case ARCHER    -> "Good progress. "
-                                    + q.getCurrentCount() + " down.";
-                            case MAGE      -> "The contract proceeds "
-                                    + "satisfactorily.";
-                            case HEALER    -> "We're doing well. "
-                                    + "Stay healthy.";
-                            case SCOUT     -> "Halfway. Watch for patrols.";
-                        };
-                    }
+        tterrag1112.life_in_the_village.Quests.Objective.Hunt hunt = quest.objectives().stream()
+                .filter(o -> o instanceof tterrag1112.life_in_the_village.Quests.Objective.Hunt)
+                .map(o -> (tterrag1112.life_in_the_village.Quests.Objective.Hunt) o)
+                .findFirst().orElse(null);
+        if (hunt == null || hunt.target() <= 0) return null;
 
-                    if (prog >= 0.9f && prog < 0.95f) {
-                        return switch (getRole()) {
-                            case SWORDSMAN, SPEARMAN -> "Almost done. One last push.";
-                            case ARCHER    -> "Nearly there — "
-                                    + (q.getTargetCount()
-                                    - q.getCurrentCount()) + " left.";
-                            case MAGE      -> "The contract nears completion.";
-                            case HEALER    -> "Almost finished. "
-                                    + "Then we rest.";
-                            case SCOUT     -> "Close. Don't get sloppy now.";
-                        };
-                    }
+        int current = hunt.current();
+        int target = hunt.target();
+        float prog = (float) current / target;
 
-                    return null;
-                })
-                .orElse(null);
+        // Comment at 50% and near completion
+        if (prog >= 0.5f && prog < 0.55f) {
+            return switch (getRole()) {
+                case SWORDSMAN, SPEARMAN -> "Halfway there. Keep the pace.";
+                case ARCHER    -> "Good progress. " + current + " down.";
+                case MAGE      -> "The contract proceeds satisfactorily.";
+                case HEALER    -> "We're doing well. Stay healthy.";
+                case SCOUT     -> "Halfway. Watch for patrols.";
+            };
+        }
+
+        if (prog >= 0.9f && prog < 0.95f) {
+            return switch (getRole()) {
+                case SWORDSMAN, SPEARMAN -> "Almost done. One last push.";
+                case ARCHER    -> "Nearly there — " + (target - current) + " left.";
+                case MAGE      -> "The contract nears completion.";
+                case HEALER    -> "Almost finished. Then we rest.";
+                case SCOUT     -> "Close. Don't get sloppy now.";
+            };
+        }
+
+        return null;
     }
 
     // ── Time of day ───────────────────────────────────────────────────────────

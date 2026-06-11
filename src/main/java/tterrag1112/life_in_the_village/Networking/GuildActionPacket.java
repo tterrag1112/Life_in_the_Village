@@ -13,7 +13,10 @@ import tterrag1112.life_in_the_village.Gui.GuildScreen;
 import tterrag1112.life_in_the_village.Guilds.Adventurer.*;
 import tterrag1112.life_in_the_village.Guilds.PlayerPartySavedData;
 import tterrag1112.life_in_the_village.Life_in_the_village;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
+import tterrag1112.life_in_the_village.Quests.Quest;
+import tterrag1112.life_in_the_village.Quests.QuestGiver;
+import tterrag1112.life_in_the_village.Quests.QuestSavedData;
+import tterrag1112.life_in_the_village.Quests.QuestStatus;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 
 import java.util.UUID;
@@ -103,16 +106,11 @@ public record GuildActionPacket(
         guildData.registerPlayer(player.getUUID(),
                 player.getName().getString(), guildId);
 
+        // Post the guild's opening offer set (F2 quest pool).
         vdata.getGuildById(guildId).ifPresent(guild ->
                 vdata.getVillageById(guild.villageId())
-                        .ifPresent(village -> {
-                            var newQuests = QuestGenerator
-                                    .generateQuestsForGuild(
-                                            level, guildId, village,
-                                            vdata, level.getGameTime());
-                            newQuests.forEach(guildData::addQuest);
-                            guildData.setDirty();
-                        }));
+                        .ifPresent(village ->
+                                GuildQuests.refreshOffers(level, guild, village, vdata)));
 
         player.displayClientMessage(
                 net.minecraft.network.chat.Component.literal(
@@ -131,44 +129,31 @@ public record GuildActionPacket(
                                      ServerLevel level) {
         if (questId == null) return;
 
-        if (!guildData.getActiveQuestsForPlayer(
-                player.getUUID()).isEmpty()) {
-            player.displayClientMessage(
-                    net.minecraft.network.chat.Component.literal(
-                            "Complete your current quest first."),
-                    true);
-            return;
-        }
-
-        guildData.getQuestById(questId).ifPresent(q -> {
-            if (q.getStatus() != Quest.QuestStatus.AVAILABLE) return;
-
-            GuildMember member = guildData.getMember(player.getUUID())
-                    .orElse(null);
-            if (member == null) return;
-
-            if (!member.currentRank().canAcceptQuest(q.getDifficulty())) {
-                player.displayClientMessage(
-                        net.minecraft.network.chat.Component.literal(
-                                "Your rank is too low for this quest."),
-                        true);
-                return;
-            }
-
-            q.setStatus(Quest.QuestStatus.ACTIVE);
-            q.setAssignedPlayer(player.getUUID());
-            q.setAcceptedTick(level.getGameTime());
-            guildData.setDirty();
-
-            player.displayClientMessage(
-                    net.minecraft.network.chat.Component.literal(
-                            "Quest accepted: " + q.getTitle()),
-                    false);
-        });
-
         tterrag1112.life_in_the_village.Networking.VillageSavedData
                 vdata = tterrag1112.life_in_the_village.Networking
                 .VillageSavedData.get(level);
+        GuildMember member = guildData.getMember(player.getUUID()).orElse(null);
+
+        // Look up the title before accepting (accept removes the offer from the pool).
+        String title = QuestSavedData.get(level).guildOffer(guildId, questId)
+                .map(Quest::title).orElse("");
+
+        // The GUI path allows a single active guild quest at a time (legacy parity).
+        GuildQuests.AcceptResult result =
+                GuildQuests.accept(level, player, guildId, questId, member, 1);
+        switch (result) {
+            case TOO_MANY_ACTIVE -> player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal(
+                            "Complete your current quest first."), true);
+            case RANK_TOO_LOW -> player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal(
+                            "Your rank is too low for this quest."), true);
+            case OK -> player.displayClientMessage(
+                    net.minecraft.network.chat.Component.literal(
+                            "Quest accepted: " + title), false);
+            default -> { /* NOT_FOUND / NOT_AVAILABLE — silently re-render (legacy parity) */ }
+        }
+
         GuildScreen.sendOpenPacket(player, guildId, level,
                 guildData, vdata, PlayerPartySavedData.get(level));
     }
@@ -185,94 +170,33 @@ public record GuildActionPacket(
                 vdata = tterrag1112.life_in_the_village.Networking
                 .VillageSavedData.get(level);
 
-        guildData.getQuestById(questId).ifPresent(q -> {
-            if (!player.getUUID().equals(q.getAssignedPlayerId())) return;
-            if (!q.isActive()) return;
+        Quest quest = QuestSavedData.get(level).quest(player.getUUID(), questId).orElse(null);
+        if (quest != null && quest.giver().type() == QuestGiver.Type.GUILD
+                && quest.status() == QuestStatus.ACTIVE) {
 
-            boolean complete =
-                    q.getCurrentCount() >= q.getTargetCount()
-                            || q.getType() == Quest.QuestType.DELIVER
-                            || q.getType() == Quest.QuestType.EXPLORE
-                            || q.getType() == Quest.QuestType.ESCORT;
-
-            if (!complete) {
+            GuildQuests.TurnInResult result = GuildQuests.turnIn(level, player, quest, vdata);
+            if (!result.completed()) {
                 player.displayClientMessage(
                         net.minecraft.network.chat.Component.literal(
-                                "Quest not yet complete: "
-                                        + q.getCurrentCount()
-                                        + "/" + q.getTargetCount()),
-                        true);
-                return;
-            }
-
-            long coinReward = q.getCoinReward();
-            int  xpReward   = q.getXpReward();
-
-            PlayerPartySavedData partyData =
-                    PlayerPartySavedData.get(level);
-            float mult = partyData
-                    .getPartyForPlayer(player.getUUID())
-                    .map(party -> party.getPartyXpMultiplier())
-                    .orElse(1.0f);
-            int finalXp = (int)(xpReward * mult);
-
-            // Give coins
-            CoinHelper.playerReceive(player, CurrencyValue.of(coinReward));
-
-            // Give XP and check rank up
-            guildData.addXp(player.getUUID(), finalXp);
-            guildData.getMember(player.getUUID()).ifPresent(m -> {
-                GuildRank newRank = GuildRank.fromXp(m.xp() + finalXp);
-                if (newRank.ordinal() > m.currentRank().ordinal()) {
-                    guildData.setRank(player.getUUID(), newRank);
+                                "Quest not yet complete."), true);
+            } else {
+                if (result.rankedUp()) {
                     player.displayClientMessage(
                             net.minecraft.network.chat.Component.literal(
                                             "Rank up! You are now "
-                                                    + newRank.getDisplayName() + "!")
-                                    .withStyle(
-                                            net.minecraft.ChatFormatting.GOLD),
-                            false);
-
-                    vdata.getGuildById(q.getGuildId()).ifPresent(guild ->
-                            vdata.getVillageById(guild.villageId())
-                                    .ifPresent(village -> {
-                                        QuestGenerator
-                                                .generateQuestsForGuild(
-                                                        level, q.getGuildId(),
-                                                        village, vdata,
-                                                        level.getGameTime())
-                                                .forEach(guildData::addQuest);
-                                        guildData.setDirty();
-                                    }));
+                                                    + result.newRank().getDisplayName() + "!")
+                                    .withStyle(net.minecraft.ChatFormatting.GOLD), false);
                 }
-            });
-
-            // Complete quest
-            q.setStatus(Quest.QuestStatus.COMPLETED);
-            guildData.getMember(player.getUUID()).ifPresent(m ->
-                    guildData.updateMember(m.withCompletedQuest(q.getId())));
-            guildData.setDirty();
-
-            // Notify party
-            partyData.getPartyForPlayer(player.getUUID())
-                    .ifPresent(party -> {
-                        party.completeQuest();
-                        partyData.setDirty();
-                    });
-
-            player.displayClientMessage(
-                    net.minecraft.network.chat.Component.literal(
-                            "Quest complete! +"
-                                    + tterrag1112.life_in_the_village.Village
-                                    .Economy.Currency.CurrencyValue
-                                    .of(coinReward)
-                                    + " and +" + finalXp + " XP"
-                                    + (mult > 1.0f
-                                    ? " (party bonus x"
-                                    + String.format("%.2f", mult) + ")"
-                                    : "")),
-                    false);
-        });
+                player.displayClientMessage(
+                        net.minecraft.network.chat.Component.literal(
+                                "Quest complete! +" + CurrencyValue.of(result.coins())
+                                        + " and +" + result.xpGranted() + " XP"
+                                        + (result.multiplier() > 1.0f
+                                        ? " (party bonus x"
+                                        + String.format("%.2f", result.multiplier()) + ")"
+                                        : "")), false);
+            }
+        }
 
         GuildScreen.sendOpenPacket(player, guildId, level,
                 guildData, vdata, PlayerPartySavedData.get(level));
