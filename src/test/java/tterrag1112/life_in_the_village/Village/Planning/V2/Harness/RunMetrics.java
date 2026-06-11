@@ -54,9 +54,11 @@ public record RunMetrics(
      * rate dropping or a plaza area collapsing to 0 is the regression
      * direction.
      *
-     * @param workshopSeating one of {@code ROW} / {@code LOTS} /
-     *        {@code NONE} — the craft-row outcome (ROW seated, LOTS
-     *        fell back to per-craft lots, NONE no craft set in roster).
+     * @param workshopSeating one of {@code QUARTER} / {@code ROW} /
+     *        {@code LOTS} / {@code NONE} — the workshop seating outcome
+     *        (QUARTER the CITY-tier 4c-c quarter, ROW the shared craft
+     *        row, LOTS the per-craft fallback, NONE no craft set in
+     *        roster).
      */
     public record DistrictMetrics(
             boolean civicReserved,

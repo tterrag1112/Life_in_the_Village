@@ -154,18 +154,30 @@ public final class Table {
         return s;
     }
 
-    /** Workshop seating column: ROW / LOTS / NONE, with a "!" when it
-     *  regressed from a baseline ROW to a fallback. */
+    /** Workshop seating column: QUARTER / ROW / LOTS / NONE, with a "!"
+     *  when it regressed DOWN the seating ladder from the baseline (4c-c:
+     *  rank-based — QUARTER > ROW > LOTS > NONE — so a tier-gated upgrade
+     *  ROW→QUARTER never flags, and a QUARTER→ROW/LOTS downgrade does). */
     private static String seatCol(RunMetrics.DistrictMetrics d,
                                   RunMetrics.DistrictMetrics bd) {
         if (d.workshopCraftsRequested() == 0) return "-";
         String s = d.workshopSeating();
-        if (bd != null && "ROW".equals(bd.workshopSeating())
-                && !"ROW".equals(s)
+        if (bd != null && seatRank(s) < seatRank(bd.workshopSeating())
                 && d.workshopCraftsRequested() >= bd.workshopCraftsRequested()) {
             s += "!";
         }
         return s;
+    }
+
+    /** 4c-c — the workshop seating ladder (higher is better). Shared rule
+     *  with {@code Baseline.diffDistrict}'s gate. */
+    static int seatRank(String seating) {
+        return switch (seating) {
+            case "QUARTER" -> 3;
+            case "ROW" -> 2;
+            case "LOTS" -> 1;
+            default -> 0;
+        };
     }
 
     private static String topDrop(Map<DropReason, Integer> dh) {

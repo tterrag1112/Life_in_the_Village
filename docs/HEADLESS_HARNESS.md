@@ -76,8 +76,9 @@ The four right-hand columns are the district-era additions:
 `civA` / `mktA` are the civic / market plaza paved areas (block², `-`
 when not reserved, `0!` when a baseline area collapsed to 0);
 `resvP` is `residentialPrecinctsReserved/housesRequested` (`!` flags a
-reserve-rate drop); `wkSeat` is the workshop seating `ROW`/`LOTS`/
-`NONE` (`!` flags a ROW→fallback regression).
+reserve-rate drop); `wkSeat` is the workshop seating `QUARTER`/`ROW`/
+`LOTS`/`NONE` (`!` flags a downgrade on the seating ladder
+QUARTER > ROW > LOTS > NONE; upgrades never flag).
 
 When `check` fails, each failure prints with the run label, metric,
 baseline, current, and signed delta.
@@ -152,9 +153,10 @@ placement loop — see the district note on group 8):
      `…HousesPlaced` / `…HousesDropped` — the residential reserve
      outcome. Precincts dropping at equal-or-higher house demand is a
      **reserve-rate regression**, gated.
-   - `workshopSeating` — `ROW` (one shared craft-row block) / `LOTS`
-     (per-craft fallback) / `NONE` (no craft set). A baseline `ROW`
-     regressing to a fallback, or fewer crafts placed, is gated.
+   - `workshopSeating` — `QUARTER` (the CITY-tier 4c-c quarter) /
+     `ROW` (one shared craft-row block) / `LOTS` (per-craft fallback) /
+     `NONE` (no craft set). A downgrade on that ladder, or fewer
+     crafts placed, is gated; upgrades (ROW → QUARTER) are not.
 
 ## Threshold policy — asymmetric, four metrics gate
 
@@ -170,7 +172,7 @@ bad direction):
 | `district.civicArea` / `marketArea` | baseline > 0 collapses to 0 (paves-0)       |
 | `district.marketReserved`           | selected + was reserved, now not (NO_REGION)|
 | `district.residentialPrecinctsReserved` | drops at equal-or-higher house demand   |
-| `district.workshopSeating`          | baseline ROW regresses to LOTS/NONE         |
+| `district.workshopSeating`          | downgrade (QUARTER > ROW > LOTS > NONE)     |
 | `district.workshopCraftsPlaced`     | drops at equal-or-higher craft demand       |
 
 The district gates are conditioned on the baseline having had the

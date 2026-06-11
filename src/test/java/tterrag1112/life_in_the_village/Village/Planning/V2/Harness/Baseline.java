@@ -415,9 +415,11 @@ public final class Baseline {
      *   <li><b>Residential reserve-rate</b> — houses still requested,
      *       precincts reserved dropped below baseline (districts that
      *       used to reserve now don't).</li>
-     *   <li><b>Workshop row→fallback</b> — craft set still requested,
-     *       seating regressed ROW → LOTS/NONE, or crafts placed dropped
-     *       below baseline.</li>
+     *   <li><b>Workshop seating downgrade</b> — craft set still
+     *       requested, seating moved DOWN the ladder (4c-c rank:
+     *       QUARTER > ROW > LOTS > NONE), or crafts placed dropped
+     *       below baseline. Upgrades (e.g. ROW → QUARTER at CITY)
+     *       never fail.</li>
      * </ul>
      *
      * Each gate is conditioned on the baseline having had the thing in
@@ -453,13 +455,16 @@ public final class Baseline {
                     c.residentialPrecinctsReserved()
                             - b.residentialPrecinctsReserved()));
         }
-        // Workshop row→fallback regression — craft set still requested.
+        // Workshop seating-downgrade regression — craft set still requested.
         if (b.workshopCraftsRequested() > 0
                 && c.workshopCraftsRequested() >= b.workshopCraftsRequested()) {
-            if ("ROW".equals(b.workshopSeating())
-                    && !"ROW".equals(c.workshopSeating())) {
-                failures.add(new Failure(key, "district.workshopSeating(ROW->fallback)",
-                        Double.NaN, Double.NaN, Double.NaN));
+            if (Table.seatRank(c.workshopSeating())
+                    < Table.seatRank(b.workshopSeating())) {
+                failures.add(new Failure(key, "district.workshopSeating(downgrade)",
+                        Table.seatRank(b.workshopSeating()),
+                        Table.seatRank(c.workshopSeating()),
+                        Table.seatRank(c.workshopSeating())
+                                - Table.seatRank(b.workshopSeating())));
             }
             if (c.workshopCraftsPlaced() < b.workshopCraftsPlaced()) {
                 failures.add(new Failure(key, "district.workshopCraftsPlaced",
