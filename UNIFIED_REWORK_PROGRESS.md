@@ -9573,3 +9573,132 @@ JRE-only JDK, no javac). Static review: full-diff re-read; lexer-accurate brace/
 bracket balance pass on PhasedPlanner.java; no stale references to the two deleted symbols
 (grep); `DroppedBuilding`/`DropReason` imports pre-existing; growth-loop variable scoping
 traced (halfTangent/gate/seed per-iteration, halfRadial/depth invariant).
+
+### 2026-06-11 — 4c-c r3: subtree-aware BSP guide (workshop quarter cellability fix)
+
+Executes the r2 flagged item, with explicit go-ahead: `quarterGuide`'s cut clamp becomes
+SUBTREE-AWARE. CITYTEST5 proved the r2 diagnosis — 66x96 → 66x146 (~9,600 blocks for
+~3,000 of demand) ALL failed "demand BSP couldn't cell every member", both split blocks
+failed every growth step too, because the clamp (`lo = base + a.get(0) + half`) only
+guaranteed each side its single BIGGEST demand: a subtree carrying several demands starved
+regardless of total area, so growth could never converge. (Confirmed working and not
+regressed: chain runs pre-residential; lots fallback placed 10/10 with 0 drops; failed
+seats rolled back cleanly.)
+
+**What shipped:**
+
+*The packing bound.* Each side of every cut must now SHELF-PACK its whole partition:
+NFDH (next-fit decreasing height) over the side's demand squares, both shelf
+orientations, demands held descending throughout (NFDH's precondition; the node lists
+already were). Soundness: NFDH is CONSTRUCTIVE — a true result comes with explicit
+non-overlapping positions (the ones `emitShelfLeaves` lays out), so the guide never
+accepts a rect the downstream assignment can fail on; false negatives only cost a growth
+step. The exact clamp: binary search (`minFeasibleLen`) for each partition's minimal
+feasible along-length — valid because the bound is monotone in length (wider shelves only
+merge NFDH rows; longer stacks only add room; OR of two monotone orientations is
+monotone). Cut lands proportionally as before, clamped to the new feasible interval.
+
+*Multi-demand shelf leaves.* A node with no feasible cut finishes as a LEAF holding its
+whole demand set: one EXACT d×d sub-leaf per demand, NFDH rows from the rect corner
+(stack centred), shelves along the longer axis when that orientation fits. Exact-size
+cells keep the greedy descending assignment safe (a bigger demand can never steal a
+smaller demand's cell — leaves dominate demands elementwise, Hall's condition holds).
+Depth 0 is the exception: the central street is mandatory (`arrangeQuarter` requires it),
+so a cut-infeasible root reports `failed[0]` and the planner's dry-run+grow loop governs
+exactly as in r2 — now as a true safety net.
+
+*Invariant.* Every node the recursion enters shelf-packs its demand set: the root is
+checked explicitly (failure → grow loop); both sides of every accepted cut are checked
+before cutting; therefore inner shelf leaves always succeed (their failure arm is
+defensive only).
+
+*Paper verification on the CITYTEST5 demand set* (3 STOCKPILE + 2 BLACKSMITH + 2 BAKERY +
+1 CARPENTRY at NBT 20x16 → cellSide 22; 2 STABLE at 9x9 → 11; yard 13; interior 94x64 of
+the first 66x96 candidate), simulated with the exact integer arithmetic:
+
+```
+root 94x64  [22×8,13,11,11]  street cut X@46 (clamp [46,48])
+├─ 44x64  [22,22,22,22,13]   alley cut Z@37 (clamp [37,40])
+│  ├─ 44x35 [22,22,13]  shelf leaf: (0,0,22,22)(22,0,44,22)(0,22,13,35)
+│  └─ 44x25 [22,22]     shelf leaf: (0,40,22,62)(22,40,44,62)
+└─ 46x64  [22,22,22,22,11,11] shelf leaf (no alley fits 33+33+4 in 64):
+   (48,4,70,26)(70,4,92,26)(48,26,70,48)(70,26,92,48)(48,48,59,59)(59,48,70,59)
+```
+
+11/11 leaves, zero overlaps, greedy assignment verified — converges on the FIRST
+candidate, zero growth steps. The old guide's fatal node (44x33 holding [22,22,13], where
+two 22s cannot stack in 33) is never created: the cut that would produce it fails the
+per-side bound.
+
+**Surface area:** 0 new files; 2 edits (`ResidentialArranger.java` — `quarterGuide`
+rewrite + 4 private helpers `shelfFits` / `shelfFitsOriented` / `minFeasibleLen` /
+`emitShelfLeaves`; `PhasedPlanner.java` — `seatQuarterBlock` doc comment only, the old
+clamp description was now wrong). Survey doc `.claude/planning/
+10-DISTRICT-FEASIBILITY-SURVEY.md` shipped mount-side (per-district feasibility table +
+the general district contract + OUTER AGRICULTURE needs).
+
+**Tie-In Audit:**
+- *Upstream feeders:* demand construction unchanged (`reserveWorkshopQuarter`: cellSide =
+  NBT max-dim + HOUSE_GAP; yard via WORKSHOP_YARD_SIDE; descending sort in
+  `arrangeQuarter`). The descending order is now a documented precondition (NFDH).
+- *Downstream callers:* `arrangeQuarter` is `quarterGuide`'s only caller;
+  `seatQuarterBlock` is `arrangeQuarter`'s only caller (grep-verified) — null contract
+  unchanged, so the grow/split/row/lots ladder is untouched. The assignment loop, 
+  `pullToCorridor`, and `commitQuarter` consume leaves/streets/alleys exactly as before;
+  multi-demand shelf leaves emit 1 sub-leaf per demand so the
+  `leaves.size() == members + yard` check holds.
+- *Sibling systems:* `gridGuide` and the shared `bsp` core are BYTE-IDENTICAL to main
+  (function bodies extracted from both refs and diffed clean) — GRID_BLOCKS' RNG draw
+  order and output are provably unchanged. No other `BspGuide` implementors exist.
+- *Exhaustive switches / codecs / per-tick:* none touched; all new code runs at plan time
+  on ≤ a dozen demands (binary search ≈ 7 NFDH evaluations per cut).
+
+**Simplification Sweep:** net-neutral — the rewrite replaces the per-demand dim check +
+biggest-demand clamp with the four helpers; no orphans created (all four have callers in
+the guide); the r2-flagged thrice-duplicated civicReach/dirs computation remains flagged,
+unchanged.
+
+**Deviations from prompt:**
+- The prompt's suggested bound (area sum + short-dim + shelf bound) is DELIVERED AS the
+  NFDH check alone: NFDH constructively subsumes the area and short-dimension conditions
+  (any demand exceeding a dim or the area fails the packing), so separate weaker checks
+  would be dead code.
+- Sub-leaves are EXACT demand-size (not slack-expanded): slack-expansion would let large
+  demands steal small cells and break the Hall argument; the stack is centred on the
+  cross axis instead for a balanced look.
+- Single-member yard-less block (a 2-craft split's B side) still cannot arrange (root
+  never cuts → no central street → null) — pre-existing, unreachable at CITY craft
+  counts, flagged below.
+
+**Out-of-scope but flagged:**
+- A cut-infeasible-at-root rect now grows even when shelf-packing the whole rect would
+  fit; a "street-less compact quarter" variant could accept it. Not taken: the central
+  street is the quarter's design heart.
+- Multi-demand shelf leaves get no internal alleys — back-row buildings front the nearest
+  corridor across a neighbour's cell visually. Acceptable v1; an aesthetics pass could
+  prefer cuts over shelves harder (e.g. relax area balance to find cuttable partitions).
+- The single-member yard-less block arm (above).
+- `seatQuarterBlock`'s `rootFloor`/area sizing is now purely a first-guess heuristic;
+  could be simplified toward the survey's "sizing as heuristic only" contract when the
+  general district contract lands.
+
+**Smoke test plan (user-executable):**
+1. Superflat CITY (CITYTEST5 conditions) → `workshop quarter: 10/10 crafts placed
+   (1 block(s))` on the FIRST or SECOND candidate (at most one `growing the along-band
+   length` INFO; r2 needed none of four candidates to pass). In-world: one rectangular
+   quarter — central street (VILLAGE_PATH) + entry stitch, at least one alley (FOOTPATH),
+   work-yard well, storage (STOCKPILE) toward back/alley cells.
+2. Same log: no `workshop lots (row fallback)` line (the quarter seated, so the ladder
+   never fell through); buildings inside shelf-packed groups sit side-by-side with ~2
+   block gaps, no overlaps (`OverlapAuditor` silent).
+3. TOWN spawn → workshop row/lots lines unchanged from r2 (the row path doesn't touch
+   `quarterGuide`).
+4. HAMLET spawn → `workshop lots (row fallback): N/N crafts placed, 0 dropped` unchanged.
+5. GRID_BLOCKS regression: `/litv district residential grid_blocks` on the SAME SEED as a
+   pre-r3 world → identical street/alley/house layout (gridGuide byte-identical).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net).
+Static review: full-diff re-read; brace/paren balance pass on ResidentialArranger.java;
+new-guide integer arithmetic simulated externally against the CITYTEST5 demand set
+(11/11 leaves, no overlaps, assignment verified); gridGuide + bsp core byte-diffed
+against main.
