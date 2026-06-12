@@ -338,6 +338,12 @@ public final class PhasedPlanner {
         NetworkSpec routed = BlockServingRouter.route(
                 state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids(),
                 districtConnectionNodes(state), noBranchBlocks);
+        // City-morphology step 1 — FORMAL-zone geometry rewrite (straighten
+        // + district-approach right angles) at the PLANNING layer, before
+        // ANY consumer reads the routed geometry: skeleton segments,
+        // vegetation clearing, building orientation, the nav-graph commit
+        // and the realizer all see the same centerlines.
+        routed = RoadFormality.applyGeometry(routed, fmap);
         state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
                 ctx.anchor(), SPINE_WIDTH);
         LOGGER.info("routed network: {} nodes, {} edges → {} road segments",

@@ -81,6 +81,25 @@ public class OrganicRoadPlacer {
                                         RoadShape.RoadTier tier,
                                         BuildingFootprint footprint,
                                         RandomSource random) {
+        return place(level, centerline, material, tier, footprint, random, false);
+    }
+
+    /**
+     * City-morphology step 1 — {@code crisp} entry point. When {@code crisp}
+     * is true (FORMAL village streets in the dense core) the organic look is
+     * suppressed: EDGE-zone blocks always place (no position-noise dropout —
+     * the road boundary is a clean line) and every zone samples the CORE
+     * material list (no accent speckle in the inner/edge rings). All
+     * existing callers reach the overload above ({@code crisp = false}) and
+     * are byte-identical.
+     */
+    public static PlacementResult place(ServerLevel level,
+                                        List<BlockPos> centerline,
+                                        PathMaterial material,
+                                        RoadShape.RoadTier tier,
+                                        BuildingFootprint footprint,
+                                        RandomSource random,
+                                        boolean crisp) {
         if (centerline.isEmpty()) {
             return new PlacementResult(List.of(), List.of(), 0);
         }
@@ -116,14 +135,17 @@ public class OrganicRoadPlacer {
                 if (zone == RoadShape.Zone.OUTSIDE) continue;
 
                 // Edge zone: organic noise determines if block is placed
-                if (zone == RoadShape.Zone.EDGE) {
+                // (crisp formal streets skip the dropout — clean boundary).
+                if (zone == RoadShape.Zone.EDGE && !crisp) {
                     if (!RoadShape.shouldPlaceEdge(wx, wz, absDist, tier)) {
                         continue;
                     }
                 }
 
                 // Determine block material based on zone
-                BlockState state = pickBlock(zone, material, wx, wz, random);
+                BlockState state = crisp
+                        ? material.sampleCore(random)
+                        : pickBlock(zone, material, wx, wz, random);
 
                 // Place at terrain surface
                 int surfY = level.getHeight(

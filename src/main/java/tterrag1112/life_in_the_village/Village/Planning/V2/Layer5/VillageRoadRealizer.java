@@ -10,12 +10,15 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.InternalPath;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadFormality;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Roads.Realization.UnifiedRoadPlacer;
 import tterrag1112.life_in_the_village.World.SeasonTracker;
 
+import javax.annotation.Nullable;
 import java.util.List;
 
 /**
@@ -44,8 +47,28 @@ public final class VillageRoadRealizer {
     /** Fresh-at-spawn roads have full maintenance (no decay overlay). */
     private static final int FRESH_MAINTENANCE = 100;
 
-    /** Realizes every routed village edge; returns the total blocks placed. */
+    /** Legacy entry — no formality context: every edge paints ORGANIC
+     *  (byte-identical to the pre-formality pipeline). */
     public static int realize(ServerLevel level, RoadNetwork roads, Culture culture) {
+        return realize(level, roads, culture, null);
+    }
+
+    /**
+     * Realizes every routed village edge; returns the total blocks placed.
+     *
+     * <p>City-morphology step 1 — {@code fmap} carries the terrain-warped
+     * {@code distToAnchor} field; each edge's {@link RoadFormality} is
+     * re-sampled at its ENDPOINT midpoint (the same invariant sample the
+     * planning-side geometry rewrite used, so the two passes always agree).
+     * FORMAL edges paint CRISP (no edge-noise dropout, no accent speckle)
+     * with the stone-brick TOWN_ROAD base ({@link PathMaterial#stoneBrick}
+     * — the most formal surface the existing tier machinery has; the per-
+     * culture formal palette is deferred to the culture work, per design
+     * doc §4). MIXED and ORGANIC edges keep the culture palette material
+     * and the organic placer behavior, byte-identical to today.
+     */
+    public static int realize(ServerLevel level, RoadNetwork roads, Culture culture,
+                              @Nullable V2FeatureMap fmap) {
         if (roads == null || roads.skeleton() == null) return 0;
 
         String cultureId = culture != null ? culture.id() : "default";
@@ -56,27 +79,32 @@ public final class VillageRoadRealizer {
 
         int total = 0;
         int edges = 0;
+        int formalEdges = 0;
         for (NetworkEdge edge : roads.skeleton().edges()) {
             if (!(edge.primitive() instanceof RoadPrimitive.SmoothedPath sp)) continue;
             List<BlockPos> centerline = sp.waypoints();
             if (centerline == null || centerline.size() < 2) continue;
 
             RoadShape.RoadTier tier = sp.tier();
+            boolean formal =
+                    RoadFormality.atMid(fmap, centerline) == RoadFormality.FORMAL;
+            if (formal) formalEdges++;
             // Maintenance decay is skipped on fresh roads (FRESH_MAINTENANCE);
             // the seasonal overlay still applies (winter snow on stone tiers).
             PathMaterial material = PathMaterial.applyOverlays(
-                    base, FRESH_MAINTENANCE, tier, season);
+                    formal ? PathMaterial.stoneBrick() : base,
+                    FRESH_MAINTENANCE, tier, season);
 
             long seed = worldSeed ^ edgeSeed(centerline);
             List<BlockPos> placed = UnifiedRoadPlacer.place(level, centerline,
                     material, tier, seed, /*greatRoad*/ false, /*character*/ null,
-                    cultureId, palette);
+                    cultureId, palette, formal);
             total += placed.size();
             edges++;
         }
 
-        LOGGER.info("VillageRoadRealizer: realized {} village edge(s) -> {} blocks"
-                + " (culture={})", edges, total, cultureId);
+        LOGGER.info("VillageRoadRealizer: realized {} village edge(s) ({} formal)"
+                + " -> {} blocks (culture={})", edges, formalEdges, total, cultureId);
         return total;
     }
 
@@ -91,6 +119,20 @@ public final class VillageRoadRealizer {
      */
     public static int realizePaths(ServerLevel level, List<InternalPath> paths,
                                    Culture culture) {
+        return realizePaths(level, paths, culture, null);
+    }
+
+    /**
+     * City-morphology step 1 — formality-aware internal paths. District
+     * streets/lanes are ALREADY straight (BSP corridors, variant lanes), so
+     * no geometry changes here and there is no jitter to double-suppress;
+     * the FORMAL treatment is surface-only: crisp paint + the stone-brick
+     * base, sampled per path exactly like {@link #realize} samples per edge,
+     * so a quarter street inside the formal core reads as one fabric with
+     * the router streets it meets.
+     */
+    public static int realizePaths(ServerLevel level, List<InternalPath> paths,
+                                   Culture culture, @Nullable V2FeatureMap fmap) {
         if (paths == null || paths.isEmpty()) return 0;
 
         String cultureId = culture != null ? culture.id() : "default";
@@ -105,12 +147,15 @@ public final class VillageRoadRealizer {
             List<BlockPos> centerline = path.waypoints();
             if (centerline == null || centerline.size() < 2) continue;
             RoadShape.RoadTier tier = path.tier();
+            boolean formal =
+                    RoadFormality.atMid(fmap, centerline) == RoadFormality.FORMAL;
             PathMaterial material = PathMaterial.applyOverlays(
-                    base, FRESH_MAINTENANCE, tier, season);
+                    formal ? PathMaterial.stoneBrick() : base,
+                    FRESH_MAINTENANCE, tier, season);
             long seed = worldSeed ^ edgeSeed(centerline);
             List<BlockPos> placed = UnifiedRoadPlacer.place(level, centerline,
                     material, tier, seed, /*greatRoad*/ false, /*character*/ null,
-                    cultureId, palette);
+                    cultureId, palette, formal);
             total += placed.size();
             painted++;
         }

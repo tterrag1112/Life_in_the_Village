@@ -566,11 +566,14 @@ public final class V2VillageSpawnerAdapter {
         // great-road pipeline (UnifiedRoadPlacer + culture palette + tiering),
         // replacing the retired RoadPainter (the checkerboard renderer).
         try {
-            VillageRoadRealizer.realize(level, roads, culture);
+            // City-morphology step 1 — fmap carries the distToAnchor field
+            // the realizer samples per-edge formality from (FORMAL core =
+            // crisp stone; MIXED/ORGANIC = byte-identical to today).
+            VillageRoadRealizer.realize(level, roads, culture, fmap);
             // Layout Rework — residential variant internal lanes (street-row
             // footpath now; courtyard entry path later) render through the SAME
             // unified placer, one tier down (FOOTPATH).
-            VillageRoadRealizer.realizePaths(level, phased.internalLanes(), culture);
+            VillageRoadRealizer.realizePaths(level, phased.internalLanes(), culture, fmap);
         } catch (Exception e) {
             LOGGER.warn("V2: VillageRoadRealizer failed: {}", e.getMessage());
         }

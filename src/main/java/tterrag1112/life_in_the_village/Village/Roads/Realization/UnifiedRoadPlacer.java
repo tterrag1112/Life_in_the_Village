@@ -120,6 +120,29 @@ public final class UnifiedRoadPlacer {
                                        @Nullable GreatRoadCharacter character,
                                        @Nullable String culture,
                                        @Nullable CulturePalette palette) {
+        return place(level, centerline, material, tier, seed, greatRoad,
+                character, culture, palette, false);
+    }
+
+    /**
+     * City-morphology step 1 — {@code crisp} entry point for FORMAL village
+     * streets (dense-core formality): forwards to
+     * {@link OrganicRoadPlacer#place} with the crisp flag, which suppresses
+     * the edge-noise dropout and the accent speckle. The great-road graph
+     * path ({@link EdgeRealizer} via the {@link RoadEdge} overload) and all
+     * other callers reach the delegating overload above with
+     * {@code crisp = false} and are byte-identical.
+     */
+    public static List<BlockPos> place(ServerLevel level,
+                                       List<BlockPos> centerline,
+                                       PathMaterial material,
+                                       RoadShape.RoadTier tier,
+                                       long seed,
+                                       boolean greatRoad,
+                                       @Nullable GreatRoadCharacter character,
+                                       @Nullable String culture,
+                                       @Nullable CulturePalette palette,
+                                       boolean crisp) {
         if (centerline.size() < 2) return List.of();
         CulturePalette effectivePalette = palette != null ? palette : PaletteRegistry.oldRealm();
 
@@ -162,7 +185,7 @@ public final class UnifiedRoadPlacer {
         // ── Step 3: paint surface using dense path ─────────────────────────────
         RandomSource rng = RandomSource.create(seed);
         OrganicRoadPlacer.PlacementResult result =
-                OrganicRoadPlacer.place(level, dense, material, tier, null, rng);
+                OrganicRoadPlacer.place(level, dense, material, tier, null, rng, crisp);
         List<BlockPos> placed = new ArrayList<>(result.placedBlocks());
 
         // ── Step 4: place bridges ───────────────────────────────────────────────
