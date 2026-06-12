@@ -2199,14 +2199,26 @@ public final class PhasedPlanner {
             // The first district always seats; overflow districts only when the
             // remainder is worth a district (avoids a runt of 1–2).
             if (reserved > 0 && remaining < MIN_DISTRICT_HOUSES) break;
+            // Direction-ordered seating: precinct k prefers directions[k]
+            // (diagonals first); seatDistrict sweeps around it if blocked.
+            double startAngle = directions.get(k % directions.size());
+            // Step 2a — density-zone estimate at the PROSPECTIVE seat point
+            // (mid-band radius along the precinct's preferred direction; the
+            // variant must be chosen before seating because the seat dims
+            // depend on it, so the zone is sampled where the precinct is
+            // ABOUT to go, not where it lands — the band is thin, so the
+            // estimate tracks the seated block).
+            double midR = (bandInnerR + bandOuterR) / 2.0;
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
+                    .DensityZone zoneEstimate = state.density.zoneAt(
+                            anchor.getX() + (int) Math.round(Math.cos(startAngle) * midR),
+                            anchor.getZ() + (int) Math.round(Math.sin(startAngle) * midR));
             // Auto-selected (forced overrides); the street fallback below
             // handles directions too thin for the squarish variants.
             ResidentialVariant variant = forced
                     ? state.forcedResidentialVariant
-                    : chooseVariant(state, k, Math.min(share, remaining), prevVariant);
-            // Direction-ordered seating: precinct k prefers directions[k]
-            // (diagonals first); seatDistrict sweeps around it if blocked.
-            double startAngle = directions.get(k % directions.size());
+                    : chooseVariant(state, k, Math.min(share, remaining), prevVariant,
+                            zoneEstimate);
             int floor = (reserved == 0) ? 1 : MIN_DISTRICT_HOUSES;
             int wantStart = Math.min(share, remaining);
 
@@ -2229,9 +2241,9 @@ public final class PhasedPlanner {
             }
             if (gate == null) { noSpace = true; break; }  // no open space left
             reserved++;
-            LOGGER.info("residential precinct #{} dir={}° variant={} want={}",
-                    reserved, (int) Math.toDegrees(startAngle), placedVariant,
-                    seatedOut[0]);
+            LOGGER.info("residential precinct #{} dir={}° zone={} variant={} want={}",
+                    reserved, (int) Math.toDegrees(startAngle), zoneEstimate,
+                    placedVariant, seatedOut[0]);
             int placed = placeArrangedBlock(state, gate, seatedOut[0],
                     cellPitch, houseDepth, placedVariant, k);
             if (placed == 0) { noSpace = true; break; }   // guard infinite loop
@@ -3043,52 +3055,69 @@ public final class PhasedPlanner {
             ResidentialVariant.COURTYARD, ResidentialVariant.GREEN,
             ResidentialVariant.CLUSTER, ResidentialVariant.GRID_BLOCKS};
 
-    /** A1 stage 2 — TERRACE auto-pool weight by tier: the terrace is the
-     *  DENSEST variant, so it reads urban — modest presence at TOWN and
-     *  below, stronger at CITY. (Vs. 20–30 for the stage-1 variants.) */
-    private static int terraceWeight(State state) {
-        return state.ctx.tier() == tterrag1112.life_in_the_village.Village
-                .Planning.V2.Layer2.ViabilityTier.CITY ? 25 : 12;
+    /**
+     * Step 2a — zone-keyed auto-pool weights, order {COURTYARD, CLUSTER,
+     * GREEN, GRID_BLOCKS, TERRACE} (tuning baselines). The gradient reads
+     * outward: CORE is dominated by the dense urban shapes (TERRACE /
+     * GRID_BLOCKS), MIDTOWN by COURTYARD/CLUSTER with some GRID/TERRACE,
+     * OUTSKIRTS (and the rare RURAL-seated block) by GREEN + COURTYARD.
+     * Replaces the tier-keyed {@code terraceWeight} — the zone IS the
+     * urbanity signal now (a CITY's outskirts shouldn't read like its core).
+     */
+    private static int[] zoneVariantWeights(
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2
+                    .DensityProfile.DensityZone zone) {
+        return switch (zone) {
+            case CORE            -> new int[]{15, 10,  5, 35, 35};
+            case MIDTOWN         -> new int[]{30, 25, 10, 15, 20};
+            case OUTSKIRTS, RURAL -> new int[]{30, 20, 35, 10,  5};
+        };
     }
 
     /**
-     * A1 stage 1 — auto-selection: block size + seed → variant, MIXED across a
-     * village's blocks. Squarish-large blocks (≥6 houses) weight toward
-     * GREEN/GRID_BLOCKS (room for a communal green / internal street grid);
-     * squarish-small toward COURTYARD/CLUSTER; below 4 houses only
-     * COURTYARD/CLUSTER (a green or grid needs ≥4 to read). A1 stage 2 —
-     * TERRACE joins both ≥4 pools when the row_house pieces are authored
-     * (4–5 segments build one cap+interiors+cap run; ≥6 two facing rows),
-     * tier-weighted via {@link #terraceWeight}. Never repeats the
-     * previous block's variant back-to-back (re-roll, then forced-different),
-     * so consecutive precincts always mix. Deterministic per (village seed,
-     * block index).
+     * A1 stage 1 — auto-selection: density zone + block size + seed →
+     * variant, MIXED across a village's blocks. Step 2a — the density
+     * profile's zone at the prospective seat point is the primary weight key
+     * ({@link #zoneVariantWeights}); the size-feasibility constraints stay
+     * on top: below 4 houses only COURTYARD/CLUSTER (a green or grid needs
+     * ≥4 to read), at 4–5 the GREEN/GRID weights are halved (they want the
+     * larger canvas). A1 stage 2 — TERRACE joins the ≥4 pools when the
+     * row_house pieces are authored (4–5 segments build one
+     * cap+interiors+cap run; ≥6 two facing rows). Never repeats the
+     * previous block's variant back-to-back (re-roll, then
+     * forced-different), so consecutive precincts always mix. Deterministic
+     * per (village seed, block index).
      */
     private static ResidentialVariant chooseVariant(State state, int blockIndex,
                                                     int want,
-                                                    ResidentialVariant previous) {
+                                                    ResidentialVariant previous,
+                                                    tterrag1112.life_in_the_village
+                                                            .Village.Planning.V2.Layer2
+                                                            .DensityProfile.DensityZone
+                                                            zone) {
         java.util.Random rng = new java.util.Random(
                 state.ctx.seed() ^ (0x9E3779B97F4A7C15L * (blockIndex + 1)));
+        int[] zw = zoneVariantWeights(zone);
         java.util.List<ResidentialVariant> poolList = new ArrayList<>(5);
         java.util.List<Integer> weightList = new ArrayList<>(5);
-        if (want >= 6) {
-            java.util.Collections.addAll(poolList, ResidentialVariant.GREEN,
-                    ResidentialVariant.GRID_BLOCKS, ResidentialVariant.COURTYARD,
-                    ResidentialVariant.CLUSTER);
-            java.util.Collections.addAll(weightList, 30, 30, 20, 20);
-        } else if (want >= 4) {
+        if (want >= 4) {
+            // Size feasibility: GREEN/GRID prefer the larger canvas — halve
+            // them on 4–5-house blocks (floor 5 so no zone zeroes them out).
+            int big = want >= 6 ? 1 : 2;
             java.util.Collections.addAll(poolList, ResidentialVariant.COURTYARD,
                     ResidentialVariant.CLUSTER, ResidentialVariant.GREEN,
                     ResidentialVariant.GRID_BLOCKS);
-            java.util.Collections.addAll(weightList, 30, 30, 20, 20);
+            java.util.Collections.addAll(weightList, zw[0], zw[1],
+                    Math.max(5, zw[2] / big), Math.max(5, zw[3] / big));
+            if (state.terracePieces != null) {
+                poolList.add(ResidentialVariant.TERRACE);
+                weightList.add(zw[4]);
+            }
         } else {
             java.util.Collections.addAll(poolList, ResidentialVariant.COURTYARD,
                     ResidentialVariant.CLUSTER);
-            java.util.Collections.addAll(weightList, 50, 50);
-        }
-        if (want >= 4 && state.terracePieces != null) {
-            poolList.add(ResidentialVariant.TERRACE);
-            weightList.add(terraceWeight(state));
+            java.util.Collections.addAll(weightList,
+                    Math.max(5, zw[0]), Math.max(5, zw[1]));
         }
         ResidentialVariant[] pool = poolList.toArray(new ResidentialVariant[0]);
         int[] weights = new int[weightList.size()];
