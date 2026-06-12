@@ -9874,3 +9874,156 @@ JRE-only JDK, no javac). Static review: full-diff re-read; lexer-accurate brace/
 bracket balance on all 7 files; new-guide integer arithmetic simulated externally against
 the CITYTEST5 demand set (11/11 leaves, no overlaps, single-block first candidate);
 gridGuide + bsp core byte-diffed against main; great-road files zero-diff.
+
+---
+
+## 2026-06-11 — City-morphology step 2a: the density gradient as a real object (cowork/density-gradient-2a)
+
+**Scope (design doc `11-CITY-MORPHOLOGY-DESIGN.md` §1 ruling + §4; build-order #2, first half):**
+`DensityProfile` (CORE/MIDTOWN/OUTSKIRTS/RURAL from cost-distance AREA BUDGETS) replaces
+the step-1 formality proxy constants; CORE edges route Manhattan-style at the ROUTER;
+residential variant selection keys on the zone. Manifest zone affinity + bed-scan housing
+capacity (§5b, the second half of build-order #2) deliberately not in this branch.
+
+**What shipped (3 commits):**
+1. **`DensityProfile` (Layer2).** Placed beside `ZonePartition` — it reads the
+   `Cell.distToAnchor` field the partition computes, needs only Layer1 + `ViabilityTier`,
+   and its consumers span Layer4 (formality, router, variants) + Layer5 (realizer), so
+   Layer2 is the lowest common home. Zones are built by sorting reachable cells by
+   cost-distance and accumulating area until each tier budget fills — capacity bands, not
+   radii: circles on flat ground, bands along a valley. API: `zoneAt(x,z)/zoneAt(pos)`,
+   `zoneAtDistance(cost)`, `coreMaxCost()/midtownMaxCost()/outskirtsMaxCost()` for
+   thresholding consumers. Budgets (blocks², tuning baselines):
+   | tier | CORE | MIDTOWN | OUTSKIRTS | calibration |
+   |---|---|---|---|---|
+   | CITY | 7 900 | 23 600 | 23 300 | flat-ground bounds ≈ cost 50/100/132 — behavior-comparable with v1's <50/<100 |
+   | TOWN | 2 000 | 5 000 | 12 700 | small core ~r25, midtown ~r47 |
+   | HAMLET | 0 | 0 | 5 000 | starts at OUTSKIRTS (§1 truncation) |
+   | OUTPOST | 0 | 0 | 2 000 | assumption — prompt silent on OUTPOST; treated as smaller HAMLET |
+   | UNVIABLE | 0 | 0 | 0 | all RURAL |
+   `RoadFormality.FORMAL_MAX_COST`/`MIXED_MAX_COST` DELETED; formality = FORMAL←CORE,
+   MIXED←MIDTOWN, ORGANIC←OUTSKIRTS/RURAL. Unpopulated field (harness maps that skip
+   SiteAnalyzer) degenerates to all-RURAL = all-ORGANIC, the v1 fallback.
+2. **CORE rectilinear routing.** Root cause of the wander: `BlockServingRouter`'s A* is
+   8-connected with NO move-shape cost — a diagonal covers ~1.4 cells for the price of a
+   cardinal step, so optimal paths wander and RDP preserves the curve. Chosen lever (the
+   minimal one): POST-MST re-route of tree edges whose endpoint-midpoint is CORE (the
+   exact `RoadFormality.atMid` sample point, so Manhattan-routed and FORMAL-painted edges
+   coincide) with an (cell × incoming-direction) A*: `CORE_DIAGONAL_SURCHARGE=4` +
+   `CORE_TURN_PENALTY=8`, Manhattan-admissible heuristic. Post-MST means terminals,
+   candidate costs, tree topology, trunk detection and every non-CORE edge are
+   byte-identical by construction (the OUTSKIRTS zero-diff guarantee). `FOOTPRINT_PENALTY`
+   (2000) dominates both penalties → plaza-void/footprint skirting outranks axis
+   preference. RDP+axis-snap kept as cleanup (corners exceed the 1.5 epsilon and survive;
+   Manhattan approaches no-op the snap as near-aligned).
+3. **Zone-keyed `chooseVariant`.** Weights {COURTYARD, CLUSTER, GREEN, GRID, TERRACE}:
+   CORE {15,10,5,35,35}, MIDTOWN {30,25,10,15,20}, OUTSKIRTS/RURAL {30,20,35,10,5}.
+   Size feasibility preserved (<4 → COURTYARD/CLUSTER only; 4–5 halves GREEN/GRID,
+   floor 5), TERRACE still gated on authored row_house pieces, no-repeat + per-(seed,
+   block-index) determinism unchanged, `/litv district` forced channel still bypasses.
+   Zone sampled at the PROSPECTIVE seat point (mid-band radius along the precinct's
+   preferred direction) because the variant must be chosen before seating (seat dims
+   depend on it). Tier-keyed `terraceWeight` deleted (zone is the urbanity signal).
+   Precinct INFO line now logs the zone.
+
+**Plumbing:** profile is deterministic + cheap from `(fmap, tier)` (one sort), so it is
+built twice — `PhasedPlanner.State` ctor (router, applyGeometry, chooseVariant) and
+`V2VillageSpawnerAdapter` (realizer paint pass) — instead of changing `run()`/`Result`
+signatures; the two instances always agree. Harness + `/litv layout|place` untouched.
+
+**Tie-in audit:**
+- *v1 constants:* consumers were `RoadFormality` itself only (grep) — deleted with it.
+- *`RoadFormality.at/atMid/applyGeometry`:* callers = `VillageRoadRealizer` (realize +
+  realizePaths) and `PhasedPlanner` — all moved to the profile in scope. Legacy
+  null-profile realizer overloads keep ORGANIC (non-village callers unchanged; none exist
+  today beyond the adapter).
+- *`BlockServingRouter.route`:* callers = `PhasedPlanner` (passes `state.density`) and
+  `LayoutDumpSerializer`'s dump-only candidate-network comparison (5-arg chain → null
+  profile → byte-identical old path).
+- *Routed-geometry consumers* (skeleton, vegetation clearing, `orientToRoads`,
+  `InternalRoadCommitter` nav commit, realizer): all read the spec after the re-route +
+  rewrite, same as step 1 — endpoints never move, so gateway/node bindings unaffected.
+- *`chooseVariant`:* single auto-path caller updated; command override path
+  (`forcedResidentialVariant`) bypasses as before. `ResidentialVariant` gained no values —
+  no switch audits triggered.
+- *New enum `DensityProfile.DensityZone`:* exhaustive switches = `RoadFormality.at` and
+  `PhasedPlanner.zoneVariantWeights` (both new, both total). `areaBudgets` switch over
+  `ViabilityTier` is total (5/5 arms).
+- *Harness:* `DistrictReport` untouched; `RunMetrics`/baselines unaffected structurally,
+  but the variant MIX on existing seeds will shift (zone weights replace flat weights) —
+  re-baseline variant-mix expectations on next harness run.
+- *No codec/record/persisted fields added; no per-tick code* — logging is one INFO per
+  profile build (×2 per spawn), one per-village router INFO, and the existing formality
+  INFO with reworded prefix.
+
+**Simplification sweep:** net +1 class with three concrete consumers; deletions in the
+same change: 2 v1 constants, `terraceWeight`, and the old fmap-keyed formality signatures
+(no deprecated leftovers — signatures REPLACED, not overloaded). No new orphans; the
+8-arg route overload supersedes nothing (7-arg kept for the dump caller).
+
+**Vertical-light-lines finding (report-only, per prompt):** high-confidence producer:
+`ParkRenderer.stampPath` — every `GardenPlot` ALWAYS stamps a single-block-wide GRAVEL
+stripe along its longer axis through the plot centre ("the user-visible 'this is a park'
+cue"). The green-commons band fill registers MANY plots (coarse round + the 2c sliver
+round at MIN_PLAZA_HALF), and on superflat the COTTAGE_GREEN compose pass reads near-
+invisible on grass — so each fill block's only visible trace is a bare 1-wide light
+gravel line whose length tracks the plot's long axis (hence "varying length"). Square
+plots tie `width() >= length()` the same way, so the stripes come out parallel (the
+screenshot's aligned "vertical" lines). Working-as-coded, not an obvious bug — NOT fixed.
+Suggested follow-up (small): skip `stampPath` for plots below a minimum area or for the
+sliver-round green-commons style, or key the stripe on the new density profile (no bare
+path stripes in OUTSKIRTS fill blocks).
+
+**Deviations from prompt:**
+- OUTPOST budgets are an assumption (prompt specifies HAMLET/TOWN/CITY only): treated as
+  a smaller HAMLET (no CORE/MIDTOWN).
+- The router CORE predicate is the endpoint-midpoint (prompt allowed "both endpoints (or
+  midpoint)"): midpoint chosen so the Manhattan-routed set EXACTLY equals the
+  FORMAL-painted set (one classification, no seams between crisp paint and curved route).
+- The variant zone is an estimate at the prospective seat point, not the seated block
+  (chicken-and-egg: seat dims depend on the variant). On a superflat CITY the residential
+  band is a thin ring at fixed radii, so all precincts may legitimately sample the same
+  zone (typically MIDTOWN) — the per-ring mix difference shows where the band straddles a
+  boundary or terrain warps the field. Honest limitation, noted for the in-world test.
+- `chooseVariant`'s 4–5-house pool now derives from the zone table with halved GREEN/GRID
+  rather than the old flat {30,30,20,20} — same feasibility intent, different numbers.
+
+**Out-of-scope but flagged:**
+- Workshop-quarter / civic placement still band-keyed, not profile-keyed (prompt: 2a
+  excludes them). Natural follow-up: `reserveWorkshopDistricts` seat preference toward
+  MIDTOWN, and the civic precinct asserting CORE membership.
+- §5b manifest zone affinity + bed-scan housing capacity: the other half of build-order
+  #2, separate branch.
+- Long edges straddling the CORE boundary are still classified whole-edge by midpoint
+  (step-1 flag stands; edge splitting at zone crossings is the real fix).
+- The profile is built twice per spawn (planner + adapter). If a third consumer appears,
+  carry it on `PhasedPlanner.Result` instead.
+- `ParkRenderer.stampPath` follow-up above.
+
+**Smoke test plan (user-executable):**
+1. Superflat CITY: log shows `density profile (CITY): budgets 7900/23600/23300 blocks² →
+   cost bounds core<~51 midtown<~101 outskirts<~133` (flat ground ⇒ bounds near the v1
+   thresholds), then `core rectilinear routing: N of M tree edge(s) re-routed
+   Manhattan-style` (N ≥ 1) and `road formality (density profile): ...`.
+2. Core streets between districts: STRAIGHT axis-aligned runs with right-angle (Manhattan)
+   junctions — no long diagonals, no preserved curves; still skirting the civic/market
+   plazas (no street crosses a square).
+3. Variant mix by ring: precinct INFO lines now read `zone=...`; CORE-zone precincts (if
+   the band reaches inside the core boundary) pick TERRACE/GRID_BLOCKS heavily; OUTSKIRTS
+   precincts favor GREEN/COURTYARD. On flat ground expect most precincts MIDTOWN — the
+   zone prints make the sampling verifiable even when uniform.
+4. OUTSKIRTS + gateway-spur roads: byte-identical to a step-1 spawn on the same seed
+   (organic look, culture palette); great roads / inter-village connectors unchanged.
+5. TOWN: log shows the small-core bounds (~25/~47/~79 flat); a few formal+rectilinear
+   edges at most. HAMLET: `cost bounds core<0 midtown<0` (zone truncation visible — no
+   CORE/MIDTOWN), all roads organic, all-COURTYARD/CLUSTER/GREEN-leaning variants.
+6. Quarter/civic regression: workshop quarter cut tree + alleys identical (untouched
+   paths); `/litv district residential grid_blocks` still forces GRID_BLOCKS.
+7. Plaza skirting: trunk + core streets still route around the civic square void exactly
+   as before (FOOTPRINT_PENALTY dominates the new penalties).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net;
+JRE-only sandbox, no javac). Static review: full-diff re-read of all 6 touched files;
+grep-verified zero stale references to the deleted constants/`terraceWeight`/fmap-keyed
+formality signatures; scope-collision check caught and fixed an adapter-local `profile`
+name clash (renamed `densityProfile`); exhaustive-switch + caller audits above.
