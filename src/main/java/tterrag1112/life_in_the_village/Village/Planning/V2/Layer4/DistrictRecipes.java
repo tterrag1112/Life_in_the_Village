@@ -57,6 +57,11 @@ public final class DistrictRecipes {
     //
     //  CIVIC            — the plaza ring members (old RING_MEMBERS):
     //                     TOWN_HALL / CHAPEL / INN, one each, every tier.
+    //                     At CITY the recipe also admits HOUSE (cap 2) —
+    //                     TOWNHOUSES fronting the plaza ring, the first
+    //                     mixed-use entry (§2). They come OUT of the
+    //                     residential allocation (total roster HOUSE count
+    //                     unchanged); TOWN and below admit none.
     //  MARKET           — the single central market hall (cap 1; the old
     //                     placeOne MARKET cap-1 drop rule).
     //  WORKSHOP_QUARTER — the craft set (old CRAFT_SET), uncapped: every
@@ -93,7 +98,8 @@ public final class DistrictRecipes {
                 new Member(BuildingType.HOUSE, 1, UNCAPPED)));
         d.put(DistrictType.GREEN_COMMONS, List.of());
         DEFAULTS = Map.copyOf(d);
-        CITY_EXTRAS = Map.of();
+        CITY_EXTRAS = Map.of(DistrictType.CIVIC, List.of(
+                new Member(BuildingType.HOUSE, 1, 2)));
     }
 
     /** Per-(district, tier) member-TYPE sets, precomputed so hot callers

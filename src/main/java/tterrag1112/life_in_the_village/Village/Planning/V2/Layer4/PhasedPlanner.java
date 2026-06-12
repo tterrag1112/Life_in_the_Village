@@ -280,6 +280,14 @@ public final class PhasedPlanner {
                 // arranger (in reserveResidentialDistricts, at the batch-3 hook
                 // below) when districts exist — skip the emergent batch-5 pass
                 // so they aren't double-placed.
+                // Step 3 first mixed use — the civic ring already consumed
+                // this many roster HOUSE entries; skip them here so even the
+                // emergent batch-5 path (no residential districts seated)
+                // can't re-place them (total HOUSE count unchanged).
+                if (type == BuildingType.HOUSE && state.civicHouseSkip > 0) {
+                    state.civicHouseSkip--;
+                    continue;
+                }
                 if (type == BuildingType.HOUSE && !state.residentialGates.isEmpty()) {
                     continue;
                 }
@@ -301,6 +309,11 @@ public final class PhasedPlanner {
             // it. Both fence the rural nucleus (placed next) off, so farms go
             // beyond residential; HOUSE (batch 5) then fills the districts.
             if (batch == 3) {
+                // Step 3 first mixed use — townhouses join the plaza ring
+                // BEFORE the precinct union (their footprints widen it) and
+                // BEFORE the residential reserve (which sees the reduced
+                // house remainder — the take comes OUT of that allocation).
+                placeCivicRingHouses(state, selection);
                 addCivicPrecinct(state);
                 // 4c-c fix-up round 2 — on CITY the ENTIRE workshop chain
                 // (quarter -> two-block split -> craft row -> per-craft
@@ -684,6 +697,7 @@ public final class PhasedPlanner {
         // district's ring fills, the scorer's best admissible cell moves to
         // the next district (capacity ≈ CAP/district, total ≥ houseCount).
         final boolean houseGated = type == BuildingType.HOUSE
+                && !state.placingCivicHouse
                 && !state.residentialGates.isEmpty();
 
         Best best = null;
@@ -770,7 +784,23 @@ public final class PhasedPlanner {
                 }
                 // No corridor check — there are no roads at placement.
 
-                ScoreBreakdown score = scorePosition(pos, type, profile, state);
+                // Step 3 first mixed use — a civic ring HOUSE replaces the
+                // generic score with proximity to the square centre: the
+                // nearest admissible cell to the (reserved) void wins, so the
+                // townhouse hugs the plaza edge the way the CIVIC nucleus
+                // pull does for the other ring members (HOUSE has no CIVIC
+                // affinity; without this it would drift to the disc's outer
+                // band, behind the civic buildings).
+                ScoreBreakdown score;
+                if (squareCentre != null && type == BuildingType.HOUSE) {
+                    double hx = pos.getX() - squareCentre.getX();
+                    double hz = pos.getZ() - squareCentre.getZ();
+                    double d = Math.sqrt(hx * hx + hz * hz);
+                    score = new ScoreBreakdown(
+                            Math.max(0.01, 1.0 - d / Math.max(1, ringRadius)), 0, 0);
+                } else {
+                    score = scorePosition(pos, type, profile, state);
+                }
                 if (score.total() <= 0) {
                     rejScore++;
                     continue;
@@ -1265,7 +1295,9 @@ public final class PhasedPlanner {
             int workshopCraftsRequested,
             WorkshopSeating workshopSeating,
             int workshopCraftsPlaced,
-            int workshopCraftsDropped) {
+            int workshopCraftsDropped,
+            int civicHousesPlanned,
+            int civicHousesPlaced) {
 
         /** How the craft set seated: as the CITY-tier QUARTER (4c-c — a
          *  demand-guided BSP block with a central street + work-yard), as a
@@ -1277,7 +1309,7 @@ public final class PhasedPlanner {
         /** Empty report — UNVIABLE aborts and pre-district callers. */
         public static DistrictReport empty() {
             return new DistrictReport(false, 0, false, false, 0,
-                    0, 0, 0, 0, false, 0, WorkshopSeating.NONE, 0, 0);
+                    0, 0, 0, 0, false, 0, WorkshopSeating.NONE, 0, 0, 0, 0);
         }
     }
 
@@ -1286,7 +1318,7 @@ public final class PhasedPlanner {
      * outcome counters into; {@link #run} freezes it into the immutable
      * {@link DistrictReport} at emit. Separate from {@link DistrictReport}
      * so the reserve methods can fill fields incrementally without
-     * rebuilding a 14-arg record each step. Zero behaviour impact: the
+     * rebuilding a 16-arg record each step. Zero behaviour impact: the
      * fields are written, never read by placement.
      */
     static final class DistrictAccum {
@@ -1304,6 +1336,8 @@ public final class PhasedPlanner {
         DistrictReport.WorkshopSeating workshopSeating = DistrictReport.WorkshopSeating.NONE;
         int workshopCraftsPlaced;
         int workshopCraftsDropped;
+        int civicHousesPlanned;
+        int civicHousesPlaced;
 
         DistrictReport freeze() {
             return new DistrictReport(civicReserved, civicArea,
@@ -1311,7 +1345,8 @@ public final class PhasedPlanner {
                     residentialHousesRequested, residentialPrecinctsReserved,
                     residentialHousesPlaced, residentialHousesDropped,
                     residentialBandActive, workshopCraftsRequested,
-                    workshopSeating, workshopCraftsPlaced, workshopCraftsDropped);
+                    workshopSeating, workshopCraftsPlaced, workshopCraftsDropped,
+                    civicHousesPlanned, civicHousesPlaced);
         }
     }
 
@@ -1721,8 +1756,14 @@ public final class PhasedPlanner {
      *  zone gate. Membership is the CIVIC district's recipe table
      *  ({@link DistrictRecipes}) — TOWN_HALL / CHAPEL / INN today. */
     private static boolean isCivicRingType(State state, BuildingType type) {
-        return DistrictRecipes.memberTypes(DistrictRecipes.DistrictType.CIVIC,
-                state.ctx.tier()).contains(type);
+        if (!DistrictRecipes.memberTypes(DistrictRecipes.DistrictType.CIVIC,
+                state.ctx.tier()).contains(type)) {
+            return false;
+        }
+        // Step 3 first mixed use — HOUSE is a CIVIC member (CITY) only as the
+        // explicit ring take driven by placeCivicRingHouses; bulk batch-5
+        // HOUSE keeps its normal residential-gate / zone-gate placement.
+        return type != BuildingType.HOUSE || state.placingCivicHouse;
     }
 
     /** Stage 4 redesign — gap (blocks) reserved along the plaza perimeter
@@ -1815,11 +1856,85 @@ public final class PhasedPlanner {
         List<BuildingType> ring = new ArrayList<>();
         for (DistrictRecipes.Member m : DistrictRecipes.members(
                 DistrictRecipes.DistrictType.CIVIC, state.ctx.tier())) {
-            int n = Math.min(m.cap(), counts.getOrDefault(m.type(), 0));
+            // Step 3 first mixed use — the HOUSE row sizes from the guarded
+            // take (civicHouseTarget), not the raw roster count, so the
+            // plaza perimeter grows by exactly the townhouses it will seat.
+            int n = m.type() == BuildingType.HOUSE
+                    ? civicHouseTarget(state, selection)
+                    : Math.min(m.cap(), counts.getOrDefault(m.type(), 0));
             for (int i = 0; i < n; i++) ring.add(m.type());
         }
         if (ring.isEmpty()) ring.add(BuildingType.TOWN_HALL);
         return ring;
+    }
+
+    /** Step 3 first mixed use — how many roster HOUSEs the civic plaza ring
+     *  takes: the CIVIC recipe's HOUSE cap (2 at CITY; 0 where HOUSE isn't a
+     *  CIVIC member — TOWN and below). Guarded so the take never strands a
+     *  runt residential pass: residential keeps at least MIN_DISTRICT_HOUSES
+     *  whenever it gets houses at all (a 4-house roster yields 1 townhouse +
+     *  3 residential, never 2+2). The forced /litv district channel takes
+     *  none — the tool isolates a residential variant, and diverting its
+     *  houses would distort what it renders. */
+    private static int civicHouseTarget(State state, List<BuildingType> selection) {
+        if (state.forcedResidentialVariant != null) return 0;
+        int cap = DistrictRecipes.cap(DistrictRecipes.DistrictType.CIVIC,
+                state.ctx.tier(), BuildingType.HOUSE);
+        if (cap == 0) return 0;
+        int houses = 0;
+        for (BuildingType t : selection) if (t == BuildingType.HOUSE) houses++;
+        return Math.min(cap, Math.max(0, houses - MIN_DISTRICT_HOUSES));
+    }
+
+    /**
+     * Step 3 first mixed use — TOWNHOUSES ON THE CIVIC RING (CITY only, via
+     * the CIVIC recipe's HOUSE row). Places up to {@link #civicHouseTarget}
+     * HOUSEs through the SAME machinery as the other ring members: the plaza
+     * was sized with their frontages ({@link #civicRingMembers}), the
+     * ring-disc gate admits them ({@code placingCivicHouse}), the reservation
+     * gate keeps them off the void so they front the square, and {@code
+     * chooseFacing}(anchor) turns them toward it (the square is centred on
+     * the anchor). Runs at the batch-3 hook AFTER the civic core places
+     * (houses fill the leftover ring perimeter), BEFORE {@code
+     * addCivicPrecinct} (their footprints join the precinct union) and BEFORE
+     * the residential reserve (which sees the reduced remainder).
+     *
+     * <p>A house that fails to seat RE-HOMES to residential: its drop entry
+     * is retracted here, and the residential reduction keys on PLACED (not
+     * planned), so the roster's total HOUSE count is conserved either way.
+     * Homes/inhabitants need no special handling — these are ordinary
+     * {@code PlacedBuilding(HOUSE, ...)} entries, registered downstream by
+     * type like every other house.
+     */
+    private static void placeCivicRingHouses(State state, List<BuildingType> selection) {
+        int target = civicHouseTarget(state, selection);
+        state.districtAccum.civicHousesPlanned = target;
+        if (target == 0) return;
+        int placed = 0;
+        state.placingCivicHouse = true;
+        try {
+            for (int i = 0; i < target; i++) {
+                int dropsBefore = state.dropped.size();
+                if (placeOne(state, BuildingType.HOUSE, false)) {
+                    placed++;
+                    state.civicRingHouses.add(
+                            state.placed.get(state.placed.size() - 1));
+                } else {
+                    while (state.dropped.size() > dropsBefore) {
+                        state.dropped.remove(state.dropped.size() - 1);
+                    }
+                    LOGGER.info("civic ring house {}/{} failed to seat — "
+                            + "re-homed to the residential allocation",
+                            i + 1, target);
+                }
+            }
+        } finally {
+            state.placingCivicHouse = false;
+        }
+        state.civicHousesPlaced = placed;
+        state.civicHouseSkip = placed;
+        state.districtAccum.civicHousesPlaced = placed;
+        LOGGER.info("civic ring houses: {} of {} placed", placed, target);
     }
 
     /**
@@ -2004,7 +2119,12 @@ public final class PhasedPlanner {
             any = true;
         }
         for (PlacedBuilding pb : state.placed) {
-            if (getBatch(state.ctx, pb.type()) != 3) continue;
+            // Step 3 first mixed use — civic ring townhouses are HOUSE
+            // (batch 5) by type, so the batch filter alone would miss them;
+            // they are ring members, so their footprints join the precinct
+            // (the rural exclusion fences them like INN/CHAPEL).
+            if (getBatch(state.ctx, pb.type()) != 3
+                    && !state.civicRingHouses.contains(pb)) continue;
             if (pb.type() == BuildingType.MARKET) continue;   // satellite — see javadoc
             Aabb fp = footprintAabb(pb.centre(), pb.footprint(), pb.rotation());
             if (!any) { minX = fp.minX(); minZ = fp.minZ(); maxX = fp.maxX(); maxZ = fp.maxZ(); any = true; }
@@ -2127,7 +2247,19 @@ public final class PhasedPlanner {
         for (BuildingType t : selection) {
             if (residentialTypes.contains(t)) houseCount++;
         }
-        if (houseCount == 0) {
+        // Step 3 first mixed use — the civic ring's townhouses came out of
+        // THIS allocation (total roster HOUSE count unchanged); the precinct
+        // math below (nPrecincts / share / drop rule) sees the reduced
+        // remainder. civicHouseTarget's guard keeps this remainder at or
+        // above MIN_DISTRICT_HOUSES whenever the take fired, so the first
+        // precinct can never be a stranded 1-2 house runt.
+        if (state.civicHousesPlaced > 0) {
+            houseCount -= state.civicHousesPlaced;
+            LOGGER.info("residential allocation: {} house(s) on the civic"
+                    + " ring; {} remain for the precincts",
+                    state.civicHousesPlaced, houseCount);
+        }
+        if (houseCount <= 0) {
             LOGGER.info("residential districts: none (no HOUSE selected)");
             return;
         }
@@ -2249,14 +2381,29 @@ public final class PhasedPlanner {
                     .DensityZone zoneEstimate = state.density.zoneAt(
                             anchor.getX() + (int) Math.round(Math.cos(startAngle) * midR),
                             anchor.getZ() + (int) Math.round(Math.sin(startAngle) * midR));
+            int floor = (reserved == 0) ? 1 : MIN_DISTRICT_HOUSES;
+            int wantStart = Math.min(share, remaining);
+            // Step 3 first mixed use — sub-min tail absorb. The civic take
+            // shifts the remainder, so a roster that previously split into
+            // clean shares can now leave a 1-2 house tail (which the
+            // sub-minimum rule would drop). When that tail appears AND the
+            // whole remainder still fits one block, grow THIS precinct to
+            // absorb it (seatGrown backs off if it can't seat, in which case
+            // the tail drops exactly as before — never a runt precinct).
+            // Gated on the take so tiers without civic houses keep today's
+            // accounting byte-identical.
+            if (state.civicHousesPlaced > 0
+                    && remaining > wantStart
+                    && remaining - wantStart < MIN_DISTRICT_HOUSES
+                    && remaining <= RESIDENTIAL_BLOCK_MAX) {
+                wantStart = remaining;
+            }
             // Auto-selected (forced overrides); the street fallback below
             // handles directions too thin for the squarish variants.
             ResidentialVariant variant = forced
                     ? state.forcedResidentialVariant
-                    : chooseVariant(state, k, Math.min(share, remaining), prevVariant,
+                    : chooseVariant(state, k, wantStart, prevVariant,
                             zoneEstimate);
-            int floor = (reserved == 0) ? 1 : MIN_DISTRICT_HOUSES;
-            int wantStart = Math.min(share, remaining);
 
             // Grow-to-fill back-off (want → TARGET → floor), taking the largest
             // size that seats.
@@ -3946,6 +4093,22 @@ public final class PhasedPlanner {
          *  lanes (GREEN / CLUSTER / GRID_BLOCKS); the router suppresses
          *  emergent per-house branches inside these. */
         final List<Polygon.AABB> servedBlocks = new ArrayList<>();
+        /** Step 3 first mixed use — true while placeCivicRingHouses drives
+         *  placeOne: findBestCandidate ring-gates HOUSE and scores it by
+         *  plaza proximity ONLY during the explicit civic take. */
+        boolean placingCivicHouse;
+        /** Step 3 — civic ring townhouses actually placed; reduces the
+         *  residential allocation (PLACED, not planned, so a failed seat
+         *  re-homes its house). */
+        int civicHousesPlaced;
+        /** Step 3 — roster HOUSE entries the batch-5 loop must still skip
+         *  because the civic ring consumed them (guards the emergent
+         *  no-districts fallback against re-placing them). */
+        int civicHouseSkip;
+        /** Step 3 — the placed ring townhouses; addCivicPrecinct unions
+         *  their footprints (HOUSE isn't batch 3, so the batch filter alone
+         *  would miss them). */
+        final List<PlacedBuilding> civicRingHouses = new ArrayList<>();
         /** Read-only district-reservation diagnostics — written by the
          *  reserve passes, frozen onto {@link Result} at emit. Pure
          *  observation; never read by placement (zero behaviour impact). */
