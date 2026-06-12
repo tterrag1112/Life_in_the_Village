@@ -2404,17 +2404,27 @@ public final class PhasedPlanner {
     }
 
     /**
-     * 4c-c — the workshop QUARTER (CITY tier): one footprint-sized district
-     * holding the whole craft set as a demand-guided BSP — cells sized to
-     * each member's footprint, customer-facing crafts fronting the central
-     * street (VILLAGE_PATH — one tier up from the row's FOOTPATH lane, the
-     * quarter's spine reads as a real street), storage (stockpile/warehouse)
-     * on back/alley cells (FOOTPATH alleys), and the cell nearest the street
+     * 4c-c — the workshop QUARTER (CITY tier): one district holding the whole
+     * craft set as a demand-guided BSP — cells sized to each member's
+     * footprint, customer-facing crafts fronting the central street
+     * (VILLAGE_PATH — one tier up from the row's FOOTPATH lane, the quarter's
+     * spine reads as a real street), storage (stockpile/warehouse) on
+     * back/alley cells (FOOTPATH alleys), and the cell nearest the street
      * midpoint reserved OPEN as the shared work-yard: a well_hamlet stamp +
-     * FOUNTAIN GatheringPoint via the GREEN decor path, open ground
-     * otherwise (v1 — no invented yard props). Returns false (un-seating its
-     * gate) when the quarter can't seat or arrange, so the caller falls back
-     * to the 4c-b craft row, then lots — the existing chain, now tier-aware.
+     * FOUNTAIN GatheringPoint via the GREEN decor path, open ground otherwise
+     * (v1 — no invented yard props).
+     *
+     * <p>4c-c fix-up — the block is a RECTANGLE, not a square: the radial
+     * DEPTH is fixed first (clamped to the residential band's depth minus
+     * {@link #QUARTER_BAND_MARGIN} — a square sized to the craft set could
+     * NEVER fit the band, a geometric impossibility regardless of crowding)
+     * and the along-band LENGTH derived to hold the demand area. Seated via
+     * {@link #seatDistrictOriented} so the long axis lies along the band.
+     * When the single rectangle can't seat or arrange, the craft set SPLITS
+     * area-balanced into TWO adjacent quarter blocks (the second seated from
+     * the first's bearing; the yard rides with the first) before the chain
+     * falls back to the 4c-b craft row, then lots. Returns false (un-seating
+     * any gate it added) when none of that works.
      */
     private static boolean reserveWorkshopQuarter(State state,
                                                   List<BuildingType> craftList) {
@@ -2427,105 +2437,221 @@ public final class PhasedPlanner {
             members.add(new ResidentialArranger.QuarterMember(
                     dim + HOUSE_GAP, dim, CRAFT_STORAGE_SET.contains(t)));
         }
-        // Block size estimate: each cell demand padded by its corridor share,
-        // floored so the root (street) cut can host the two biggest demands
-        // side by side. Misestimates are safe — an unfittable BSP fails the
-        // arrangement below and the caller falls back to the row.
-        long cellArea = 0;
-        int max1 = 0, max2 = 0;
-        List<Integer> sides = new ArrayList<>(members.size() + 1);
-        for (ResidentialArranger.QuarterMember m : members) sides.add(m.cellSide());
-        sides.add(WORKSHOP_YARD_SIDE);
-        for (int d : sides) {
-            cellArea += (long) (d + 4) * (d + 4);
-            if (d >= max1) { max2 = max1; max1 = d; }
-            else if (d > max2) { max2 = d; }
-        }
-        int side = (int) Math.ceil(Math.sqrt((double) cellArea));
-        side = Math.max(side, max1 + max2
-                + ResidentialArranger.GRID_STREET_WIDTH + 4);
-        int half = side / 2 + 1;
-
+        // Band geometry — the same ring reserveResidentialDistricts works in
+        // (inner edge outside the civic precinct, outer capped by the farm
+        // reserve), so the quarter competes for band space as a major
+        // district rather than guessing its own ring.
         int civicReach = 0;
         if (state.civicPrecinct != null) {
             civicReach = Math.max(
                     (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
                     (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
         }
+        int bandInner = civicReach + DISTRICT_GAP;
+        int farmReserve = DISTRICT_ONLY_MODE ? 0 : RESIDENTIAL_FARM_RESERVE;
+        int bandCap = state.villageRadius - farmReserve;
+        int depthAvail = bandCap - bandInner - QUARTER_BAND_MARGIN;
         java.util.List<Double> dirs = residentialDirections(state, anchor);
-        int inner = Math.max(civicReach + DISTRICT_GAP, half + DISTRICT_GAP);
-        int outer = Math.max(inner, state.villageRadius - half);
-        Polygon.AABB gate = seatDistrict(state, anchor,
-                dirs.get(0) + Math.PI / 8.0, inner, outer, half, half,
+
+        // Single rectangular block first.
+        QuarterSeat single = seatQuarterBlock(state, craftList, members,
+                WORKSHOP_YARD_SIDE, bandInner, bandCap, depthAvail,
+                dirs.get(0) + Math.PI / 8.0);
+        if (single != null) {
+            commitQuarter(state, List.of(single), craftList.size());
+            return true;
+        }
+        // Two adjacent blocks — greedy area-balanced member split (descending
+        // cell side, same balance rule as the quarter BSP guide); the
+        // work-yard rides with block A, block B arranges yard-less.
+        if (craftList.size() >= 2) {
+            List<Integer> order = new ArrayList<>(craftList.size());
+            for (int i = 0; i < craftList.size(); i++) order.add(i);
+            order.sort((p, q) -> Integer.compare(
+                    members.get(q).cellSide(), members.get(p).cellSide()));
+            List<BuildingType> craftsA = new ArrayList<>(), craftsB = new ArrayList<>();
+            List<ResidentialArranger.QuarterMember> membersA = new ArrayList<>(),
+                    membersB = new ArrayList<>();
+            long areaA = 0, areaB = 0;
+            for (int i : order) {
+                long a = (long) members.get(i).cellSide() * members.get(i).cellSide();
+                if (areaA <= areaB) {
+                    craftsA.add(craftList.get(i));
+                    membersA.add(members.get(i));
+                    areaA += a;
+                } else {
+                    craftsB.add(craftList.get(i));
+                    membersB.add(members.get(i));
+                    areaB += a;
+                }
+            }
+            QuarterSeat a = seatQuarterBlock(state, craftsA, membersA,
+                    WORKSHOP_YARD_SIDE, bandInner, bandCap, depthAvail,
+                    dirs.get(0) + Math.PI / 8.0);
+            if (a != null) {
+                // Adjacency: block B sweeps from block A's bearing — the
+                // overlap reject pushes it to the next clear spot alongside.
+                int acx = (a.gate().minX() + a.gate().maxX()) / 2;
+                int acz = (a.gate().minZ() + a.gate().maxZ()) / 2;
+                double aBearing = Math.atan2(acz - anchor.getZ(),
+                        acx - anchor.getX());
+                QuarterSeat b = seatQuarterBlock(state, craftsB, membersB,
+                        0, bandInner, bandCap, depthAvail, aBearing);
+                if (b != null) {
+                    commitQuarter(state, List.of(a, b), craftList.size());
+                    return true;
+                }
+                state.workshopGates.remove(a.gate());
+            }
+        }
+        LOGGER.info("workshop quarter: neither a single rectangle nor a"
+                + " two-block split seated in the band [{}, {}] — falling back"
+                + " to the craft row", bandInner, bandCap);
+        return false;
+    }
+
+    /** 4c-c fix-up — radial slack kept between the quarter rectangle and the
+     *  band edges (the {@code DISTRICT_GAP} analog for the depth clamp). */
+    private static final int QUARTER_BAND_MARGIN = 4;
+
+    /** 4c-c fix-up — one seated + arranged (NOT yet materialised) quarter
+     *  block: its gate, the crafts/members it cells (index-aligned), and the
+     *  arrangement. Materialisation happens in {@link #commitQuarter} only
+     *  after EVERY block of the quarter seats, so a failed sibling never
+     *  leaves half a quarter placed. */
+    private record QuarterSeat(Polygon.AABB gate,
+                               List<BuildingType> crafts,
+                               ResidentialArranger.QuarterArrangement arr) {}
+
+    /** 4c-c fix-up — sizes ONE quarter block as a band-aware RECTANGLE (depth
+     *  first: clamped to {@code depthAvail}, floored at the biggest cell;
+     *  length derived from the demand area, floored so the root street cut
+     *  can host the two biggest cells side by side), seats it oriented
+     *  along the band, and runs the demand BSP. Returns null — un-seating
+     *  its own gate — when the depth can't host the biggest cell, no clear
+     *  band position exists, or the BSP can't cell every member. */
+    private static QuarterSeat seatQuarterBlock(State state,
+            List<BuildingType> crafts,
+            List<ResidentialArranger.QuarterMember> members, int yardSide,
+            int bandInner, int bandCap, int depthAvail, double startAngle) {
+        long cellArea = 0;
+        int max1 = 0, max2 = 0;
+        List<Integer> sides = new ArrayList<>(members.size() + 1);
+        for (ResidentialArranger.QuarterMember m : members) sides.add(m.cellSide());
+        if (yardSide > 0) sides.add(yardSide);
+        for (int d : sides) {
+            cellArea += (long) (d + 4) * (d + 4);
+            if (d >= max1) { max2 = max1; max1 = d; }
+            else if (d > max2) { max2 = d; }
+        }
+        int minDepth = max1 + 4;       // biggest cell + inset/corridor grace
+        if (depthAvail < minDepth) {
+            LOGGER.info("workshop quarter: band depth {} can't host the"
+                    + " biggest cell ({}) — no rectangle fits this band",
+                    depthAvail, max1);
+            return null;
+        }
+        int square = (int) Math.ceil(Math.sqrt((double) cellArea));
+        int depth = Math.max(minDepth, Math.min(square, depthAvail));
+        int rootFloor = max1 + max2
+                + ResidentialArranger.GRID_STREET_WIDTH + 4;
+        int len = Math.max((int) Math.ceil(cellArea / (double) depth),
+                Math.max(depth, rootFloor));
+        int halfRadial = depth / 2 + 1;
+        int halfTangent = len / 2 + 1;
+        BlockPos anchor = state.ctx.anchor();
+        Polygon.AABB gate = seatDistrictOriented(state, anchor, startAngle,
+                bandInner, bandCap, halfRadial, halfTangent,
                 state.workshopGates);
         if (gate == null) {
             LOGGER.info("workshop quarter: no clear band position for a {}x{}"
-                    + " block — falling back to the craft row", side, side);
-            return false;
+                    + " block (depth x length, band [{}, {}])", depth, len,
+                    bandInner, bandCap);
+            return null;
         }
         long seed = state.ctx.seed()
                 ^ ((long) gate.minX() * 31L + gate.minZ()) ^ 0x4CCL;
         BlockPos edgeNode = edgePointToward(gate, anchor);
         ResidentialArranger.QuarterArrangement arr =
-                ResidentialArranger.arrangeQuarter(gate, members,
-                        WORKSHOP_YARD_SIDE, edgeNode, seed);
+                ResidentialArranger.arrangeQuarter(gate, members, yardSide,
+                        edgeNode, seed);
         if (arr == null) {
-            // Un-seat — the gate must not linger in the masks/connection
-            // nodes, and the lots fallback indexes workshopGates 1:1.
+            // Un-seat — the gate must not linger in the masks/connection nodes.
             state.workshopGates.remove(gate);
             LOGGER.info("workshop quarter: block {}x{} seated but the demand"
-                    + " BSP couldn't cell every member — falling back to the"
-                    + " craft row", side, side);
-            return false;
+                    + " BSP couldn't cell every member", 2 * halfRadial,
+                    2 * halfTangent);
+            return null;
         }
+        return new QuarterSeat(gate, crafts, arr);
+    }
+
+    /** 4c-c fix-up — materialises a fully-seated quarter (one block, or the
+     *  two-block split): buildings, central street(s) at VILLAGE_PATH +
+     *  alleys at FOOTPATH, the shared work-yard well (blocks arranged
+     *  yard-less skip it), the router's no-branch mask, and the QUARTER
+     *  metrics. Runs only after every block seated + arranged. */
+    private static void commitQuarter(State state, List<QuarterSeat> blocks,
+                                      int requested) {
         int placed = 0;
-        List<Polygon.AABB> footprints = new ArrayList<>(craftList.size());
-        for (int i = 0; i < craftList.size(); i++) {
-            ResidentialArranger.HousePlacement hp = arr.buildings().get(i);
-            Polygon.AABB fp = materializeBuilding(state, craftList.get(i),
-                    hp.centre(), hp.faceTarget());
-            if (fp != null) { placed++; footprints.add(fp); }
-        }
-        // Central street + entry render one tier up (VILLAGE_PATH); alleys at
-        // FOOTPATH. Same truncate/snap treatment as the residential variants;
-        // all connect through the unified realizer + the gate's district node.
-        for (List<BlockPos> street : arr.streets()) {
-            List<BlockPos> snapped = snapPathToSurface(state,
-                    truncateAtFootprints(street, footprints));
-            if (snapped.size() >= 2) {
-                state.internalLanes.add(new InternalPath(snapped,
-                        RoadShape.RoadTier.VILLAGE_PATH));
+        for (QuarterSeat qs : blocks) {
+            List<Polygon.AABB> footprints = new ArrayList<>(qs.crafts().size());
+            for (int i = 0; i < qs.crafts().size(); i++) {
+                ResidentialArranger.HousePlacement hp = qs.arr().buildings().get(i);
+                Polygon.AABB fp = materializeBuilding(state, qs.crafts().get(i),
+                        hp.centre(), hp.faceTarget());
+                if (fp != null) { placed++; footprints.add(fp); }
             }
-        }
-        for (List<BlockPos> alley : arr.alleys()) {
-            List<BlockPos> snapped = snapPathToSurface(state,
-                    truncateAtFootprints(alley, footprints));
-            if (snapped.size() >= 2) {
-                state.internalLanes.add(new InternalPath(snapped,
-                        RoadShape.RoadTier.FOOTPATH));
+            // Central street + entry render one tier up (VILLAGE_PATH); alleys
+            // at FOOTPATH. Same truncate/snap treatment as the residential
+            // variants; all connect through the unified realizer + the gate's
+            // district node.
+            for (List<BlockPos> street : qs.arr().streets()) {
+                List<BlockPos> snapped = snapPathToSurface(state,
+                        truncateAtFootprints(street, footprints));
+                if (snapped.size() >= 2) {
+                    state.internalLanes.add(new InternalPath(snapped,
+                            RoadShape.RoadTier.VILLAGE_PATH));
+                }
             }
+            for (List<BlockPos> alley : qs.arr().alleys()) {
+                List<BlockPos> snapped = snapPathToSurface(state,
+                        truncateAtFootprints(alley, footprints));
+                if (snapped.size() >= 2) {
+                    state.internalLanes.add(new InternalPath(snapped,
+                            RoadShape.RoadTier.FOOTPATH));
+                }
+            }
+            // Shared work-yard: OPEN ground + well_hamlet at the centre + a
+            // FOUNTAIN GatheringPoint — a WELL-ONLY GreenDecor entry (null
+            // green bounds → the adapter stamps the well, registers no flora).
+            BlockPos yc = qs.arr().yardCentre();
+            if (yc != null) {
+                int wellY = (state.fmap.inBounds(yc.getX(), yc.getZ())
+                        ? state.fmap.cellAt(yc.getX(), yc.getZ()).elevationY()
+                        : yc.getY()) + 1;
+                long wellSeed = state.ctx.seed()
+                        ^ ((long) qs.gate().minX() * 31L + qs.gate().minZ())
+                        ^ 0x4CCL;
+                state.greenDecor.add(new GreenDecor(null,
+                        new BlockPos(yc.getX(), wellY, yc.getZ()), wellSeed));
+            }
+            // The quarter's street/alleys serve its members — join the
+            // router's no-branch obstacle mask like GREEN/CLUSTER/GRID/TERRACE.
+            state.servedBlocks.add(qs.gate());
+            LOGGER.info("workshop quarter block: {} craft(s), block={}x{},"
+                    + " alleys={}, yard={}", qs.crafts().size(),
+                    qs.gate().maxX() - qs.gate().minX(),
+                    qs.gate().maxZ() - qs.gate().minZ(),
+                    qs.arr().alleys().size(), yc != null);
         }
-        // Shared work-yard: OPEN ground + well_hamlet at the centre + a
-        // FOUNTAIN GatheringPoint — a WELL-ONLY GreenDecor entry (null green
-        // bounds → the adapter stamps the well but registers no flora).
-        BlockPos yc = arr.yardCentre();
-        int wellY = (state.fmap.inBounds(yc.getX(), yc.getZ())
-                ? state.fmap.cellAt(yc.getX(), yc.getZ()).elevationY()
-                : yc.getY()) + 1;
-        state.greenDecor.add(new GreenDecor(null,
-                new BlockPos(yc.getX(), wellY, yc.getZ()), seed));
-        // The quarter's street/alleys serve its members — join the router's
-        // no-branch obstacle mask like GREEN/CLUSTER/GRID/TERRACE blocks.
-        state.servedBlocks.add(gate);
         // Diagnostics (read-only) — craft set seated as the quarter.
         state.districtAccum.workshopSeating =
                 DistrictReport.WorkshopSeating.QUARTER;
         state.districtAccum.workshopCraftsPlaced = placed;
-        state.districtAccum.workshopCraftsDropped = craftList.size() - placed;
-        LOGGER.info("workshop quarter: {}/{} crafts placed (block={}x{},"
-                + " alleys={}, yard=({},{}))", placed, craftList.size(),
-                2 * half, 2 * half, arr.alleys().size(), yc.getX(), yc.getZ());
-        return true;
+        state.districtAccum.workshopCraftsDropped = requested - placed;
+        LOGGER.info("workshop quarter: {}/{} crafts placed ({} block(s))",
+                placed, requested, blocks.size());
     }
 
     /** Phase 2 fix-up — fraction of the village radius at which to resolve the
@@ -3171,27 +3297,68 @@ public final class PhasedPlanner {
             for (int r = innerR; r <= outerR; r += 4) {
                 int cx = anchor.getX() + (int) Math.round(cos * r);
                 int cz = anchor.getZ() + (int) Math.round(sin * r);
-                if (!state.fmap.inBounds(cx, cz)) continue;
-                Cell c = state.fmap.cellAt(cx, cz);
-                BlockCategory cat = c.category();
-                if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
-                        || c.localSlope() > MAX_SLOPE) continue;
-                Polygon.AABB gate = new Polygon.AABB(cx - halfX, cz - halfZ,
-                        cx + halfX, cz + halfZ);
-                if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) continue;
-                // 4c-a — avoid BOTH district bands (residential + workshop) so the
-                // two never collide, regardless of which list this seat records into.
-                if (aabbOverlapsAny(gate, state.residentialGates)) continue;
-                if (aabbOverlapsAny(gate, state.workshopGates)) continue;
-                // Record the gate for inclusion-gating + rural/farm exclusion +
-                // connection. No void reservation (members fill the block).
-                targetGates.add(gate);
-                LOGGER.info("district seated: centre=({},{}) block={}x{} r={}",
-                        cx, cz, 2 * halfX, 2 * halfZ, r);
-                return gate;
+                Polygon.AABB gate = tryGateAt(state, cx, cz, halfX, halfZ,
+                        r, targetGates);
+                if (gate != null) return gate;
             }
         }
         return null;
+    }
+
+    /** 4c-c fix-up — bearing-ORIENTED variant of {@link #seatDistrict} for
+     *  RECTANGULAR blocks (the workshop quarter): at each swept bearing the
+     *  rect's SHORT axis ({@code halfRadial}) maps to the more-radial world
+     *  axis and the LONG axis ({@code halfTangent}) to the more-tangent one,
+     *  so the block lies ALONG the band instead of across it. The centre
+     *  radius range keeps the whole radial span inside
+     *  {@code [bandInner, bandCap]} — the band-aware part; the plain
+     *  {@code seatDistrict} reach bound ({@code max(halfX, halfZ)}) made a
+     *  long rect's search window collapse. */
+    private static Polygon.AABB seatDistrictOriented(State state, BlockPos anchor,
+            double startAngle, int bandInner, int bandCap, int halfRadial,
+            int halfTangent, List<Polygon.AABB> targetGates) {
+        int innerR = bandInner + halfRadial;
+        int outerR = bandCap - halfRadial;
+        for (int a = 0; a < DISTRICT_ANGLE_STEPS; a++) {
+            double angle = startAngle + (2 * Math.PI * a) / DISTRICT_ANGLE_STEPS;
+            double cos = Math.cos(angle), sin = Math.sin(angle);
+            boolean radialX = Math.abs(cos) >= Math.abs(sin);
+            int halfX = radialX ? halfRadial : halfTangent;
+            int halfZ = radialX ? halfTangent : halfRadial;
+            for (int r = innerR; r <= outerR; r += 4) {
+                int cx = anchor.getX() + (int) Math.round(cos * r);
+                int cz = anchor.getZ() + (int) Math.round(sin * r);
+                Polygon.AABB gate = tryGateAt(state, cx, cz, halfX, halfZ,
+                        r, targetGates);
+                if (gate != null) return gate;
+            }
+        }
+        return null;
+    }
+
+    /** The shared per-centre admission test behind {@link #seatDistrict} and
+     *  {@link #seatDistrictOriented}: buildable OPEN/SHORE centre cell within
+     *  slope, block AABB clear of every reservation AND both district-gate
+     *  lists (4c-a — residential + workshop never collide, regardless of
+     *  which list the seat records into). On success records the gate
+     *  (inclusion-gating + rural/farm exclusion + connection; no void
+     *  reservation — members fill the block) and returns it; else null. */
+    private static Polygon.AABB tryGateAt(State state, int cx, int cz,
+            int halfX, int halfZ, int r, List<Polygon.AABB> targetGates) {
+        if (!state.fmap.inBounds(cx, cz)) return null;
+        Cell c = state.fmap.cellAt(cx, cz);
+        BlockCategory cat = c.category();
+        if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                || c.localSlope() > MAX_SLOPE) return null;
+        Polygon.AABB gate = new Polygon.AABB(cx - halfX, cz - halfZ,
+                cx + halfX, cz + halfZ);
+        if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) return null;
+        if (aabbOverlapsAny(gate, state.residentialGates)) return null;
+        if (aabbOverlapsAny(gate, state.workshopGates)) return null;
+        targetGates.add(gate);
+        LOGGER.info("district seated: centre=({},{}) block={}x{} r={}",
+                cx, cz, 2 * halfX, 2 * halfZ, r);
+        return gate;
     }
 
     /** XZ overlap of two {@link Polygon.AABB}s. */

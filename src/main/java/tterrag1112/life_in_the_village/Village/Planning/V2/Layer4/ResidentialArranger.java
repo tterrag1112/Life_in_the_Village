@@ -701,7 +701,9 @@ public final class ResidentialArranger {
      *  (index-aligned with the input members), the central street + the
      *  edge-node entry stitch (the planner renders these VILLAGE_PATH), the
      *  alleys (FOOTPATH), and the shared work-yard cell left OPEN (the
-     *  planner stamps the well at {@code yardCentre}). */
+     *  planner stamps the well at {@code yardCentre}). 4c-c fix-up —
+     *  {@code yardCentre}/{@code yard} are NULL when arranged with
+     *  {@code yardSide <= 0} (the split quarter's yard-less second block). */
     public record QuarterArrangement(List<HousePlacement> buildings,
                                      List<List<BlockPos>> streets,
                                      List<List<BlockPos>> alleys,
@@ -717,6 +719,10 @@ public final class ResidentialArranger {
      * the cells farthest from it. Returns {@code null} when the block cannot
      * cell every member + the yard (the planner falls back to the craft
      * row); a non-null result covers every member by construction.
+     *
+     * <p>4c-c fix-up — {@code yardSide <= 0} arranges WITHOUT a work-yard
+     * cell ({@code yardCentre}/{@code yard} null in the result): the
+     * two-block split quarter gives the yard to its first block only.
      */
     public static QuarterArrangement arrangeQuarter(Polygon.AABB block,
                                                     List<QuarterMember> members,
@@ -724,13 +730,14 @@ public final class ResidentialArranger {
                                                     BlockPos edgeNode,
                                                     long seed) {
         if (members.isEmpty()) return null;
+        boolean hasYard = yardSide > 0;
         Random rng = new Random(seed);
         int x0 = block.minX() + 1, x1 = block.maxX() - 1;
         int z0 = block.minZ() + 1, z1 = block.maxZ() - 1;
         // Demand multiset (descending): every member's cell + the work-yard.
         List<Integer> demands = new ArrayList<>(members.size() + 1);
         for (QuarterMember m : members) demands.add(m.cellSide());
-        demands.add(yardSide);
+        if (hasYard) demands.add(yardSide);
         demands.sort(Collections.reverseOrder());
         List<int[]> leaves = new ArrayList<>();
         List<List<BlockPos>> streets = new ArrayList<>();
@@ -739,7 +746,7 @@ public final class ResidentialArranger {
         bsp(x0, z0, x1, z1, 0, demands, quarterGuide(leaves, failed), rng,
                 streets, alleys);
         if (failed[0] || streets.isEmpty()
-                || leaves.size() != members.size() + 1) {
+                || leaves.size() != members.size() + (hasYard ? 1 : 0)) {
             return null;
         }
         // The central street is the root (depth-0) cut — the only entry in
@@ -754,8 +761,8 @@ public final class ResidentialArranger {
         // nearest the street midpoint; fronts → nearest the central street;
         // storage → farthest from it (back/alley cells).
         int n = members.size();                       // item n = the yard
-        Integer[] order = new Integer[n + 1];
-        for (int i = 0; i <= n; i++) order[i] = i;
+        Integer[] order = new Integer[n + (hasYard ? 1 : 0)];
+        for (int i = 0; i < order.length; i++) order[i] = i;
         java.util.Arrays.sort(order, (p, q) -> Integer.compare(
                 q == n ? yardSide : members.get(q).cellSide(),
                 p == n ? yardSide : members.get(p).cellSide()));
@@ -800,10 +807,14 @@ public final class ResidentialArranger {
                     : projectToSegment(centre, cA, cB);
             placements[i] = pullToCorridor(lf, centre, face, m.footprintDim());
         }
-        int[] ylf = leaves.get(assigned[n]);
-        BlockPos yardCentre = new BlockPos((ylf[0] + ylf[2]) / 2, 0,
-                (ylf[1] + ylf[3]) / 2);
-        Polygon.AABB yard = new Polygon.AABB(ylf[0], ylf[1], ylf[2], ylf[3]);
+        BlockPos yardCentre = null;
+        Polygon.AABB yard = null;
+        if (hasYard) {
+            int[] ylf = leaves.get(assigned[n]);
+            yardCentre = new BlockPos((ylf[0] + ylf[2]) / 2, 0,
+                    (ylf[1] + ylf[3]) / 2);
+            yard = new Polygon.AABB(ylf[0], ylf[1], ylf[2], ylf[3]);
+        }
         // Entry — stitch the block's road-facing edge node to the central
         // street (same stitch GRID_BLOCKS uses for its internal streets).
         streets.add(List.of(edgeNode, projectToSegment(edgeNode, cA, cB)));
