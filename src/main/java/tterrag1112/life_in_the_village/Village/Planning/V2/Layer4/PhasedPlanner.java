@@ -335,9 +335,11 @@ public final class PhasedPlanner {
         List<Polygon.AABB> noBranchBlocks = new ArrayList<>(
                 state.courtyardDecor.stream().map(CourtyardDecor::block).toList());
         noBranchBlocks.addAll(state.servedBlocks);
+        // Step 2a — the density profile rides along so CORE-zone edges are
+        // routed Manhattan-style (geometry-only, post-MST; see the router).
         NetworkSpec routed = BlockServingRouter.route(
                 state.placed, ctx.gateways(), fmap, ctx.anchor(), state.voids(),
-                districtConnectionNodes(state), noBranchBlocks);
+                districtConnectionNodes(state), noBranchBlocks, state.density);
         // City-morphology step 1 — FORMAL-zone geometry rewrite (straighten
         // + district-approach right angles) at the PLANNING layer, before
         // ANY consumer reads the routed geometry: skeleton segments,

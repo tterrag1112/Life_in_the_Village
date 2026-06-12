@@ -2,6 +2,8 @@ package tterrag1112.life_in_the_village.Village.Planning.V2.Layer4;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.Rotation;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.Cell;
@@ -12,6 +14,7 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkNode;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NodeKind;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ZonePartition;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 
@@ -64,6 +67,8 @@ import java.util.Set;
  */
 public final class BlockServingRouter {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(BlockServingRouter.class);
+
     /** Euclidean neighbours each building terminal proposes as candidate
      *  edges. */
     private static final int NEIGHBOUR_K = 6;
@@ -90,6 +95,30 @@ public final class BlockServingRouter {
      *  crash. It dominates terrain cost (~2..20/cell) by ~100×, so A*
      *  routes around footprints whenever any detour exists. */
     private static final int FOOTPRINT_PENALTY = 2000;
+
+    // ── City-morphology step 2a — CORE rectilinear routing ─────────────────────
+    //
+    // The base A* is 8-connected with NO move-shape cost: a diagonal step
+    // covers ~1.4 cells for the same price as a cardinal one, so optimal
+    // paths wander diagonally and RDP straightening preserves the curved
+    // route (Garrett's screenshot: crisp core streets that still meander).
+    // For edges whose endpoint-midpoint falls in the density profile's CORE,
+    // the routed tree edge is RE-ROUTED (same terminals, post-MST, so tree
+    // topology and every non-CORE edge are byte-identical) with two extra
+    // cost terms that make Manhattan geometry optimal. Both are tiny next to
+    // FOOTPRINT_PENALTY (2000), so plaza-void / footprint skirting always
+    // outranks axis preference.
+    /** Added cost of a diagonal step in the CORE re-route. With flat enter
+     *  cost 2, a diagonal costs 6 ≥ 2 cardinal steps — a single L beats the
+     *  straight diagonal (which also pays a turn at the junction). */
+    private static final int CORE_DIAGONAL_SURCHARGE = 4;
+    /** Added cost of changing direction in the CORE re-route — ≈ 4 cells of
+     *  flat travel per turn, so staircases collapse into one L and junctions
+     *  land at right angles naturally. */
+    private static final int CORE_TURN_PENALTY = 8;
+    /** Direction-state count for the CORE re-route A*: 8 move directions +
+     *  the "no incoming direction" start state. */
+    private static final int DIR_STATES = 9;
 
     private BlockServingRouter() {}
 
@@ -153,6 +182,28 @@ public final class BlockServingRouter {
                                     List<BlockPos> districtNodes,
                                     List<tterrag1112.life_in_the_village.Utilities
                                             .Geometry.Polygon.AABB> noBranchBlocks) {
+        return route(placed, gateways, fmap, anchor, voids, districtNodes,
+                noBranchBlocks, null);
+    }
+
+    /**
+     * City-morphology step 2a — overload taking the village
+     * {@link DensityProfile}. Tree edges whose endpoint-midpoint falls in
+     * the CORE zone are re-routed Manhattan-style (diagonal surcharge +
+     * turn penalty; see the constants above) AFTER the MST is built, so the
+     * gradient changes core street GEOMETRY only: terminals, candidate
+     * costs, tree topology, trunk detection and every MIDTOWN/OUTSKIRTS/
+     * RURAL edge are byte-identical to the null-profile path. {@code null}
+     * profile → identical to the old path (the dump-comparison caller).
+     */
+    public static NetworkSpec route(List<PlacedBuilding> placed, Gateways gateways,
+                                    V2FeatureMap fmap, BlockPos anchor,
+                                    List<tterrag1112.life_in_the_village.Utilities
+                                            .Geometry.Polygon.AABB> voids,
+                                    List<BlockPos> districtNodes,
+                                    List<tterrag1112.life_in_the_village.Utilities
+                                            .Geometry.Polygon.AABB> noBranchBlocks,
+                                    DensityProfile profile) {
         int g = fmap.gridSize();
         // Stage 3 fix-up + Stage 4a — placed building footprints AND reserved
         // plaza voids are obstacles for routing: roads thread BETWEEN buildings
@@ -192,6 +243,35 @@ public final class BlockServingRouter {
         // tree disconnected, route the cheapest cross-component pairs.
         if (uf.components() > 1) {
             ensureConnected(terms, fmap, g, uf, tree, obstacle);
+        }
+
+        // Step 2a — CORE rectilinear re-route (geometry only; see the
+        // profile overload's javadoc). Runs before trunk detection, which
+        // only reads endpoints (unchanged by the re-route).
+        if (profile != null) {
+            int rerouted = 0;
+            for (int t = 0; t < tree.size(); t++) {
+                RoutedEdge e = tree.get(t);
+                Terminal ta = terms.get(e.a), tb = terms.get(e.b);
+                BlockPos wa = fmap.cellWorldPos(ta.ci, ta.cj);
+                BlockPos wb = fmap.cellWorldPos(tb.ci, tb.cj);
+                // Same invariant sample point RoadFormality.atMid uses, so
+                // exactly the edges classified FORMAL get Manhattan routes.
+                if (profile.zoneAt((wa.getX() + wb.getX()) / 2,
+                        (wa.getZ() + wb.getZ()) / 2)
+                        != DensityProfile.DensityZone.CORE) {
+                    continue;
+                }
+                RoutedEdge r = routeEdgeRectilinear(terms, e.a, e.b, fmap, g, obstacle);
+                if (r != null) {
+                    tree.set(t, r);
+                    rerouted++;
+                }
+            }
+            if (rerouted > 0) {
+                LOGGER.info("core rectilinear routing: {} of {} tree edge(s)"
+                        + " re-routed Manhattan-style", rerouted, tree.size());
+            }
         }
 
         // Trunk = the tree path between the two gateway terminals.
@@ -541,6 +621,92 @@ public final class BlockServingRouter {
      *  cost ({@link ZonePartition#BASE_STEP_COST}). */
     private static int heuristic(int i, int j, int ti, int tj) {
         return Math.max(Math.abs(i - ti), Math.abs(j - tj)) * ZonePartition.BASE_STEP_COST;
+    }
+
+    /**
+     * Step 2a — CORE re-route: A* over (cell × incoming-direction) states so
+     * direction CHANGES can be priced ({@link #CORE_TURN_PENALTY}), with
+     * diagonal steps additionally surcharged
+     * ({@link #CORE_DIAGONAL_SURCHARGE}). Same cost model otherwise (enter
+     * cost + {@link #FOOTPRINT_PENALTY} on masked cells — the void/footprint
+     * mask still dominates, so plaza skirting outranks axis preference).
+     * Returns null when unreachable (the caller keeps the original edge).
+     */
+    private static RoutedEdge routeEdgeRectilinear(List<Terminal> terms, int a, int b,
+                                                   V2FeatureMap fmap, int g,
+                                                   boolean[][] footprint) {
+        Terminal ta = terms.get(a), tb = terms.get(b);
+        int startCell = ta.ci * g + ta.cj;
+        int goalCell = tb.ci * g + tb.cj;
+        // Direction table: index = incoming-direction state, 8 = start.
+        int[] dis = {-1, -1, -1, 0, 0, 1, 1, 1};
+        int[] djs = {-1, 0, 1, -1, 1, -1, 0, 1};
+
+        int states = g * g * DIR_STATES;
+        int[] gScore = new int[states];
+        int[] came = new int[states];
+        java.util.Arrays.fill(gScore, Integer.MAX_VALUE);
+        java.util.Arrays.fill(came, -1);
+        boolean[] closed = new boolean[states];
+
+        int startState = startCell * DIR_STATES + 8;
+        gScore[startState] = 0;
+        PriorityQueue<int[]> open = new PriorityQueue<>(Comparator.comparingInt(x -> x[1]));
+        open.add(new int[]{startState, rectHeuristic(ta.ci, ta.cj, tb.ci, tb.cj)});
+
+        int goalState = -1;
+        while (!open.isEmpty()) {
+            int cur = open.poll()[0];
+            if (closed[cur]) continue;
+            closed[cur] = true;
+            int curCell = cur / DIR_STATES;
+            if (curCell == goalCell) {
+                goalState = cur;
+                break;
+            }
+            int lastDir = cur % DIR_STATES;
+            int ci = curCell / g, cj = curCell % g;
+            for (int d = 0; d < 8; d++) {
+                int ni = ci + dis[d], nj = cj + djs[d];
+                if (ni < 0 || nj < 0 || ni >= g || nj >= g) continue;
+                int nState = (ni * g + nj) * DIR_STATES + d;
+                if (closed[nState]) continue;
+                Cell nc = fmap.cell(ni, nj);
+                if (!ZonePartition.isBuildable(nc)) continue;
+                boolean diagonal = dis[d] != 0 && djs[d] != 0;
+                int tentative = gScore[cur] + ZonePartition.enterCost(nc)
+                        + (footprint[ni][nj] ? FOOTPRINT_PENALTY : 0)
+                        + (diagonal ? CORE_DIAGONAL_SURCHARGE : 0)
+                        + (lastDir != 8 && d != lastDir ? CORE_TURN_PENALTY : 0);
+                if (tentative < gScore[nState]) {
+                    gScore[nState] = tentative;
+                    came[nState] = cur;
+                    open.add(new int[]{nState,
+                            tentative + rectHeuristic(ni, nj, tb.ci, tb.cj)});
+                }
+            }
+        }
+        if (goalState < 0) return null;   // unreachable
+
+        // Reconstruct (start → goal) over states; one cell per state.
+        List<int[]> path = new ArrayList<>();
+        for (int cur = goalState; cur != -1; cur = came[cur]) {
+            int cell = cur / DIR_STATES;
+            path.add(new int[]{cell / g, cell % g});
+            if (cur == startState) break;
+        }
+        java.util.Collections.reverse(path);
+        return new RoutedEdge(a, b, gScore[goalState], path);
+    }
+
+    /** Admissible heuristic for the rectilinear search: MANHATTAN cell steps
+     *  × {@link ZonePartition#BASE_STEP_COST}. Admissible because a cardinal
+     *  step reduces Manhattan distance by 1 for cost ≥ BASE, and a diagonal
+     *  step reduces it by 2 for cost ≥ BASE + {@link #CORE_DIAGONAL_SURCHARGE}
+     *  ≥ 2×BASE. Tighter than chebyshev, which matters with the larger
+     *  state space. */
+    private static int rectHeuristic(int i, int j, int ti, int tj) {
+        return (Math.abs(i - ti) + Math.abs(j - tj)) * ZonePartition.BASE_STEP_COST;
     }
 
     // =========================================================================
