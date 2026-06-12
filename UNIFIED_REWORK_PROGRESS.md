@@ -9702,3 +9702,175 @@ Static review: full-diff re-read; brace/paren balance pass on ResidentialArrange
 new-guide integer arithmetic simulated externally against the CITYTEST5 demand set
 (11/11 leaves, no overlaps, assignment verified); gridGuide + bsp core byte-diffed
 against main.
+
+### 2026-06-11 — City-morphology step 1: quarter shelf-leaf alleys (4c-c r4) + road formality v1 (anchor-distance proxy)
+
+Executes build-order step 1 of `.claude/planning/11-CITY-MORPHOLOGY-DESIGN.md` (§4): the
+two visual-payoff fixes, one branch. CITYTEST6 confirmed multi-demand shelf leaves pack
+the quarter's back rows as a dense slab; the core streets read organic everywhere.
+
+**Task 1 — shelf-leaf internal alleys (`ResidentialArranger`).**
+
+Adjacent shelf ROWS inside a multi-demand leaf are now separated by a
+`SHELF_ALLEY_SPAN` (= `GRID_ALLEY_WIDTH`, 2) gap carrying a FOOTPATH alley centerline
+spanning the leaf rect, emitted into the SAME `alleys` collection the BSP-cut alleys use —
+so the new lanes flow through `commitQuarter` → `internalLanes` → unified realizer + the
+router's no-branch mask with zero downstream changes, and storage assignment/`pullToCorridor`
+now front the back rows onto a real lane. Single-row leaves emit no alley.
+
+*The bound stays constructive.* The span enters `shelfFitsOriented` (one span per shelf
+TRANSITION in the stack sum) — the exact arithmetic `emitShelfLeaves` lays out — so the
+guide still never accepts a rect the assignment can't fit. Monotonicity for
+`minFeasibleLen`'s binary search holds: widening the shelf merges rows, dropping both a
+shelf height and its gap span. Span is deliberately the bare alley width, NOT the BSP
+cut's corridor/2+1 margins: every shelf cell keeps footprints ≥ 1 block inside its
+boundary (facing-axis setback via `pullToCorridor`, cross-axis centring), the FOOTPATH
+paint (3 wide) fills the gap plus those margin strips, and each extra bound block costs
+the planner growth steps.
+
+*Paper re-verification, CITYTEST5/6 demand set* (8 crafts at cellSide 22, 2 STABLE at 11,
+yard 13; interior 94x64 of the first 66x96 candidate), simulated with the exact integer
+arithmetic — still cells SINGLE-BLOCK on the FIRST candidate, zero growth steps:
+
+```
+root 94x64  [22×8,13,11,11]   street cut X@46 (clamp [46,48] — unchanged from r3)
+├─ 44x64  [22,22,22,22,13]    alley cut Z@39 (clamp [39,40]; r3 cut @37+2)
+│  ├─ 44x37 [22,22,13]   shelf leaf: (0,0,22,22)(22,0,44,22) ─alley z=23─ (0,24,13,37)
+│  └─ 44x23 [22,22]      shelf leaf: (0,41,22,63)(22,41,44,63)   [single row — no alley]
+└─ 46x64  [22,22,22,22,11,11] shelf leaf: (48,2,70,24)(70,2,92,24) ─alley z=25─
+   (48,26,70,48)(70,26,92,48) ─alley z=49─ (48,50,59,61)(59,50,70,61)
+```
+
+11/11 exact leaves, zero overlaps, Hall/greedy assignment unchanged (cells stay
+exact-size). The r3 slab leaf (46x64 holding 6 demands) now carries TWO internal alleys;
+total 4 alleys (1 BSP cut + 3 shelf). At span+2 (full BSP margins) the root street cut
+goes infeasible at 94 (minA 48 + minB 44 + 4 = 96) and costs a growth step to 112 long —
+rejected.
+
+**Task 2 — road formality v1 (`RoadFormality`, new, Layer4).**
+
+Per-edge formality for VILLAGE edges, the SIMPLE PROXY step 2 replaces: sampled from the
+terrain-warped cost-distance field (`Cell.distToAnchor` — cheaply reachable: the adapter
+has `fmap` in scope at realization and the planner always had it; PREFERRED over Euclidean
+per the §1 ruling) at the edge ENDPOINT midpoint (invariant under the geometry rewrite, so
+the planner's and realizer's samples always agree). Thresholds are constants documented as
+step-2 replacement targets: FORMAL < 50 cost units (≈ blocks on open ground), MIXED < 100,
+ORGANIC beyond + every null/unreached fallback.
+
+- *FORMAL geometry — planning layer (invariant 7).* `RoadFormality.applyGeometry` rewrites
+  the routed `NetworkSpec` in `PhasedPlanner` immediately after `BlockServingRouter.route`,
+  BEFORE any consumer: RDP-straighten (ε 1.5 — kills the A* cell-path micro-wiggle, stays
+  inside the painted corridor) + district-approach snap (final segment into a `district:`
+  node becomes an axis-aligned L meeting the district's axis-aligned BSP streets at a right
+  angle; skipped when lateral ≤ 1 — near-aligned — or > 6 — bounded adjustment only).
+  Endpoints never move (gateway matching safe). Skeleton segments, vegetation clearing,
+  `orientToRoads`, `InternalRoadCommitter` (NPCs walk the painted centerline) and the
+  realizer all see ONE geometry.
+- *FORMAL paint.* `VillageRoadRealizer` (overloads taking `fmap`; legacy 3-arg = all-ORGANIC,
+  byte-identical): FORMAL edges paint with `PathMaterial.stoneBrick()` — the TOWN_ROAD/
+  STONE_BRICK tier base, the most formal surface the existing tier machinery has (no new
+  palette system; per-culture formal palettes deferred to culture work per §4) — and a new
+  `crisp` flag threaded `UnifiedRoadPlacer` → `OrganicRoadPlacer` (delegating overloads):
+  crisp suppresses the EDGE-zone noise dropout (clean boundary) and samples CORE material
+  across the full width (no accent speckle). Trunk reads full 7-wide solid stone.
+- *MIXED / ORGANIC*: byte-identical to today (same objects planning-side, same call chain
+  + RNG paint-side). MIXED is distinguished from ORGANIC only as a classification in v1;
+  its "light curvature" IS the current look. Rural/gateway spurs land ORGANIC by distance.
+- *District-internal streets/lanes*: already straight; `realizePaths` applies the same
+  per-path sample for surface-only formal treatment (no jitter exists to double-suppress).
+- *Great roads + inter-village connectors*: UNTOUCHED — `EdgeRealizer`, `RoadShape`,
+  `PathMaterial`, `CulturePalette`, `PaletteRegistry` have zero diff; the `RoadEdge`
+  overloads reach the new core via `crisp=false` delegation (identical behavior + RNG).
+
+**Surface area:** 1 new file (`Layer4/RoadFormality.java` — enum + sampler + geometry
+pass); 6 edits (`ResidentialArranger` — span constant, gap-aware bound, alley-emitting
+shelf leaves, guide wiring; `PhasedPlanner` — one-line geometry pass at the routing seam;
+`VillageRoadRealizer` — fmap overloads + formal material/crisp; `UnifiedRoadPlacer`,
+`OrganicRoadPlacer` — crisp delegating overloads; `V2VillageSpawnerAdapter` — pass fmap).
+
+**Tie-In Audit:**
+- *NFDH bound consumers:* `shelfFits`/`minFeasibleLen`/`emitShelfLeaves` are called only by
+  `quarterGuide` (grep-verified); `arrangeQuarter` (sole guide caller) wires the alleys
+  list; `seatQuarterBlock` (sole `arrangeQuarter` caller) and the grow/split/row/lots
+  ladder are untouched — a now-tighter bound at boundary demand sets correctly costs
+  growth steps, which the existing loop owns. `leaves.size()` contract unchanged (alleys
+  add no leaves). `gridGuide` + the shared `bsp` core byte-diffed IDENTICAL to main.
+- *Realizer callers:* `VillageRoadRealizer.realize`/`realizePaths` called only by
+  `V2VillageSpawnerAdapter` (both updated to pass fmap). `UnifiedRoadPlacer` 9-arg core:
+  only `VillageRoadRealizer` (moved to 10-arg); `RoadEdge` overloads: only `EdgeRealizer`
+  (file untouched). `OrganicRoadPlacer.place` 6-arg: `VillageRoadNetwork` + internal
+  `upgrade` — unchanged via delegation. `RoadShape.shouldPlaceEdge`: also `PlazaPaver` —
+  RoadShape untouched.
+- *Routed-geometry consumers (the rewrite's downstream):* Skeleton segment decomposition,
+  vegetation clearing, `buildRealizedLayout`, `GatewayPopulator` (positions: endpoints
+  unmoved), `InternalRoadCommitter` cellPath, `orientToRoads`, auto-dump — all read the
+  spec AFTER the pass; none read it before (insertion is at the `route(...)` return).
+- *Router mask + new alleys:* shelf alleys join `QuarterArrangement.alleys` → the same
+  `commitQuarter` loop (truncate at footprints, snap to surface, FOOTPATH tier,
+  no-branch mask) — no new pipeline path.
+- *Exhaustive switches:* `RoadFormality` is new with no switches anywhere (== checks only);
+  no existing enums gained values. No codec/record fields added (SmoothedPath rebuilt
+  with its existing 5 fields). No per-tick code; logging is one INFO per village spawn
+  (formality counts) + an extended existing realizer INFO.
+
+**Simplification Sweep:** net +1 class with two concrete consumers (planner + realizer) —
+justified as the step-2 attachment point. No orphans created; the delegating overloads
+replace nothing (no existing call sites changed semantics). Flagged, not taken: the
+thrice-duplicated civicReach/dirs computation (r2 flag) remains; `VillageRoadNetwork`'s
+direct `OrganicRoadPlacer` use looks legacy (V1-era painter path) — candidate for a later
+conversion sweep, out of scope here.
+
+**Deviations from prompt:**
+- The shelf-alley span is the bare `GRID_ALLEY_WIDTH` (2), not the BSP cut convention's
+  corridor+2: the prompt required the width to enter the bound AND the CITYTEST set to
+  stay single-block — at the cut convention's span the first candidate goes root-infeasible
+  by 2 blocks (analysis above). Cell-internal margins make the tight span safe.
+- "Straight segments between waypoints": village edges never had drift/jitter applied at
+  realization (`realize` reads raw waypoints; `SmoothedPath.computeCenterline` is not on
+  this path) — the organic wiggle IS the A* cell path, so FORMAL straightening is
+  RDP-simplification of the routed polyline, done planning-side rather than paint-side so
+  the NPC nav graph walks the same line that gets painted.
+- MIXED is classification-only in v1 (current look already matches "light curvature,
+  mixed paving"); it exists so step 2 has all three bands to re-key.
+- Fiction note (ROADS_PLAN invariant 12): default cultures "have no formal tradition",
+  yet a default-culture CITY core now paints stone brick. Garrett's explicit ask; §4
+  defers per-culture formal palettes to the culture work — flagging the tension rather
+  than inventing a palette system here.
+
+**Out-of-scope but flagged:**
+- Formality applies per-EDGE; a long edge straddling the formal boundary is classified by
+  its midpoint and painted uniformly. Step 2's budget-based profile (or edge splitting at
+  band crossings) is the real fix.
+- The crisp pass keeps `stoneBrick()`'s 4-block core mix; a kerb/gutter treatment for
+  formal streets (the imperial gutter pass generalized) would sharpen the edge further.
+- Quarter central streets in the MIXED band stay gravel while a FORMAL router street may
+  meet them at the gate — a visible seam only when the quarter sits exactly on the formal
+  boundary; acceptable until step 2's zone affinity.
+- `VillageRoadNetwork`'s direct `OrganicRoadPlacer.place` call (above).
+
+**Smoke test plan (user-executable):**
+1. Superflat CITY (CITYTEST5 conditions) → log shows `workshop quarter: 10/10 crafts
+   placed (1 block(s))` on the FIRST candidate (no `growing the along-band length` INFO
+   expected for this set), and `road formality (v1 anchor-distance proxy): N formal
+   edge(s) straightened (...)` with N ≥ 1.
+2. In the quarter: the back shelf rows are separated by FOOTPATH alleys (the CITYTEST6
+   slab now has a lane between every adjacent row); single-row groups have none; storage
+   buildings front an alley; no building overlaps an alley (`OverlapAuditor` silent).
+3. Core streets (within ~50 of the anchor): straight runs, solid stone-brick-dominant
+   surface, full-width crisp boundary (trunk reads 7 wide); where a core street meets a
+   district street it arrives axis-aligned (right angle).
+4. Outskirts (beyond ~100) + the gateway spurs (the "top-left connector" class of edges):
+   byte-identical to a pre-branch spawn — organic ragged edges, culture dirt/gravel mix.
+5. Inter-village connectors / great roads near the village: unchanged (EdgeRealizer path
+   untouched).
+6. TOWN sanity: spawns clean; its small core may show a few formal edges; workshop
+   row/lots lines unchanged (row path doesn't touch the quarter guide).
+7. GRID_BLOCKS regression: `/litv district residential grid_blocks` on the SAME SEED as a
+   pre-branch world → identical street/alley/house layout (gridGuide + bsp core
+   byte-identical, diff-verified).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net;
+JRE-only JDK, no javac). Static review: full-diff re-read; lexer-accurate brace/paren/
+bracket balance on all 7 files; new-guide integer arithmetic simulated externally against
+the CITYTEST5 demand set (11/11 leaves, no overlaps, single-block first candidate);
+gridGuide + bsp core byte-diffed against main; great-road files zero-diff.
