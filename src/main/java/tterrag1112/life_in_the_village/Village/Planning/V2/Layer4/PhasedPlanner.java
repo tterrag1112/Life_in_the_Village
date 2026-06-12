@@ -2373,10 +2373,27 @@ public final class PhasedPlanner {
                         rowGate, workshopCount, cellPitch, craftDepth, edgeNode,
                         ResidentialVariant.STREET_ROW, 0L);
                 int placed = 0;
-                for (int i = 0; i < craftList.size() && i < arr.houses().size(); i++) {
-                    ResidentialArranger.HousePlacement hp = arr.houses().get(i);
-                    if (materializeBuilding(state, craftList.get(i),
-                            hp.centre(), hp.faceTarget()) != null) placed++;
+                for (int i = 0; i < craftList.size(); i++) {
+                    ResidentialArranger.HousePlacement hp =
+                            i < arr.houses().size() ? arr.houses().get(i) : null;
+                    if (hp != null && materializeBuilding(state,
+                            craftList.get(i), hp.centre(),
+                            hp.faceTarget()) != null) {
+                        placed++;
+                        continue;
+                    }
+                    // 4c-c fix-up round 2 — row drops reach state.dropped
+                    // (the row gate exists, so the batch pass skips crafts —
+                    // this IS the terminal drop).
+                    String why = hp == null
+                            ? "no row position (row shorter than the craft set)"
+                            : "row position failed to materialise"
+                                    + " (terrain/reservation)";
+                    state.dropped.add(new DroppedBuilding(craftList.get(i),
+                            DropReason.NO_VIABLE_CANDIDATE,
+                            "workshop craft row: " + why));
+                    LOGGER.warn("workshop craft row: dropped {} — {}",
+                            craftList.get(i), why);
                 }
                 // Lane fronting the row → FOOTPATH (connects via the workshop
                 // gate's district node, same as residential street-row lanes).
@@ -2412,6 +2429,12 @@ public final class PhasedPlanner {
         int lotInner = Math.max(civicReach + DISTRICT_GAP, lotHalf + DISTRICT_GAP);
         int lotOuter = Math.max(lotInner, state.villageRadius - lotHalf);
         int placed = 0, dropped = 0;
+        // 4c-c fix-up round 2 — lot drops are collected and flushed to
+        // state.dropped only when at least one workshop gate seated: with
+        // ZERO gates the batch pass re-attempts the whole craft set via the
+        // scorer (the craft-skip guard keys on a non-empty gate list) and
+        // does its own drop accounting — recording here would double-count.
+        List<DroppedBuilding> lotDrops = new ArrayList<>();
         for (int k = 0; k < craftList.size(); k++) {
             BuildingType craft = craftList.get(k);
             double startAngle = dirs.get(k % dirs.size()) + Math.PI / 8.0;
@@ -2425,6 +2448,11 @@ public final class PhasedPlanner {
             }
             if (gate == null) {
                 dropped++;
+                lotDrops.add(new DroppedBuilding(craft,
+                        DropReason.NO_VIABLE_CANDIDATE,
+                        "workshop lots: no clear " + (2 * lotHalf) + "x"
+                                + (2 * lotHalf) + " lot anywhere in the"
+                                + " buildable extent"));
                 LOGGER.warn("workshop lots: dropped {} — no clear {}x{} lot"
                         + " anywhere in the buildable extent (centre swept"
                         + " r=[{}, {}], every bearing)", craft, 2 * lotHalf,
@@ -2437,6 +2465,10 @@ public final class PhasedPlanner {
                 placed++;
             } else {
                 dropped++;
+                lotDrops.add(new DroppedBuilding(craft,
+                        DropReason.NO_VIABLE_CANDIDATE,
+                        "workshop lots: lot seated but the footprint failed"
+                                + " to materialise (reservation overlap)"));
                 // Un-seat — a craft-less gate must not linger in the
                 // masks/exclusions/connection nodes.
                 state.workshopGates.remove(gate);
@@ -2444,6 +2476,15 @@ public final class PhasedPlanner {
                         + " ({},{}) but the footprint failed to materialise"
                         + " (reservation overlap)", craft, centre.getX(),
                         centre.getZ());
+            }
+        }
+        if (!lotDrops.isEmpty()) {
+            if (state.workshopGates.isEmpty()) {
+                LOGGER.info("workshop lots: no gate seated — {} craft(s) fall"
+                        + " through to the batch scorer pass (drops not"
+                        + " recorded here)", lotDrops.size());
+            } else {
+                state.dropped.addAll(lotDrops);
             }
         }
         // Diagnostics (read-only) — row block didn't fit; per-craft lots.
@@ -2686,6 +2727,19 @@ public final class PhasedPlanner {
                 Polygon.AABB fp = materializeBuilding(state, qs.crafts().get(i),
                         hp.centre(), hp.faceTarget());
                 if (fp != null) { placed++; footprints.add(fp); }
+                else {
+                    // 4c-c fix-up round 2 — workshop drops reach the
+                    // planner's dropped list (the final placed/dropped line
+                    // and the layout dump understated craft drops). The
+                    // quarter's gates exist, so the batch pass skips the
+                    // craft set — this IS the terminal drop.
+                    state.dropped.add(new DroppedBuilding(qs.crafts().get(i),
+                            DropReason.NO_VIABLE_CANDIDATE,
+                            "workshop quarter: cell placement failed to"
+                                    + " materialise (terrain/reservation)"));
+                    LOGGER.warn("workshop quarter: dropped {} — cell placement"
+                            + " failed to materialise", qs.crafts().get(i));
+                }
             }
             // Central street + entry render one tier up (VILLAGE_PATH); alleys
             // at FOOTPATH. Same truncate/snap treatment as the residential
