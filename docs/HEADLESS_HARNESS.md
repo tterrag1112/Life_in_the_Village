@@ -24,12 +24,14 @@ things along the way is worthless as a regression gate.
 > INVALID until re-recorded.** It measures the pre-district planner —
 > roads-first placement, no civic/market/residential/workshop
 > districts, `FARMHOUSE`/`WELL`/`SHRINE`/`TREASURY` placing freely.
-> The current planner ships with `DISTRICT_ONLY_MODE` on (see below),
-> so a `check` run against the old baseline floods false per-type
-> regressions (every non-district type reads as "dropped to 0") and
-> carries no district metrics at all (schema v1 has no `district`
-> block; it reads back as empty). **Re-record before trusting any
-> diff** — see the one command below.
+> The shipped planner has since gained the district passes (and the
+> agriculture-ring stage-2 flip retired the `DISTRICT_ONLY_MODE`
+> scaffold entirely — battery runs now exercise the REAL production
+> pipeline, selection unfiltered), so a `check` run against the old
+> baseline floods false per-type regressions and carries no district
+> metrics at all (schema v1 has no `district` block; it reads back as
+> empty). **Re-record before trusting any diff** — see the one
+> command below.
 
 ### Re-recording (the one command)
 
@@ -42,23 +44,20 @@ output (schema v2, district metrics included) and never fails. Commit
 the regenerated file. After that, `./gradlew test --tests
 HeadlessHarnessTest` (check mode) gates against it.
 
-### `DISTRICT_ONLY_MODE`
+### `DISTRICT_ONLY_MODE` (retired — agriculture-ring stage 2)
 
-`PhasedPlanner.DISTRICT_ONLY_MODE` is `true` in shipped code: the
-planner filters its reconciled roster to the 13 district-member types
-(civic core, market, residential, craft set) and skips the rural +
-loose passes, so Garrett can read the districted work in isolation.
-**The harness measures the planner as it actually ships** — it does
-not toggle the flag. Rationale: the flag is a compile-time
-`static final` constant, and the baseline philosophy is "measure
-reality, bugs and all." Forcing it off would measure a mode that
-isn't running in-game; the new district-reservation metrics (group 8)
-are precisely what make the ON-mode runs meaningful. When Garrett
-flips the flag off for a full-village pass, re-record — the diff will
-show the filtered types returning, which is the intended signal, not a
-regression. (If a future need arises to run both modes in one battery,
-the flag would have to drop `final`; that's a deliberate production
-change, out of scope for the metrics refresh.)
+`PhasedPlanner.DISTRICT_ONLY_MODE` no longer exists. It was a
+temporary Stage-4b dev scaffold that filtered the reconciled roster
+to district-member types (and relaxed the adapter's Layer-5 viability
+abort) so the districted work could be read in isolation. The
+agriculture-ring stage-2 flip deleted the constant and every read
+site: battery runs now exercise the real production pipeline —
+selection unfiltered, farmstead ring live, viability abort restored
+(the only surviving relax is the selection-override dev seam).
+**The harness still measures the planner exactly as it ships**; there
+is no mode to toggle. A baseline recorded while the flag was on
+predates the flip — re-record (the diff shows the former-loose types
+returning, which is the intended signal, not a regression).
 
 The harness writes its output to standard out as a fixed-width table
 designed for chat-paste:

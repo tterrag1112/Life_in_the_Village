@@ -7,10 +7,12 @@ harness diffs against in `check` mode.
 > is INVALID until re-recorded.** It measures the pre-district planner
 > (roads-first, no civic/market/residential/workshop districts, with
 > `FARMHOUSE`/`WELL`/`SHRINE`/`TREASURY` placing freely). The shipped
-> planner runs with `DISTRICT_ONLY_MODE` on, so a `check` against this
-> file floods false per-type regressions and carries no district
-> metrics (schema v1 has no `district` block). Re-record before
-> trusting any diff.
+> planner now runs the full district pipeline (the agriculture-ring
+> stage-2 flip retired `DISTRICT_ONLY_MODE`; battery runs exercise
+> the real production path, selection unfiltered), so a `check`
+> against this file floods false per-type regressions and carries no
+> district metrics (schema v1 has no `district` block). Re-record
+> before trusting any diff.
 
 ## Re-recording (the one command)
 
@@ -32,5 +34,5 @@ back empty), but the district gates can't fire until a v2 baseline
 exists.
 
 See [`docs/HEADLESS_HARNESS.md`](../docs/HEADLESS_HARNESS.md) for the
-full contract, including the `DISTRICT_ONLY_MODE` decision and the
-district metric definitions.
+full contract, including the (retired) `DISTRICT_ONLY_MODE` history
+and the district metric definitions.
