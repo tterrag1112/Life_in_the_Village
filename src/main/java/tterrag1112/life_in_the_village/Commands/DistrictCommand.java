@@ -31,9 +31,11 @@ import java.util.Optional;
  * residential variants + their tiling can be iterated by eye without a full
  * village. The town hall gives a stable civic anchor/precinct (visual
  * reference); the residential blocks place beyond it and tile as {@code count}
- * grows. {@code DISTRICT_ONLY_MODE} keeps loose buildings off (the
- * forced roster here has no FARMHOUSE, so the agriculture ring stays
- * out of this tool's frame too).
+ * grows. The forced roster itself keeps the frame minimal (it has no
+ * FARMHOUSE, so the agriculture ring stays out too); the
+ * selection-override seam also relaxes the Layer-5 viability abort in
+ * the adapter — a two-type roster is an intentional partial village
+ * (stage-2 flip: production spawns abort on viability failure again).
  *
  * <p>{@code [variant]} forces every placed block to that
  * {@link ResidentialVariant} (A1 stage 1 — the forced value reaches

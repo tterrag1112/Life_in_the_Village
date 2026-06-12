@@ -81,9 +81,10 @@ public final class DistrictRecipes {
     //                     stables last — moved here OUT of the
     //                     WORKSHOP_QUARTER craft set); SHRINE cap 1 is
     //                     per RING (one wayside shrine on a rural lane).
-    //                     Membership re-admits these types through the
-    //                     DISTRICT_ONLY_MODE filter — farms at normal
-    //                     spawns are stage 1's intended behaviour.
+    //                     (Stage-2 flip: the DISTRICT_ONLY_MODE filter
+    //                     this membership once re-admitted them through
+    //                     is gone; membership now drives the ring-pass
+    //                     routing and batch classification only.)
     // =====================================================================
 
     private static final Map<DistrictType, List<Member>> DEFAULTS;
@@ -120,29 +121,20 @@ public final class DistrictRecipes {
     /** Per-(district, tier) member-TYPE sets, precomputed so hot callers
      *  ({@code getBatch}, the batch-loop skips) pay one map lookup. */
     private static final Map<ViabilityTier, Map<DistrictType, EnumSet<BuildingType>>> TYPE_SETS;
-    /** Per-tier union of every district's member types — the
-     *  DISTRICT_ONLY_MODE roster filter (old {@code DISTRICT_TYPES}). */
-    private static final Map<ViabilityTier, EnumSet<BuildingType>> ALL_TYPES;
     static {
         Map<ViabilityTier, Map<DistrictType, EnumSet<BuildingType>>> ts =
-                new EnumMap<>(ViabilityTier.class);
-        Map<ViabilityTier, EnumSet<BuildingType>> all =
                 new EnumMap<>(ViabilityTier.class);
         for (ViabilityTier tier : ViabilityTier.values()) {
             Map<DistrictType, EnumSet<BuildingType>> perDistrict =
                     new EnumMap<>(DistrictType.class);
-            EnumSet<BuildingType> union = EnumSet.noneOf(BuildingType.class);
             for (DistrictType dt : DistrictType.values()) {
                 EnumSet<BuildingType> types = EnumSet.noneOf(BuildingType.class);
                 for (Member m : members(dt, tier)) types.add(m.type());
                 perDistrict.put(dt, types);
-                union.addAll(types);
             }
             ts.put(tier, perDistrict);
-            all.put(tier, union);
         }
         TYPE_SETS = Map.copyOf(ts);
-        ALL_TYPES = Map.copyOf(all);
     }
 
     /**
@@ -166,12 +158,6 @@ public final class DistrictRecipes {
     public static EnumSet<BuildingType> memberTypes(DistrictType district,
                                                     ViabilityTier tier) {
         return TYPE_SETS.get(tier).get(district);
-    }
-
-    /** Union of all districts' member types at {@code tier} — the
-     *  DISTRICT_ONLY_MODE placement filter (cached; do not mutate). */
-    public static EnumSet<BuildingType> allMemberTypes(ViabilityTier tier) {
-        return ALL_TYPES.get(tier);
     }
 
     /** Per-district cap for {@code type} at {@code tier}; 0 when the type

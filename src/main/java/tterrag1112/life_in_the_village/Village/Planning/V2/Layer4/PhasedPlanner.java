@@ -190,31 +190,15 @@ public final class PhasedPlanner {
                 ? Set.copyOf(tradeFulfilledTypes) : Set.of();
         state.forcedResidentialVariant = forcedResidentialVariant;
 
-        // Stage 4b fix-up — temporary district-only dev mode. When on, filter
-        // placement to district-member types only so Garrett can read the
-        // districted work without the loose buildings crowding the view.
-        // Agriculture-ring stage 1 — FARMHOUSE / STABLE / SHRINE are now
-        // AGRICULTURE recipe members, so they PASS this filter and place via
-        // the farmstead-ring pass: farms at normal spawns under the flag is
-        // the intended stage-1 behaviour (design doc 13 §4). Loose types
-        // (MINE, GUARD_TOWER, CASTLE, ...) stay filtered until the stage-2
-        // flip. Reversible: with the flag off, `selection` == the
-        // untouched `sortedSelection` and behaviour is byte-for-byte today's.
-        // The roster/reconciliation upstream is untouched (this filters their
-        // already-reconciled output). NOT a permanent roster change.
-        // Step 3 — the member-type set is read from the composition recipes
-        // (DistrictRecipes.allMemberTypes: the union of every district's
-        // member table at this tier), not a hardcoded constant.
-        EnumSet<BuildingType> districtMemberTypes =
-                DistrictRecipes.allMemberTypes(ctx.tier());
-        List<BuildingType> selection = DISTRICT_ONLY_MODE
-                ? sortedSelection.stream().filter(districtMemberTypes::contains).toList()
-                : sortedSelection;
-        if (DISTRICT_ONLY_MODE) {
-            LOGGER.info("DISTRICT_ONLY_MODE on: {} of {} selected types kept "
-                    + "(district members only; rural + loose skipped)",
-                    selection.size(), sortedSelection.size());
-        }
+        // Agriculture-ring stage 2 — THE FLIP. The DISTRICT_ONLY_MODE
+        // scaffold (Stage 4b dev mode) is retired: the reconciled selection
+        // places UNFILTERED. District members route through their district
+        // passes (civic ring, market hall, workshop quarter, residential
+        // precincts, farmstead ring); the scorer-loose remainder (MINE,
+        // CASTLE, TREASURY — the only non-district types a roster can
+        // currently select; see the stage-2 PROGRESS audit) places through
+        // its nucleus-affinity batches, as it did before districts existed.
+        List<BuildingType> selection = sortedSelection;
 
         Set<BuildingType> foundationTypes = computeFoundationTypes(selection);
         LOGGER.info("PhasedPlanner.run: tier={} axis={} anchor=({},{},{})"
@@ -2196,22 +2180,6 @@ public final class PhasedPlanner {
     // Stage 4b — residential districts (footprint-sized HOUSE blocks)
     // =========================================================================
 
-    /** Stage 4b fix-up — temporary district-only dev mode. When true, only the
-     *  district-member types ({@link DistrictRecipes#allMemberTypes} — the
-     *  union of every district recipe's member table at the tier) place; the
-     *  LOOSE buildings (MINE, GUARD_TOWER, CASTLE, ...) are filtered out so
-     *  the districted work is legible in isolation. Agriculture-ring stage 1
-     *  — FARMHOUSE / STABLE / SHRINE are AGRICULTURE recipe members, so the
-     *  farmstead ring places under the flag (intended; design doc 13 §4).
-     *  The stage-2 flip deletes this scaffold entirely. Reversible: off ⇒
-     *  the pre-district full village exactly.
-     *
-     *  <p>Public so the spawner adapter can RELAX the Layer-5 viability abort
-     *  while it's on: a district-only roster can sit below a tier's diversity
-     *  minimum, so a district-only village is legitimately "not viable" by the
-     *  full-village rule — the adapter logs and proceeds instead of aborting
-     *  (it's an intentional partial village). */
-    public static final boolean DISTRICT_ONLY_MODE = true;
     /** 4c-a — batch the craft set runs in (after the batch-3 hook reserves the
      *  workshop precincts; NOT batch 3, so they leave the civic precinct). */
     private static final int WORKSHOP_BATCH = 4;
@@ -2248,11 +2216,6 @@ public final class PhasedPlanner {
      *  border clearance + this yard (2·yardHalf) — NOT cellPitch (which is the
      *  tangential along-perimeter spacing, on the long axis only). */
     private static final int COURTYARD_YARD_HALF = 3;
-    /** Centrality-band Part 1 — radial ring (blocks) kept for FARMS beyond the
-     *  residential band, so pushing residential out doesn't starve the rural
-     *  pass. The band clamps to leave this; if that makes the band too shallow
-     *  for a courtyard, the 3a street fallback applies (never drop farms). */
-    private static final int RESIDENTIAL_FARM_RESERVE = 10;
     /** Centrality-band Part 1 — minimum band depth (blocks) so a street precinct
      *  always fits even when the extent can't host a courtyard-deep band. */
     private static final int RESIDENTIAL_MIN_BAND_DEPTH = 24;
@@ -2338,11 +2301,12 @@ public final class PhasedPlanner {
 
         // Centrality-band Part 1 — reserve residential a dedicated ring just
         // OUTSIDE the civic precinct, deep enough for a courtyard where the
-        // extent allows, and keep FARMS beyond it (residentialBandOuterR, read
-        // by the rural exclusion in findBestCandidate). innerR clears the civic
-        // precinct; the depth targets the COURTYARD short-axis but clamps to the
-        // extent (leaving a farm ring) — if it clamps below courtyard depth, 3a's
-        // street fallback still applies (never force, never drop farms).
+        // extent allows. residentialBandOuterR is read by the rural exclusion
+        // in findBestCandidate and by reserveAgricultureRing, whose inner
+        // edge starts beyond it — farmsteads live PAST the band by
+        // construction. innerR clears the civic precinct; the depth targets
+        // the COURTYARD short-axis but clamps to the extent — if it clamps
+        // below courtyard depth, 3a's street fallback still applies.
         int civicReach = 0;
         if (state.civicPrecinct != null) {
             civicReach = Math.max(
@@ -2360,17 +2324,16 @@ public final class PhasedPlanner {
             districtDepth = Math.max(districtDepth, 2 * Math.min(vd[0], vd[1]));
         }
         int extentCap = state.villageRadius;
-        // Residential gets the ring outside civic up to the variant depth, but
-        // never past (extent − farm reserve) so farms keep a ring. If the extent
-        // can't host a usable band that still leaves farm room, the band is
-        // DISABLED (fall back to 3a's open sweep, bounded only to the extent;
-        // never starve farms) — true for tight tiers (TOWN/HAMLET).
-        // Fix-up — under DISTRICT_ONLY_MODE the rural/farm pass is skipped, so
-        // there are NO farms to reserve a ring for; subtracting the reserve there
-        // only needlessly disabled the band (→ the fill never seated, bald band).
-        // Use reserve 0 when district-only; keep it for the flag-off full village.
-        int farmReserve = DISTRICT_ONLY_MODE ? 0 : RESIDENTIAL_FARM_RESERVE;
-        int bandCap = extentCap - farmReserve;
+        // Residential gets the ring outside civic up to the variant depth,
+        // bounded by the extent. If the extent can't host a usable band, the
+        // band is DISABLED (fall back to 3a's open sweep, bounded only to the
+        // extent) — true for tight tiers (TOWN/HAMLET). Stage-2 flip —
+        // RESIDENTIAL_FARM_RESERVE is GONE: it pre-reserved extent for the
+        // OLD scorer-driven farm pass; wedge farmsteads now live in the
+        // agriculture ring BEYOND the band (reserveAgricultureRing derives
+        // ringInner from the band outers), so the band no longer leaves
+        // farm room.
+        int bandCap = extentCap;
         int bandOuterR;
         boolean bandActive = (bandCap - bandInnerR) >= RESIDENTIAL_MIN_BAND_DEPTH;
         if (bandActive) {
@@ -2790,9 +2753,9 @@ public final class PhasedPlanner {
                     dim + HOUSE_GAP, dim, CRAFT_STORAGE_SET.contains(t)));
         }
         // Band geometry — the same ring reserveResidentialDistricts works in
-        // (inner edge outside the civic precinct, outer capped by the farm
-        // reserve), so the quarter competes for band space as a major
-        // district rather than guessing its own ring.
+        // (inner edge outside the civic precinct, outer at the extent), so
+        // the quarter competes for band space as a major district rather
+        // than guessing its own ring.
         int civicReach = 0;
         if (state.civicPrecinct != null) {
             civicReach = Math.max(
@@ -2800,8 +2763,7 @@ public final class PhasedPlanner {
                     (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
         }
         int bandInner = civicReach + DISTRICT_GAP;
-        int farmReserve = DISTRICT_ONLY_MODE ? 0 : RESIDENTIAL_FARM_RESERVE;
-        int bandCap = state.villageRadius - farmReserve;
+        int bandCap = state.villageRadius;
         int depthAvail = bandCap - bandInner - QUARTER_BAND_MARGIN;
         java.util.List<Double> dirs = residentialDirections(state, anchor);
 

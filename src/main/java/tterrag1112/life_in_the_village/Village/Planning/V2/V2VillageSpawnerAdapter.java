@@ -309,13 +309,16 @@ public final class V2VillageSpawnerAdapter {
         ViabilityValidator.ViabilityCheck check =
                 ViabilityValidator.validate(postTerrain, siteCtx.tier());
         if (!check.viable()) {
-            // Stage 4b fix-up — district-only dev mode legitimately produces a
-            // "partial" village (e.g. CITY can't reach the 6-type diversity
-            // minimum with only the 5 district types). Don't abort while the
-            // flag is on; log and proceed so the districted work is visible.
-            if (PhasedPlanner.DISTRICT_ONLY_MODE) {
+            // Agriculture-ring stage 2 — the DISTRICT_ONLY_MODE viability
+            // relax is GONE: production spawns ABORT on a post-terrain
+            // viability failure again. The one surviving relax is the
+            // selection-OVERRIDE seam (/litv district and forced-roster dev
+            // tooling): an override roster like {TOWN_HALL:1, HOUSE:N} sits
+            // below the tier's diversity minimum BY DESIGN — an intentional
+            // partial village, so log and proceed.
+            if (selectionOverride != null && !selectionOverride.isEmpty()) {
                 LOGGER.info("V2: post-terrain not viable {} — proceeding"
-                        + " (DISTRICT_ONLY_MODE: partial village expected)",
+                        + " (selection override: partial village intended)",
                         check.failureReasons());
             } else {
                 LOGGER.info("V2: post-terrain not viable: {}", check.failureReasons());
