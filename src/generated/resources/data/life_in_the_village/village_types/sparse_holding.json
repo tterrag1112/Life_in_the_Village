@@ -24,10 +24,6 @@
       "structure": "farmhouse/level_1"
     },
     {
-      "type": "WELL",
-      "structure": "stockpile/level_1"
-    },
-    {
       "type": "HOUSE",
       "max_count": 5,
       "min_count": 3,

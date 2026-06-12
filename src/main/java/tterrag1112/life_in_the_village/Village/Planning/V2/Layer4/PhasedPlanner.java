@@ -245,7 +245,7 @@ public final class PhasedPlanner {
         //                       BLACKSMITH near civic nucleus)
         //   4 — resource core  (MINE, WOODCUTTER and their workshops)
         //   5 — HOUSE distribution (the bulk; reads all prior nuclei)
-        //   6 — decorative / small (STOCKPILE, WELL, etc.)
+        //   6 — decorative / small (STOCKPILE, SHRINE, etc.)
         //   7 — farm plots (deferred; FarmComplexPlanner in Layer 5)
         //
         // Batches 1 + 2 are flagged as "foundation" for cell-scoring
@@ -1248,7 +1248,7 @@ public final class PhasedPlanner {
      *  (foundation=false). Phase-3 foundation types (TOWN_HALL,
      *  FARMHOUSE, civic core...) place under low reservation pressure
      *  with the conservative 2-block band; phase-4b types (HOUSE,
-     *  STOCKPILE, WELL, STABLE...) run after the foundation pass has
+     *  STOCKPILE, STABLE...) run after the foundation pass has
      *  saturated the ~620-cell admissible pool and need a deeper band
      *  to keep candidate generation above zero. Conservative 5-block
      *  band so buildings sit a little deeper from the road, not float
@@ -1586,8 +1586,9 @@ public final class PhasedPlanner {
         // CIVIC pull (HOUSE is "the rest of the village," not a
         // core lead).
         if (type == BuildingType.HOUSE) return 5;
-        // Decorative / small.
-        if (type == BuildingType.WELL) return 6;
+        // (WELL retired as a roster type — agriculture-ring stage 1: it
+        // never had building NBT and always self-dropped; wells are
+        // decoration stamps, not placeable buildings.)
         // Batch 3 vs 4: rules.affinities determines which.
         // RESOURCE-preferring types go in batch 4; CIVIC / SACRED /
         // GATEWAY-preferring types go in batch 3.

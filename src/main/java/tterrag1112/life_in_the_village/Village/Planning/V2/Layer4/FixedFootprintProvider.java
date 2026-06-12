@@ -39,7 +39,7 @@ public final class FixedFootprintProvider implements FootprintProvider {
     static {
         // small (8x8)
         for (BuildingType t : new BuildingType[]{
-                BuildingType.HOUSE, BuildingType.WELL, BuildingType.STOCKPILE,
+                BuildingType.HOUSE, BuildingType.STOCKPILE,
                 BuildingType.SHRINE, BuildingType.WATCHTOWER, BuildingType.GUARD_TOWER,
                 BuildingType.HEALER_HUT, BuildingType.PIER, BuildingType.BELL_TOWER}) {
             SIZES.put(t, new int[]{8, 8});

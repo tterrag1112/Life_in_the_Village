@@ -207,7 +207,6 @@ public class VillageTypeDatagen implements DataProvider {
                 .building(BuildingType.TOWN_HALL, "town_hall/level_1")
                 .building(BuildingType.STOCKPILE, "stockpile/level_1")
                 .buildingN(BuildingType.FARMHOUSE, "farmhouse/level_1", 2)
-                .building(BuildingType.WELL, "stockpile/level_1")
                 .buildingRange(BuildingType.HOUSE, "house/level_1", 3, 5)
                 .build();
     }

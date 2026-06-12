@@ -360,8 +360,7 @@ public final class LayoutStrategyRegistry {
                         0.4),
                 Set.of(PRIM_STRAIGHT, PRIM_SPUR),
                 bindings(
-                        BuildingType.HOUSE,      List.of(AnchorType.FLAT_FERTILE),
-                        BuildingType.WELL,       List.of(AnchorType.FLAT_FERTILE)),
+                        BuildingType.HOUSE,      List.of(AnchorType.FLAT_FERTILE)),
                 new StrategyConditions(ViabilityTier.HAMLET, ViabilityTier.CITY, Set.of()),
                 "Houses strung along a road parallel to a linear feature"));
         list.add(new LayoutStrategy(
@@ -378,8 +377,7 @@ public final class LayoutStrategyRegistry {
                 // missed in prompt 3.
                 Set.of(PRIM_STRAIGHT, PRIM_SPUR, PRIM_RING),
                 bindings(
-                        BuildingType.HOUSE,      List.of(AnchorType.FLAT_FERTILE),
-                        BuildingType.WELL,       List.of(AnchorType.FLAT_FERTILE)),
+                        BuildingType.HOUSE,      List.of(AnchorType.FLAT_FERTILE)),
                 StrategyConditions.any(),
                 "Residential heap around a flat-fertile nucleus"));
         list.add(fallback("residential_cluster_fallback", Inclination.RESIDENTIAL,

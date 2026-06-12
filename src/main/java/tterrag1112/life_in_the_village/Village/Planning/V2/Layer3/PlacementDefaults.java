@@ -139,14 +139,6 @@ public final class PlacementDefaults {
                 List.of()));
 
         // Infrastructure ----------------------------------------------
-        m.put(BuildingType.WELL, new PlacementProfile(
-                false, Priority.INFRASTRUCTURE, SizeClass.SMALL, 0.7,
-                List.of(),
-                terrain(Map.of(TerrainFactor.FLAT, 1.0)),
-                adj(Map.of(AdjacencyFactor.NEAR_CIVIC_CENTRE, 1.0,
-                        AdjacencyFactor.NEAR_MAIN_ROAD, 1.0)),
-                Set.of()));
-
         // Production --------------------------------------------------
         // Track E1 prompt 5 — FARMHOUSE no longer consumes HOUSING.
         // A farmhouse IS the homestead of an extended farm family —

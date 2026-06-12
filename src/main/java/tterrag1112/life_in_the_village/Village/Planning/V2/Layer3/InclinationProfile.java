@@ -27,7 +27,7 @@ import java.util.Set;
  *       AGRICULTURAL biases high; RESIDENTIAL/CIVIC low.</li>
  *   <li>{@code buildings} — the service / production / religious /
  *       specialty buildings this inclination builds (beyond the
- *       universal civic core TOWN_HALL + WELL and the housing types
+ *       universal civic core TOWN_HALL and the housing types
  *       HOUSE/FARMHOUSE, which the roster always considers). The
  *       roster further gates terrain-locked entries (MINE, WOODCUTTER,
  *       …) on FeatureMap viability.</li>
@@ -94,7 +94,7 @@ public record InclinationProfile(
         // core capped so a CITY doesn't author 3 chapels.
         return new InclinationProfile(Inclination.AGRICULTURAL, 0.65,
                 EnumSet.of(
-                        BuildingType.WELL, BuildingType.MARKET, BuildingType.INN,
+                        BuildingType.MARKET, BuildingType.INN,
                         BuildingType.CHAPEL, BuildingType.SHRINE,
                         BuildingType.BAKERY, BuildingType.MILLER,
                         BuildingType.BLACKSMITH, BuildingType.CARPENTRY,
@@ -108,7 +108,7 @@ public record InclinationProfile(
     private static InclinationProfile buildIndustrial() {
         return new InclinationProfile(Inclination.INDUSTRIAL, 0.20,
                 EnumSet.of(
-                        BuildingType.WELL, BuildingType.MARKET, BuildingType.INN,
+                        BuildingType.MARKET, BuildingType.INN,
                         BuildingType.CHAPEL, BuildingType.SHRINE,
                         BuildingType.BAKERY, BuildingType.MILLER,
                         BuildingType.MINE, BuildingType.WOODCUTTER,
@@ -126,7 +126,7 @@ public record InclinationProfile(
     private static InclinationProfile buildResidential() {
         return new InclinationProfile(Inclination.RESIDENTIAL, 0.12,
                 EnumSet.of(
-                        BuildingType.WELL, BuildingType.MARKET, BuildingType.INN,
+                        BuildingType.MARKET, BuildingType.INN,
                         BuildingType.CHAPEL, BuildingType.SHRINE,
                         BuildingType.BAKERY, BuildingType.MILLER,
                         BuildingType.BLACKSMITH, BuildingType.CARPENTRY,
@@ -141,7 +141,7 @@ public record InclinationProfile(
     private static InclinationProfile buildCivic() {
         return new InclinationProfile(Inclination.CIVIC, 0.18,
                 EnumSet.of(
-                        BuildingType.WELL, BuildingType.MARKET, BuildingType.INN,
+                        BuildingType.MARKET, BuildingType.INN,
                         BuildingType.CHAPEL, BuildingType.SHRINE,
                         BuildingType.LIBRARY, BuildingType.BELL_TOWER,
                         BuildingType.TREASURY, BuildingType.CHANCELLERY,
@@ -161,7 +161,7 @@ public record InclinationProfile(
         // chapel/shrine caps + pilgrim inns.
         return new InclinationProfile(Inclination.SACRED, 0.22,
                 EnumSet.of(
-                        BuildingType.WELL, BuildingType.MARKET, BuildingType.INN,
+                        BuildingType.MARKET, BuildingType.INN,
                         BuildingType.CHAPEL, BuildingType.SHRINE,
                         BuildingType.TEMPLE, BuildingType.BELL_TOWER,
                         BuildingType.LIBRARY, BuildingType.SCHOLARS_RETREAT,
@@ -179,7 +179,7 @@ public record InclinationProfile(
     private static InclinationProfile buildDefensive() {
         return new InclinationProfile(Inclination.DEFENSIVE, 0.30,
                 EnumSet.of(
-                        BuildingType.WELL, BuildingType.MARKET, BuildingType.INN,
+                        BuildingType.MARKET, BuildingType.INN,
                         BuildingType.CHAPEL, BuildingType.SHRINE,
                         BuildingType.TREASURY, BuildingType.GUARD_TOWER,
                         BuildingType.WATCHTOWER, BuildingType.BARRACKS,

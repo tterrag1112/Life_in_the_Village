@@ -69,7 +69,6 @@ public final class PopulationRoster {
     private static Map<BuildingType, ServiceRule> buildRules() {
         EnumMap<BuildingType, ServiceRule> m = new EnumMap<>(BuildingType.class);
         // Civic core / services.
-        m.put(BuildingType.WELL,        new ServiceRule(0,  60, 3));
         m.put(BuildingType.MARKET,      new ServiceRule(25, 95, 1));
         m.put(BuildingType.INN,         new ServiceRule(35, 60, 2));
         m.put(BuildingType.STABLE,      new ServiceRule(25, 60, 2));

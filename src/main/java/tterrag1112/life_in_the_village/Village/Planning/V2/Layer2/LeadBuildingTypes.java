@@ -33,7 +33,6 @@ public final class LeadBuildingTypes {
             BuildingType.SHRINE,
             BuildingType.TREASURY,
             BuildingType.STABLE,
-            BuildingType.WELL,
             BuildingType.CASTLE);
 
     private LeadBuildingTypes() {}

@@ -102,7 +102,6 @@ public record NucleusRules(
         aff.put(BuildingType.BLACKSMITH, NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 6, 20));
         aff.put(BuildingType.BAKERY,     NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 6, 20));
         aff.put(BuildingType.INN,        NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 6, 20));
-        aff.put(BuildingType.WELL,       NucleusAffinity.of(NucleusKind.CIVIC, 0.6, 4, 16));
         aff.put(BuildingType.CHAPEL,     NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 6, 25));
         return new NucleusRules(
                 new NucleusRef.PrimaryAnchorRef(), null, null,
@@ -115,7 +114,6 @@ public record NucleusRules(
         var aff = new LinkedHashMap<BuildingType, NucleusAffinity>();
         // HOUSE dominates; tight cluster around the civic nucleus.
         aff.put(BuildingType.HOUSE,     NucleusAffinity.of(NucleusKind.CIVIC, 0.9, 8, 25));
-        aff.put(BuildingType.WELL,      NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 0, 12));
         aff.put(BuildingType.TOWN_HALL, NucleusAffinity.of(NucleusKind.CIVIC, 1.0, 0, 8));
         aff.put(BuildingType.INN,       NucleusAffinity.of(NucleusKind.CIVIC, 0.6, 6, 20));
         return new NucleusRules(
@@ -135,7 +133,6 @@ public record NucleusRules(
         aff.put(BuildingType.CHAPEL,     NucleusAffinity.of(NucleusKind.CIVIC, 0.8, 6, 22));
         aff.put(BuildingType.BLACKSMITH, NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 8, 22));
         aff.put(BuildingType.BAKERY,     NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 6, 20));
-        aff.put(BuildingType.WELL,       NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 0, 12));
         aff.put(BuildingType.HOUSE,      NucleusAffinity.of(NucleusKind.CIVIC, 0.7, 18, 35));
         return new NucleusRules(
                 new NucleusRef.PrimaryAnchorRef(), null, null,
@@ -182,7 +179,6 @@ public record NucleusRules(
         aff.put(BuildingType.SHRINE,    NucleusAffinity.of(NucleusKind.SACRED, 1.0, 0, 8));
         aff.put(BuildingType.INN,       NucleusAffinity.of(NucleusKind.SACRED, 0.7, 12, 24));
         aff.put(BuildingType.HOUSE,     NucleusAffinity.of(NucleusKind.SACRED, 0.6, 18, 36));
-        aff.put(BuildingType.WELL,      NucleusAffinity.of(NucleusKind.SACRED, 0.7, 6, 16));
         return new NucleusRules(
                 new NucleusRef.PrimaryAnchorRef(), null,
                 new NucleusRef.PrimaryAnchorRef(),
