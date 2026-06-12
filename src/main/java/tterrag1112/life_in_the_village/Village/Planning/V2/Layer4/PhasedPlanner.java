@@ -3699,9 +3699,15 @@ public final class PhasedPlanner {
      * jittered per wedge. Wedges fill in cost-distance order (cheapest
      * first — density falls outward; stragglers take the costlier wedges).
      * Nucleus SEATS stay inside the zoned cap
-     * ({@link ZonePartition#zonedRadiusCap}); field claims may spill into
-     * the scanned-but-unzoned fringe (flood-fill needs scanned cells, not
-     * zoned ones).
+     * ({@link ZonePartition#zonedRadiusCap}) while it leaves band room;
+     * when the built edge outgrows the cap (district-gate corners may
+     * legally poke past it — the cap derives from VillageExtent, not from
+     * where districts actually seated), the effective cap is raised to
+     * {@code ringInner + minBandDepth} and clamped to the field outer, so
+     * the ring survives instead of inverting. Field claims may spill into
+     * the scanned-but-unzoned fringe either way (flood-fill needs scanned
+     * cells, not zoned ones; nothing in the seat/materialise path gates on
+     * zone membership — buildable category + slope + reservations only).
      *
      * <p>Per node: a modest nucleus clearance (farmhouse + optional stable
      * + yard margin) is swept inside the wedge via {@link #tryGateAt}; then
@@ -3771,8 +3777,6 @@ public final class PhasedPlanner {
             bandsOuter = Math.max(bandsOuter, gateOuterRadius(g, anchor));
         }
         int ringInner = bandsOuter + DISTRICT_GAP;
-        int seatCap = ZonePartition.zonedRadiusCap(state.ctx.tier(),
-                state.fmap.radius());
         int fieldOuter = state.fmap.radius() - FIELD_SCAN_MARGIN;
 
         // Per-farmstead spec inputs — the SAME values realization uses
@@ -3788,6 +3792,52 @@ public final class PhasedPlanner {
                 ? defaultFootprint(state, BuildingType.STABLE) : null;
         int probeMaxRadius = (int) Math.round(
                 Math.max(fhFp.width(), fhFp.length()) * radiusMult);
+
+        // Band-cap fix (CITYTEST6) — zonedRadiusCap derives from
+        // VillageExtent × tier factor, NOT from where the districts ended
+        // up; district gates are seated on centre radius and their CORNERS
+        // legally poke past the cap (gateOuterRadius is farthest-corner
+        // Euclidean). On a CITY whose workshop quarter cornered at ~149,
+        // ringInner (153) overtook the cap (140) and every wedge dropped
+        // NO_VIABLE_COMPLEX_PARCEL without one flood-fill probe. The
+        // nucleus band must survive the built edge outgrowing the zoned
+        // cap: raise the effective cap to fit at least one nucleus seat
+        // plus one radial sweep step (seatFarmstead sweeps r += 4), and
+        // clamp to fieldOuter (a seat past it would seed its field probe
+        // off-grid). minBandDepth is derived from the same geometry
+        // seatFarmstead uses for halfRadial — the worst case (stable
+        // dealt), so every wedge's seat window is non-empty.
+        int maxHalfRadial = Math.max(fhFp.length(),
+                stFp != null ? stFp.length() : 0) / 2 + FARMSTEAD_YARD_MARGIN;
+        int minBandDepth = 2 * maxHalfRadial + 4;
+        int seatCap = Math.min(fieldOuter, Math.max(
+                ZonePartition.zonedRadiusCap(state.ctx.tier(),
+                        state.fmap.radius()),
+                ringInner + minBandDepth));
+
+        // Degenerate band — even the raised cap can't fit one nucleus
+        // (ringInner pushed against the scan edge). One WARN for the one
+        // geometric fact; the drops are still recorded (the planner result
+        // and dump accounting need them), but not one log line per wedge.
+        if (ringInner + 2 * maxHalfRadial > seatCap) {
+            int bandLo = ringInner + maxHalfRadial;
+            int bandHi = seatCap - maxHalfRadial;
+            LOGGER.warn("agriculture ring: band empty (inner {} > cap {})"
+                    + " — {} farmstead(s) skipped", bandLo, bandHi, farmCount);
+            for (int k = 0; k < farmCount; k++) {
+                state.dropped.add(new DroppedBuilding(BuildingType.FARMHOUSE,
+                        DropReason.NO_VIABLE_COMPLEX_PARCEL,
+                        "agriculture ring: band empty (seat band [" + bandLo
+                                + ", " + bandHi + "] inverted; ring inner "
+                                + ringInner + ", cap " + seatCap + ")"));
+            }
+            state.agriFarmhouseSkip = farmCount;
+            state.agriStableSkip = 0;
+            state.districtAccum.farmsteadsSeated = 0;
+            state.districtAccum.farmsteadsDryRunFailed = farmCount;
+            state.districtAccum.farmsteadsPlaced = 0;
+            return;
+        }
 
         // The wedge fan, gateway-rotated + jittered, sorted by the
         // cost-distance of each wedge's mid-ring sample.
