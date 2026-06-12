@@ -2635,14 +2635,15 @@ public final class PhasedPlanner {
      *  the demand area, floored so the root street cut can host the two
      *  biggest cells side by side), seats it oriented along the band, and
      *  DRY-RUNS the demand BSP. 4c-c fix-up round 2 — sizing is
-     *  CELLABILITY-DRIVEN, not area-driven: the area estimate underestimates
-     *  what the BSP can cell (corridor cuts + the corridor/2+1 footprint
-     *  margins, and {@code quarterGuide}'s proportional cut landing is
-     *  clamped only to each side's single BIGGEST demand, so a subtree
-     *  holding several demands can starve regardless of total area — no
-     *  closed-form size is provably sufficient). On a cellability failure
-     *  the block GROWS its along-band length (depth stays band-clamped) and
-     *  re-seats, up to {@link #QUARTER_GROWTH_STEPS} times.
+     *  CELLABILITY-DRIVEN, not area-driven: the area estimate is a heuristic
+     *  (corridor cuts + the corridor/2+1 footprint margins are not in it),
+     *  so the dry run is the arbiter. 4c-c r3 made the guide subtree-aware
+     *  (each cut side must shelf-pack its WHOLE partition), so the first
+     *  candidate converges in the common case; the growth loop stays as the
+     *  safety net for genuinely undersized rectangles. On a cellability
+     *  failure the block GROWS its along-band length (depth stays
+     *  band-clamped) and re-seats, up to {@link #QUARTER_GROWTH_STEPS}
+     *  times.
      *  {@code arrangeQuarter} is pure (no planner state touched), so the
      *  dry run mutates nothing; the only seat-side mutation is the gate
      *  add, removed before every retry. Returns null — un-seating its own

@@ -822,15 +822,22 @@ public final class ResidentialArranger {
                 List.copyOf(streets), List.copyOf(alleys), yardCentre, yard);
     }
 
-    /** 4c-c — the quarter's BSP guide: demand-guided cuts over the shared
+    /** 4c-c r3 — the quarter's BSP guide: demand-guided cuts over the shared
      *  core. Each node carries the (descending) demand sides of the cells it
      *  must still produce; a cut splits them into two area-balanced halves
      *  and lands proportionally to their areas, clamped so each side can
-     *  still hold its biggest demand. Leaf when one demand remains. Sets
-     *  {@code failed[0]} (and stops cutting) when a node can't host its
-     *  demands — the caller returns null and the planner falls back to the
-     *  craft row. Deterministic (no jitter): the cut positions are fully
-     *  demand-derived. */
+     *  SHELF-PACK its whole partition ({@link #minFeasibleLen}) — not merely
+     *  hold its biggest demand, the r2 bug: a subtree carrying several
+     *  demands starved regardless of total area, so growth never converged
+     *  (CITYTEST5: 66x96 → 66x146 all failed on ~3,000 blocks of demand).
+     *  Invariant: every node the recursion enters shelf-packs its demand set
+     *  (the root is checked explicitly; both sides of every accepted cut are
+     *  checked before cutting). A node with no feasible cut finishes as a
+     *  multi-demand shelf LEAF ({@link #emitShelfLeaves} — guaranteed by the
+     *  invariant), except at depth 0 where the central street is mandatory
+     *  (arrangeQuarter requires it): there it sets {@code failed[0]} so the
+     *  planner's dry-run+grow loop grows the block. Deterministic (no
+     *  jitter): the cut positions are fully demand-derived. */
     private static BspGuide<List<Integer>> quarterGuide(List<int[]> leaves,
                                                         boolean[] failed) {
         return new BspGuide<>() {
@@ -841,11 +848,13 @@ public final class ResidentialArranger {
                                               Random rng) {
                 int len = cutX ? x1 - x0 : z1 - z0;
                 int cross = cutX ? z1 - z0 : x1 - x0;
-                for (int d : node) {
-                    if (d > cross || d > len) {
-                        failed[0] = true;
-                        return null;
-                    }
+                // r3 — subtree-aware feasibility: the WHOLE demand set must
+                // shelf-pack this rect (subsumes the old per-demand dim
+                // check). Root failure drives the grow loop; deeper nodes
+                // hold by the cut invariant, so this arm is defensive there.
+                if (!shelfFits(len, cross, node)) {
+                    failed[0] = true;
+                    return null;
                 }
                 if (node.size() <= 1) return null;
                 // Greedy area-balanced split (node is descending, so each
@@ -863,10 +872,19 @@ public final class ResidentialArranger {
                 }
                 int half = corridor / 2 + 1;
                 int base = cutX ? x0 : z0;
-                int lo = base + a.get(0) + half;       // low side holds maxA
-                int hi = base + len - b.get(0) - half; // high side holds maxB
+                // r3 — subtree-aware clamp: each side's along-length must
+                // shelf-pack its ENTIRE partition at the fixed cross dim.
+                int minA = minFeasibleLen(a, cross, len);
+                int minB = minFeasibleLen(b, cross, len);
+                int lo = minA < 0 ? Integer.MAX_VALUE : base + minA + half;
+                int hi = minB < 0 ? Integer.MIN_VALUE
+                        : base + len - minB - half;
                 if (lo > hi) {
-                    failed[0] = true;
+                    // No cut serves both partitions. Depth 0 must cut (the
+                    // central street is the quarter's spine) — report
+                    // infeasible so the planner grows. Deeper nodes finish
+                    // as a multi-demand shelf leaf (invariant-guaranteed).
+                    if (depth == 0) failed[0] = true;
                     return null;
                 }
                 int c = base + (int) Math.round(
@@ -878,9 +896,110 @@ public final class ResidentialArranger {
             @Override
             public void leaf(int x0, int z0, int x1, int z1,
                              List<Integer> node, int depth) {
-                leaves.add(new int[]{x0, z0, x1, z1});
+                if (failed[0]) return;       // plan() already gave up here
+                if (node.size() <= 1) {
+                    leaves.add(new int[]{x0, z0, x1, z1});
+                    return;
+                }
+                if (!emitShelfLeaves(x0, z0, x1, z1, node, leaves)) {
+                    failed[0] = true;        // defensive — invariant breach
+                }
             }
         };
+    }
+
+    /** 4c-c r3 — shelf-packing (NFDH) feasibility for square demands in a
+     *  {@code len x cross} rect, either shelf orientation. CONSTRUCTIVE:
+     *  success means the explicit non-overlapping layout
+     *  {@link #emitShelfLeaves} emits exists, so a true result is sound
+     *  (never a false positive — the downstream assignment cannot fail on a
+     *  rect this accepted); false negatives merely cost the planner a
+     *  growth step. {@code ds} must be sorted DESCENDING (NFDH's
+     *  precondition; the guide's node lists are descending throughout). */
+    private static boolean shelfFits(int len, int cross, List<Integer> ds) {
+        return shelfFitsOriented(len, cross, ds)
+                || shelfFitsOriented(cross, len, ds);
+    }
+
+    /** One NFDH orientation: shelves of width {@code shelfW} stacked along
+     *  {@code stackLen}, demands (descending) placed next-fit. */
+    private static boolean shelfFitsOriented(int shelfW, int stackLen,
+                                             List<Integer> ds) {
+        int used = 0, curH = 0, curW = 0;
+        for (int d : ds) {
+            if (d > shelfW || d > stackLen) return false;
+            if (curH == 0 || curW + d > shelfW) {
+                used += curH;
+                curH = d;                    // descending ⇒ ≤ prior shelf
+                curW = d;
+            } else {
+                curW += d;
+            }
+            if (used + curH > stackLen) return false;
+        }
+        return true;
+    }
+
+    /** 4c-c r3 — smallest along-length in {@code [ds.get(0), maxLen]} whose
+     *  {@code length x cross} rect shelf-packs {@code ds}, or -1 when even
+     *  {@code maxLen} can't. Binary search — {@link #shelfFits} is monotone
+     *  in the length: widening the shelf axis only merges NFDH shelves
+     *  (each shelf holds a greedy prefix run, so wider shelves never push an
+     *  item later), lengthening the stack axis only adds room, and the OR of
+     *  two monotone orientations is monotone. */
+    private static int minFeasibleLen(List<Integer> ds, int cross, int maxLen) {
+        int lo = ds.get(0), hi = maxLen;
+        if (lo > hi || !shelfFits(hi, cross, ds)) return -1;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            if (shelfFits(mid, cross, ds)) hi = mid;
+            else lo = mid + 1;
+        }
+        return lo;
+    }
+
+    /** 4c-c r3 — finishes a multi-demand node as side-by-side sub-cells: one
+     *  EXACT {@code d x d} leaf per demand, NFDH shelves from the rect
+     *  corner (stack centred on the cross axis), shelves along the rect's
+     *  longer axis when that orientation fits, else the shorter. Exact-size
+     *  cells keep the greedy descending assignment safe — a bigger demand
+     *  can never steal a smaller demand's cell, so leaves dominate demands
+     *  elementwise and Hall's condition holds. No corridor is emitted inside
+     *  the leaf (demand sides already carry the planner's gap). Returns
+     *  false when neither orientation fits — the guide invariant says never;
+     *  defensive only. */
+    private static boolean emitShelfLeaves(int x0, int z0, int x1, int z1,
+                                           List<Integer> ds,
+                                           List<int[]> leaves) {
+        int lenX = x1 - x0, lenZ = z1 - z0;
+        boolean xFirst = lenX >= lenZ;
+        for (int pass = 0; pass < 2; pass++) {
+            boolean alongX = (pass == 0) == xFirst;
+            int shelfW = alongX ? lenX : lenZ;
+            int stackLen = alongX ? lenZ : lenX;
+            if (!shelfFitsOriented(shelfW, stackLen, ds)) continue;
+            int total = 0, h = 0, w = 0;     // total stack height (centring)
+            for (int d : ds) {
+                if (h == 0 || w + d > shelfW) { total += h; h = d; w = d; }
+                else w += d;
+            }
+            total += h;
+            int v = (stackLen - total) / 2;
+            int curH = 0, curW = 0;
+            for (int d : ds) {
+                if (curH == 0 || curW + d > shelfW) {
+                    v += curH;
+                    curH = d;
+                    curW = 0;
+                }
+                leaves.add(alongX
+                        ? new int[]{x0 + curW, z0 + v, x0 + curW + d, z0 + v + d}
+                        : new int[]{x0 + v, z0 + curW, x0 + v + d, z0 + curW + d});
+                curW += d;
+            }
+            return true;
+        }
+        return false;
     }
 
     /** Nearest point to {@code p} on any corridor centerline (segment-projected),
