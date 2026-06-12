@@ -10159,3 +10159,185 @@ re-read (caught and fixed a global string-replace that had deleted the expansion
 method's still-used `roadTier` local, and a dangling javadoc); grep-verified call-site
 arities (pave ×1, squarePlaza ×2, buildRealizedLayout ×1, PlazaRegion ctor ×2,
 marketPlazaCentroid ×0 remaining); codec component/apply arity 9/9.
+
+## 2026-06-12 — City-morphology step 3: district composition recipes + civic-ring townhouses (cowork/composition-recipes)
+
+Build-order step 3 of `.claude/planning/11-CITY-MORPHOLOGY-DESIGN.md` (§2): the
+allocation tables, shipped as two commits — a pure refactor, then the first
+mixed use.
+
+**Disposition — the hardcoded type→district mapping inventory (all in
+`PhasedPlanner`):**
+1. `DISTRICT_TYPES` (the DISTRICT_ONLY_MODE roster filter, 13 types).
+2. `RING_MEMBERS` = {TOWN_HALL, CHAPEL, INN} — civic plaza sizing
+   (`reserveCivicSquare` → `sizeDistrictToMembers`) + the `findBestCandidate`
+   ring-disc gate.
+3. MARKET: the `placeOne` cap-1 drop, the `marketSquare` reservation gate, the
+   `boundMarketBest` binding (latter two are geometry, not allocation — kept).
+4. `CRAFT_SET` (8 craft types) — `getBatch`'s WORKSHOP_BATCH routing, the
+   batch-loop double-place skip, and `reserveWorkshopDistricts`
+   (count/sizing/craft list).
+5. The literal `t == HOUSE` count in `reserveResidentialDistricts`.
+6. Green-commons: fill-only (`seatGreenRound`), no roster allocation — encoded
+   as an empty member table.
+
+**Commit 1 — `Layer4/DistrictRecipes` (pure refactor).** Per district TYPE
+(CIVIC, MARKET, WORKSHOP_QUARTER, RESIDENTIAL, GREEN_COMMONS), a member table
+by tier: `Member(BuildingType, weight, cap)`. Default tables encode today's
+behaviour exactly: CIVIC = TOWN_HALL/CHAPEL/INN cap 1; MARKET = MARKET cap 1
+(the old placeOne drop rule, now reading the recipe cap); WORKSHOP_QUARTER =
+the craft set, UNCAPPED (CITY rosters carry duplicates, e.g. STABLE×2 — all
+route to the quarter today); RESIDENTIAL = HOUSE UNCAPPED. All five consumer
+sites above now consult the recipe. `weight` is reserved (no consumer yet —
+the table shape is the design-doc contract; today's allocation is
+membership + cap). Code-table by design: datagen/JSON explicitly deferred
+(Garrett's JSON-content ruling); `DistrictRecipes.members(district, tier)` is
+the single lookup seam a culture override layer wraps later.
+`CRAFT_STORAGE_SET` stays a planner constant (back-alley vs street-front is
+ARRANGEMENT, not allocation). Civic ring sizing now takes a cap-clamped
+MULTISET (`civicRingMembers`) instead of an EnumSet — identical for cap-1
+members, and what lets a cap-2 member size two frontages.
+
+**Allocation walkthrough (refactor neutrality, CITY roster end-to-end).**
+Take a representative reconciled CITY selection: TOWN_HALL×1, CHAPEL×1, INN×1,
+MARKET×2, BLACKSMITH/BAKERY/CARPENTRY/MILLER/WOODCUTTER/STOCKPILE/WAREHOUSE×1
+each, STABLE×2, HOUSE×14 (+ rural/loose types filtered by DISTRICT_ONLY_MODE).
+- Filter: recipe union at CITY = exactly the old 13-type `DISTRICT_TYPES`
+  (CIVIC∪MARKET∪WORKSHOP∪RESIDENTIAL member types) → same `selection`.
+- Civic sizing: CIVIC members present, cap-clamped → multiset
+  [TOWN_HALL, CHAPEL, INN] = old `RING_MEMBERS ∩ selection`; `perim`,
+  `maxWidth`, `maxDepth` sums identical → same `Sized(half, ring)`.
+- Ring gate: `isCivicRingType` = CIVIC member-type set = old `RING_MEMBERS`
+  membership test (condition order swapped with the null check — same truth
+  table).
+- MARKET: first hall binds, second hits `already(1) >= cap(1)` → the same
+  drop with the same message ("cap 1") and log line.
+- Crafts: WORKSHOP_QUARTER member set == old `CRAFT_SET` at every tier →
+  same `getBatch` routing, same workshopCount (9), same sizing inputs, same
+  craftList, same batch-loop skip.
+- Residential: RESIDENTIAL member set = {HOUSE} → houseCount 14, same
+  nPrecincts/share math, same drop rule (the tail-absorb guard is gated on
+  `civicHousesPlaced > 0`, impossible in commit 1).
+- No rng draws added or removed anywhere in commit 1 → downstream variant
+  picks and seat sweeps see an identical Random sequence. Allocation is
+  byte-identical.
+
+**Commit 2 — first mixed use: townhouses on the civic ring (CITY only).**
+CIVIC at CITY adds `HOUSE (weight 1, cap 2)` via the recipe's CITY_EXTRAS row.
+- `civicHouseTarget` = min(cap, max(0, rosterHouses − MIN_DISTRICT_HOUSES)):
+  the take never strands a runt residential pass (4-house roster → 1 townhouse
+  + 3 residential, never 2+2); forced `/litv district` channel takes none.
+- `placeCivicRingHouses` runs at the batch-3 hook: AFTER the civic core
+  places (houses fill leftover ring perimeter), BEFORE `addCivicPrecinct`
+  (their footprints join the precinct union → rural exclusion fences them
+  like INN/CHAPEL) and BEFORE the residential/workshop reserves. Same
+  machinery as the other ring members: the plaza is sized with their
+  frontages, the ring-disc gate admits them (`State.placingCivicHouse` — bulk
+  batch-5 HOUSE never ring-gates), the void reservation keeps them fronting
+  the square, `chooseFacing(anchor)` turns them toward it (square is centred
+  on the anchor). One deliberate mechanical substitute: a plaza-proximity
+  score replaces the generic scorer for them — HOUSE has no CIVIC nucleus
+  affinity, so without it the houses would drift to the disc's outer band
+  behind the civic buildings; nearest-admissible-to-the-void IS the "nucleus
+  pull to the void edge" the other members get.
+- Accounting (`assigned/precincts/placed` audit): the residential reserve
+  subtracts PLACED civic houses (a failed ring seat retracts its drop entry
+  and re-homes to residential), nPrecincts/share recompute from the reduced
+  remainder, and the batch-5 loop skips the consumed roster entries so even
+  the emergent no-districts fallback can't re-place them — total roster HOUSE
+  count conserved on every path. Sub-min drop rule: a tail-absorb guard
+  (gated on the take) grows the current precinct to swallow a 1–2 house tail
+  the shifted remainder would otherwise drop (e.g. 14 roster houses → take 2
+  → 12 → precincts 4+4+4; but 12 → take 2 → 10 would have gone 4+4+drop-2 —
+  now 4+4 then want=remaining=6, absorbed). seatGrown back-off unchanged: if
+  the absorbed want can't seat, the tail drops exactly as before.
+- Homes/inhabitants: ring townhouses are ordinary `PlacedBuilding(HOUSE, …)`
+  → `VillageInhabitantPopulator`/`BuildingInhabitantSpec` register households
+  by type, no special handling.
+- `DistrictReport` gains `civicHousesPlanned`/`civicHousesPlaced` (14→16
+  fields; in-memory record, no codec — field-cap rule n/a).
+
+**Tie-in audit:**
+- DISTRICT_ONLY_MODE filter consumers: `V2VillageSpawnerAdapter` (viability
+  relax — reads only the boolean, unaffected), `DistrictCommand` (comment
+  only). The filter's type set is now per-tier but equals the old constant at
+  every tier.
+- `ViabilityValidator`: distinct-count is type-keyed — civic houses still
+  count as HOUSE; CITY min-count 10 / diversity 6 unaffected (counts can only
+  grow or stay equal).
+- Reconciliation/roster HOUSING provides: upstream of the planner, untouched —
+  same total HOUSE count enters `run`; this change only re-routes placement.
+- Civic precinct AABB / rural exclusion: ring townhouses join the union
+  deliberately (they are ring members); band innerR grows by their footprint
+  reach exactly as it does for INN/CHAPEL. Under DISTRICT_ONLY_MODE the rural
+  pass is off anyway.
+- Harness DistrictReport: `MetricsComputer` reads accessors only → compiles
+  and runs unchanged; the new fields are not yet mirrored into
+  `RunMetrics.DistrictMetrics`/baseline.json (flagged below).
+  `residentialHousesRequested` now reports the post-take remainder at CITY —
+  baseline diffs there are the real behaviour change.
+- Inhabitant populator: type-keyed (see above) — unaffected.
+- Exhaustive switches: none over the touched types (DistrictType is new with
+  no switches; no enum values added to existing enums).
+
+**Deviations from prompt:**
+- "Place exactly like INN/CHAPEL" — placement disc, reservation gates, facing
+  and sizing are identical, but the in-disc SCORE is plaza-proximity instead
+  of the nucleus-affinity score (HOUSE has no CIVIC affinity; the generic
+  fallback would push it to the disc's outer edge — the substitute realizes
+  the intended outcome through the same gate machinery).
+- The sub-min tail absorb slightly exceeds a pure "audit": it's a one-clause
+  behaviour guard, gated on the civic take so all other tiers/rosters keep
+  today's accounting byte-identical.
+- `civicHouseTarget` can take 0–1 houses (not always 2) on small CITY rosters
+  (≤5 houses) — the no-runt guard outranks the cap.
+- Weight field is carried but unread (the prompt's table shape) — flagged so
+  nobody mistakes it for a live knob.
+
+**Out-of-scope but flagged:**
+- Quarter admitting HOUSE at CITY (live-above-the-shop) — recipe row is now a
+  one-liner, but the quarter's BSP arranger needs a dwelling-cell concept;
+  NOT built per prompt.
+- Terrace shop-front pieces (row_house piece convention) — NOT built per
+  prompt.
+- Mirroring civicHousesPlanned/Placed into the harness RunMetrics + baseline
+  schema (test-side; current metrics stay valid).
+- The sub-min tail drop exists for ALL tiers today independent of the civic
+  take (e.g. 13 roster houses at 4 dirs → 1 dropped); the absorb guard could
+  be un-gated as a general planning fix if Garrett wants it.
+- Civic ring houses resolve their variant at placement like every member;
+  near-anchor distance banding will typically pick the LARGE house variant —
+  arguably right for plaza townhouses, but if it overcrowds the ring the
+  LARGE_VARIANT_PAD sizing fallback is the knob (documented in
+  sizeDistrictToMembers).
+- `/litv district` takes no civic houses (tool isolates a residential
+  variant) — revisit if the tool should preview the full CITY composition.
+
+**Smoke test plan (user-executable):**
+1. Superflat CITY spawn: log shows `civic square: … members=[TOWN_HALL,
+   CHAPEL, INN, HOUSE, HOUSE]` (the ×2 take), then `civic ring houses: 2 of 2
+   placed`, then `residential allocation: 2 house(s) on the civic ring; N
+   remain for the precincts`.
+2. In-world: 2 townhouses stand ON the plaza ring among TOWN_HALL/CHAPEL/INN,
+   fronting/facing the square (doors toward the plaza), clear of the paved
+   void, with the plaza visibly sized to hold all five ring members.
+3. Residential accounting: the `residential districts: A assigned / P
+   precincts / B placed / D dropped` line shows A = roster houses − 2, with NO
+   `sub-minimum remainder` drop caused by the take (D unchanged or smaller vs
+   a pre-branch spawn of the same seed).
+4. Inhabitants: ring townhouses get households (door + bed interaction as
+   normal; populator log counts them among households).
+5. TOWN spawn (same seed as a pre-branch TOWN): byte-identical layout — no
+   civic houses, same civic square size, same residential precincts, same
+   drops, same logs (modulo the new zero-take silence).
+6. `/litv district <variant>`: unchanged — the forced precinct gets ALL its
+   houses (no civic take).
+7. Optional regression: a MARKET×2 CITY seed still logs `dropped extra MARKET:
+   cap 1 (one central market)`.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net; JRE-only sandbox, no javac). Static review: full
+main..HEAD diff re-read; brace/paren balance checked on both touched files;
+grep-verified zero remaining references to the deleted RING_MEMBERS /
+CRAFT_SET / DISTRICT_TYPES constants; DistrictReport ctor arity checked at
+all three construction sites (freeze, empty, harness reads accessors only).
