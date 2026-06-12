@@ -2569,6 +2569,20 @@ public final class PhasedPlanner {
      *  band edges (the {@code DISTRICT_GAP} analog for the depth clamp). */
     private static final int QUARTER_BAND_MARGIN = 4;
 
+    /** 4c-c fix-up round 2 — minimum along-band/depth aspect of a quarter
+     *  block: the depth targets {@code sqrt(cellArea / QUARTER_ASPECT)}, so
+     *  every block (the split halves included) comes out a band-elongated
+     *  RECTANGLE, never a square (CITYTEST4: the split halves were 58x58
+     *  because the depth defaulted to the demand-area square root). */
+    private static final double QUARTER_ASPECT = 1.5;
+    /** 4c-c fix-up round 2 — bounded cellability growth: how many times a
+     *  quarter block whose demand BSP failed to cell every member may grow
+     *  its along-band length and re-seat before giving up. */
+    private static final int QUARTER_GROWTH_STEPS = 3;
+    /** 4c-c fix-up round 2 — per-growth-step along-band length factor
+     *  (compounding; 3 steps of +15% ≈ 1.52x the initial length). */
+    private static final double QUARTER_GROWTH_FACTOR = 0.15;
+
     /** 4c-c fix-up — one seated + arranged (NOT yet materialised) quarter
      *  block: its gate, the crafts/members it cells (index-aligned), and the
      *  arrangement. Materialisation happens in {@link #commitQuarter} only
@@ -2579,12 +2593,24 @@ public final class PhasedPlanner {
                                ResidentialArranger.QuarterArrangement arr) {}
 
     /** 4c-c fix-up — sizes ONE quarter block as a band-aware RECTANGLE (depth
-     *  first: clamped to {@code depthAvail}, floored at the biggest cell;
-     *  length derived from the demand area, floored so the root street cut
-     *  can host the two biggest cells side by side), seats it oriented
-     *  along the band, and runs the demand BSP. Returns null — un-seating
-     *  its own gate — when the depth can't host the biggest cell, no clear
-     *  band position exists, or the BSP can't cell every member. */
+     *  first: aspect-targeted via {@link #QUARTER_ASPECT}, clamped to
+     *  {@code depthAvail}, floored at the biggest cell; length derived from
+     *  the demand area, floored so the root street cut can host the two
+     *  biggest cells side by side), seats it oriented along the band, and
+     *  DRY-RUNS the demand BSP. 4c-c fix-up round 2 — sizing is
+     *  CELLABILITY-DRIVEN, not area-driven: the area estimate underestimates
+     *  what the BSP can cell (corridor cuts + the corridor/2+1 footprint
+     *  margins, and {@code quarterGuide}'s proportional cut landing is
+     *  clamped only to each side's single BIGGEST demand, so a subtree
+     *  holding several demands can starve regardless of total area — no
+     *  closed-form size is provably sufficient). On a cellability failure
+     *  the block GROWS its along-band length (depth stays band-clamped) and
+     *  re-seats, up to {@link #QUARTER_GROWTH_STEPS} times.
+     *  {@code arrangeQuarter} is pure (no planner state touched), so the
+     *  dry run mutates nothing; the only seat-side mutation is the gate
+     *  add, removed before every retry. Returns null — un-seating its own
+     *  gate — when the depth can't host the biggest cell, no clear band
+     *  position exists, or growth exhausts without celling every member. */
     private static QuarterSeat seatQuarterBlock(State state,
             List<BuildingType> crafts,
             List<ResidentialArranger.QuarterMember> members, int yardSide,
@@ -2606,39 +2632,47 @@ public final class PhasedPlanner {
                     depthAvail, max1);
             return null;
         }
-        int square = (int) Math.ceil(Math.sqrt((double) cellArea));
-        int depth = Math.max(minDepth, Math.min(square, depthAvail));
+        int aspectDepth = (int) Math.ceil(
+                Math.sqrt(cellArea / QUARTER_ASPECT));
+        int depth = Math.max(minDepth, Math.min(aspectDepth, depthAvail));
         int rootFloor = max1 + max2
                 + ResidentialArranger.GRID_STREET_WIDTH + 4;
-        int len = Math.max((int) Math.ceil(cellArea / (double) depth),
+        int len0 = Math.max((int) Math.ceil(cellArea / (double) depth),
                 Math.max(depth, rootFloor));
         int halfRadial = depth / 2 + 1;
-        int halfTangent = len / 2 + 1;
         BlockPos anchor = state.ctx.anchor();
-        Polygon.AABB gate = seatDistrictOriented(state, anchor, startAngle,
-                bandInner, bandCap, halfRadial, halfTangent,
-                state.workshopGates);
-        if (gate == null) {
-            LOGGER.info("workshop quarter: no clear band position for a {}x{}"
-                    + " block (depth x length, band [{}, {}])", depth, len,
-                    bandInner, bandCap);
-            return null;
-        }
-        long seed = state.ctx.seed()
-                ^ ((long) gate.minX() * 31L + gate.minZ()) ^ 0x4CCL;
-        BlockPos edgeNode = edgePointToward(gate, anchor);
-        ResidentialArranger.QuarterArrangement arr =
-                ResidentialArranger.arrangeQuarter(gate, members, yardSide,
-                        edgeNode, seed);
-        if (arr == null) {
-            // Un-seat — the gate must not linger in the masks/connection nodes.
+        for (int step = 0; step <= QUARTER_GROWTH_STEPS; step++) {
+            int len = (int) Math.ceil(
+                    len0 * Math.pow(1.0 + QUARTER_GROWTH_FACTOR, step));
+            int halfTangent = len / 2 + 1;
+            Polygon.AABB gate = seatDistrictOriented(state, anchor, startAngle,
+                    bandInner, bandCap, halfRadial, halfTangent,
+                    state.workshopGates);
+            if (gate == null) {
+                // A longer block never seats where this one couldn't — stop.
+                LOGGER.info("workshop quarter: no clear band position for a"
+                        + " {}x{} block (depth x length, band [{}, {}],"
+                        + " growth step {})", depth, len, bandInner, bandCap,
+                        step);
+                return null;
+            }
+            long seed = state.ctx.seed()
+                    ^ ((long) gate.minX() * 31L + gate.minZ()) ^ 0x4CCL;
+            BlockPos edgeNode = edgePointToward(gate, anchor);
+            ResidentialArranger.QuarterArrangement arr =
+                    ResidentialArranger.arrangeQuarter(gate, members, yardSide,
+                            edgeNode, seed);
+            if (arr != null) return new QuarterSeat(gate, crafts, arr);
+            // Un-seat before growing — the gate must not linger in the
+            // masks/connection nodes (tryGateAt's ONLY mutation is the
+            // targetGates add, so the remove is a complete rollback).
             state.workshopGates.remove(gate);
-            LOGGER.info("workshop quarter: block {}x{} seated but the demand"
-                    + " BSP couldn't cell every member", 2 * halfRadial,
-                    2 * halfTangent);
-            return null;
+            LOGGER.info("workshop quarter: {}x{} block seated but the demand"
+                    + " BSP couldn't cell every member{}", 2 * halfRadial,
+                    2 * halfTangent, step < QUARTER_GROWTH_STEPS
+                            ? " — growing the along-band length" : "");
         }
-        return new QuarterSeat(gate, crafts, arr);
+        return null;
     }
 
     /** 4c-c fix-up — materialises a fully-seated quarter (one block, or the
