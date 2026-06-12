@@ -2388,25 +2388,52 @@ public final class PhasedPlanner {
             }
         }
 
-        // Per-craft lots — HAMLET/OUTPOST's primary seating, and the terminal
+        // Per-craft lots — HAMLET/OUTPOST's primary seating, and the TERMINAL
         // fallback of the tier-aware chain (one small gate per craft, 1:1).
+        // 4c-c fix-up — the terminal fallback must NOT silently drop: each
+        // craft seats + materialises individually (no positional gate
+        // indexing, which dropped the tail when fewer gates seated than
+        // crafts), a band miss widens the search to the FULL buildable
+        // extent (inner bound past the civic-ring preference — placed
+        // reservations still reject — and the centre out to villageRadius),
+        // and only after exhausting that does a craft drop, at WARN with
+        // the reason.
         int lotHalf = Math.max(MIN_PLAZA_HALF, (cellPitch + HOUSE_GAP) / 2);
         int lotInner = Math.max(civicReach + DISTRICT_GAP, lotHalf + DISTRICT_GAP);
         int lotOuter = Math.max(lotInner, state.villageRadius - lotHalf);
-        for (int k = 0; k < workshopCount; k++) {
-            seatDistrict(state, anchor, dirs.get(k % dirs.size()) + Math.PI / 8.0,
-                    lotInner, lotOuter, lotHalf, lotHalf, state.workshopGates);
-        }
         int placed = 0, dropped = 0;
-        for (int i = 0; i < craftList.size(); i++) {
-            if (i >= state.workshopGates.size()) { dropped++; continue; }
-            Polygon.AABB gate = state.workshopGates.get(i);
+        for (int k = 0; k < craftList.size(); k++) {
+            BuildingType craft = craftList.get(k);
+            double startAngle = dirs.get(k % dirs.size()) + Math.PI / 8.0;
+            // Band-preferred first; full-extent last resort on a miss.
+            Polygon.AABB gate = seatDistrict(state, anchor, startAngle,
+                    lotInner, lotOuter, lotHalf, lotHalf, state.workshopGates);
+            if (gate == null) {
+                gate = seatDistrict(state, anchor, startAngle,
+                        lotHalf + 1, state.villageRadius, lotHalf, lotHalf,
+                        state.workshopGates);
+            }
+            if (gate == null) {
+                dropped++;
+                LOGGER.warn("workshop lots: dropped {} — no clear {}x{} lot"
+                        + " anywhere in the buildable extent (centre swept"
+                        + " r=[{}, {}], every bearing)", craft, 2 * lotHalf,
+                        2 * lotHalf, lotHalf + 1, state.villageRadius);
+                continue;
+            }
             BlockPos centre = new BlockPos((gate.minX() + gate.maxX()) / 2, 0,
                     (gate.minZ() + gate.maxZ()) / 2);
-            if (materializeBuilding(state, craftList.get(i), centre, anchor) != null) {
+            if (materializeBuilding(state, craft, centre, anchor) != null) {
                 placed++;
             } else {
                 dropped++;
+                // Un-seat — a craft-less gate must not linger in the
+                // masks/exclusions/connection nodes.
+                state.workshopGates.remove(gate);
+                LOGGER.warn("workshop lots: dropped {} — lot seated at"
+                        + " ({},{}) but the footprint failed to materialise"
+                        + " (reservation overlap)", craft, centre.getX(),
+                        centre.getZ());
             }
         }
         // Diagnostics (read-only) — row block didn't fit; per-craft lots.
