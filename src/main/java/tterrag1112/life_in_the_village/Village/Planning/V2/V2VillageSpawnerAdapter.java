@@ -710,16 +710,29 @@ public final class V2VillageSpawnerAdapter {
         // market never aborts the spawn. No stalls yet (2b).
         for (PlacedMarket mk : placedMarkets) {
             try {
-                int padY = mk.placed().centre().getY();
                 // Stage 4a — seed the market pad from the reserved MARKET
                 // plaza square (centre = its centroid). The square was
                 // reserved clear AND ringed by the router, so the pad finally
                 // has guaranteed space (closes the NO_REGION gap). Falls back
                 // to the Stage-2b parcel centroid, then the building centre.
+                //
+                // ONE ground owner — when a plaza region exists, the
+                // zone-matched PlazaPaver plaza IS the market's ground
+                // treatment (painted in the decorator at floorY-1); the
+                // complex pad paints nothing. padY derives from the SAME
+                // plaza floorY (one Y authority): ground block = floorY-1,
+                // stalls seat at padY+1 = floorY, standing ON the plaza
+                // surface — on slopes the old independent padY (the hall
+                // centre Y) rendered a second nested pad. The pad render
+                // survives only as the no-plaza fallback (degenerate sites)
+                // so stalls never seed onto raw terrain.
                 var parcel = mk.placed().parcel();
-                BlockPos marketPlazaCentre = marketPlazaCentroid(village);
-                BlockPos marketCentre = marketPlazaCentre != null
-                        ? marketPlazaCentre
+                var marketPlaza = marketPlazaRegion(village);
+                int padY = marketPlaza != null
+                        ? marketPlaza.floorY() - 1
+                        : mk.placed().centre().getY();
+                BlockPos marketCentre = marketPlaza != null
+                        ? marketPlaza.centroid()
                         : parcel != null
                                 ? tterrag1112.life_in_the_village.Utilities.Geometry.Polygon
                                         .centroid(parcel.budget())
@@ -773,10 +786,18 @@ public final class V2VillageSpawnerAdapter {
                             mk.building().getName(), result.status(), result.detail());
                     continue;
                 }
-                tterrag1112.life_in_the_village.Village.Markets.Complex.Render
-                        .MarketComplexRenderer.render(result, culture.id(), level);
-                LOGGER.info("V2: market pad rendered for {} (margin={})",
-                        mk.building().getName(), result.chosenMargin());
+                if (marketPlaza == null) {
+                    tterrag1112.life_in_the_village.Village.Markets.Complex.Render
+                            .MarketComplexRenderer.render(result, culture.id(), level);
+                    LOGGER.info("V2: market pad rendered for {} (margin={};"
+                            + " fallback ground — no plaza region)",
+                            mk.building().getName(), result.chosenMargin());
+                } else {
+                    LOGGER.info("V2: market ground for {} owned by the {} plaza"
+                            + " (pad paint skipped; stall band margin={})",
+                            mk.building().getName(), marketPlaza.purpose(),
+                            result.chosenMargin());
+                }
                 // Phase 2b — seed vacant stalls onto the just-graded pad
                 // via the allocator (region geometry is in hand here).
                 tterrag1112.life_in_the_village.Village.Buildings.Complex
@@ -1052,21 +1073,24 @@ public final class V2VillageSpawnerAdapter {
                 poly, centroid, floorY, java.util.Set.of(), 0f, formality);
     }
 
-    /** Stage 4a / fix-up #6 — centroid of the market's square: the MARKET
-     *  plaza when one exists (CITY+), else the CIVIC plaza (the merged
+    /** Stage 4a / fix-up #6 — the market's plaza region: the MARKET plaza
+     *  when one exists (CITY+), else the CIVIC plaza (the merged
      *  civic+market square at TOWN and smaller — the market shares it).
-     *  Null only when no plaza was produced. */
-    private static BlockPos marketPlazaCentroid(Village village) {
-        BlockPos civic = null;
+     *  Null only when no plaza was produced. The caller reads BOTH the
+     *  centroid (pad seat) and the floorY (the single ground-Y authority
+     *  shared with PlazaPaver). */
+    private static tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion
+            marketPlazaRegion(Village village) {
+        tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion civic = null;
         for (var r : village.getPlazaRegions()) {
             var p = r.purpose();
             if (p == tterrag1112.life_in_the_village.Village.Decoration
                     .Plaza.PlazaPurpose.MARKET) {
-                return r.centroid();
+                return r;
             }
             if (p == tterrag1112.life_in_the_village.Village.Decoration
                     .Plaza.PlazaPurpose.CIVIC) {
-                civic = r.centroid();
+                civic = r;
             }
         }
         return civic;

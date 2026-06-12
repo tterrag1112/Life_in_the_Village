@@ -20,6 +20,13 @@ import tterrag1112.life_in_the_village.Village.Markets.Complex.MarketComplexPlan
  * the same culture-path block the village roads use, so the plaza reads
  * as continuous with the road network. Fully defensive against null /
  * partial plan data (mirrors {@code FarmComplexRenderer}).
+ *
+ * <p><b>Ground ownership.</b> The zone-matched {@code PlazaPaver} plaza
+ * is THE market ground treatment whenever a plaza region exists; the
+ * spawn adapter then skips this renderer entirely (one painter, one Y —
+ * the plaza floorY; two painters with independent Y sources rendered as
+ * nested pads on sloped terrain). This render is invoked only as the
+ * no-plaza fallback so stalls never seed onto raw terrain.
  */
 public final class MarketComplexRenderer {
 
