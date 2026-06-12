@@ -52,7 +52,15 @@ public final class BspSubdivider {
              *  targetPlotCount, regionArea, stopArea, and
              *  minSideBlocks; plus a summary line at the end with
              *  leaf / plot / dropped counts. Off in production. */
-            boolean verbose) {
+            boolean verbose,
+            /** Agriculture-ring stage 1 (design 13 ⚑2) — strip-aspect
+             *  hint. When {@code > 0}, the recursion's cut-axis choice
+             *  steers leaves toward this long:short ratio (cut the long
+             *  axis when a rect is stringier than the hint, else cut the
+             *  SHORT axis to elongate) so plots read as field STRIPS
+             *  along the lane rather than squares. {@code 0} ⇒ the
+             *  legacy alternating-axis behaviour, byte-identical. */
+            double stripAspect) {
 
         /** Backward-compat ctor for callers that don't yet pass
          *  the verbose flag. */
@@ -61,7 +69,17 @@ public final class BspSubdivider {
                      Map<CropType, Float> plotTypeMix,
                      int cellSize, long seed) {
             this(region, buildingBounds, minPlotSize, targetPlotCount,
-                    plotTypeMix, cellSize, seed, false);
+                    plotTypeMix, cellSize, seed, false, 0);
+        }
+
+        /** Backward-compat ctor for callers passing verbose but no
+         *  strip-aspect hint. */
+        public Input(Polygon region, Polygon buildingBounds,
+                     int minPlotSize, int targetPlotCount,
+                     Map<CropType, Float> plotTypeMix,
+                     int cellSize, long seed, boolean verbose) {
+            this(region, buildingBounds, minPlotSize, targetPlotCount,
+                    plotTypeMix, cellSize, seed, verbose, 0);
         }
     }
 
@@ -119,7 +137,7 @@ public final class BspSubdivider {
         List<int[]> leaves = new ArrayList<>();
         recurse(new int[]{bb.minX(), bb.minZ(), bb.maxX(), bb.maxZ()},
                 /*axisToggle*/ chooseFirstAxis(bb),
-                stopArea, minSideBlocks,
+                stopArea, minSideBlocks, in.stripAspect(),
                 rng, leaves);
 
         if (in.verbose()) {
@@ -202,16 +220,29 @@ public final class BspSubdivider {
     }
 
     private static void recurse(int[] rect, int axis, double stopArea,
-                                 int minSideBlocks, Random rng,
-                                 List<int[]> out) {
+                                 int minSideBlocks, double stripAspect,
+                                 Random rng, List<int[]> out) {
         int w = rect[2] - rect[0];
         int h = rect[3] - rect[1];
         double area = (double) w * h;
         if (area <= stopArea) { out.add(rect); return; }
+        // Agriculture-ring stage 1 — strip-aspect steering. With a hint,
+        // the cut axis is chosen per node instead of alternating: a rect
+        // stringier than the hint cuts its LONG axis (rein the string in);
+        // anything else cuts its SHORT axis (elongate toward the hint).
+        // Leaves oscillate around the target long:short ratio, so plots
+        // read as strips. Hint 0 keeps the legacy alternation exactly.
+        if (stripAspect > 0) {
+            int longDim = Math.max(w, h);
+            int shortDim = Math.max(1, Math.min(w, h));
+            boolean cutLong = (double) longDim / shortDim > stripAspect;
+            boolean xIsLong = w >= h;
+            axis = cutLong == xIsLong ? 0 : 1;
+        }
         if (axis == 0 && w < 2 * minSideBlocks) {
             // X cut would produce too-narrow children; try Z.
             if (h >= 2 * minSideBlocks) {
-                recurse(rect, 1, stopArea, minSideBlocks, rng, out);
+                recurse(rect, 1, stopArea, minSideBlocks, stripAspect, rng, out);
                 return;
             }
             out.add(rect);
@@ -219,7 +250,7 @@ public final class BspSubdivider {
         }
         if (axis == 1 && h < 2 * minSideBlocks) {
             if (w >= 2 * minSideBlocks) {
-                recurse(rect, 0, stopArea, minSideBlocks, rng, out);
+                recurse(rect, 0, stopArea, minSideBlocks, stripAspect, rng, out);
                 return;
             }
             out.add(rect);
@@ -242,8 +273,8 @@ public final class BspSubdivider {
                                      cut - gapHalf,    rect[3]};
             int[] right = new int[]{cut + gapHalf,    rect[1],
                                      rect[2],          rect[3]};
-            recurse(left,  1, stopArea, minSideBlocks, rng, out);
-            recurse(right, 1, stopArea, minSideBlocks, rng, out);
+            recurse(left,  1, stopArea, minSideBlocks, stripAspect, rng, out);
+            recurse(right, 1, stopArea, minSideBlocks, stripAspect, rng, out);
         } else {
             int lo = rect[1] + h / 4;
             int hi = rect[3] - h / 4;
@@ -252,8 +283,8 @@ public final class BspSubdivider {
                                      rect[2],          cut - gapHalf};
             int[] bottom = new int[]{rect[0],          cut + gapHalf,
                                      rect[2],          rect[3]};
-            recurse(top,    0, stopArea, minSideBlocks, rng, out);
-            recurse(bottom, 0, stopArea, minSideBlocks, rng, out);
+            recurse(top,    0, stopArea, minSideBlocks, stripAspect, rng, out);
+            recurse(bottom, 0, stopArea, minSideBlocks, stripAspect, rng, out);
         }
     }
 

@@ -93,7 +93,14 @@ public final class V2VillageSpawnerAdapter {
     // zone cap becomes 132 × 1.0625 ≈ 140, and 150 left only ~10 blocks of
     // footprint margin past it (a 32-wide fallback footprint reaches ~156).
     // 160 restores the ~20-block margin the 4c-a sizing had. (+13% cells.)
-    private static final int FEATURE_MAP_RADIUS = 160;
+    // Agriculture-ring stage 1 (design 13 ⚑6) — 160 → 192: at CITY the
+    // scanned rural fringe past the zoned cap (~140) was ~20 blocks — one
+    // shallow field strip. 192 gives the farmstead ring ~50 blocks of
+    // flood-fill room (field claims spill past the zoned cap into the
+    // scanned-but-unzoned fringe; nucleus seats stay zoned). ~+44% scan
+    // cells, one-time at spawn; staged generation (Track C) is the flagged
+    // follow-up if CITY spawn time becomes a problem.
+    private static final int FEATURE_MAP_RADIUS = 192;
     private static final int BUILDING_LEVEL = 1;
     private static final int BUILDING_VEGETATION_BUFFER = 2;
     private static final int ROAD_VEGETATION_BUFFER = 1;
@@ -408,12 +415,39 @@ public final class V2VillageSpawnerAdapter {
             // (de-dup); parks elsewhere (rural fringe, etc.) still register.
             tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.ResidentialBand
                     band = phased.residentialBand();
+            // Agriculture-ring stage 1 — parks must not land inside a
+            // committed FIELD CLAIM: the park finder's occupancy mask only
+            // sees building footprints, but the farm loop below excludes
+            // park polygons from the realization flood-fill, so a park
+            // inside the claim would silently shrink a field the dry-run
+            // already PROVED (probe/realization drift, design 13 §7).
+            java.util.List<tterrag1112.life_in_the_village.Utilities.Geometry
+                    .Polygon.AABB> farmClaims = new ArrayList<>();
+            for (PlacedBuilding pb : survivors) {
+                if (pb.parcel() != null
+                        && pb.parcel().kind() == tterrag1112.life_in_the_village
+                                .Village.Planning.V2.Layer3.Parcel.Kind.FARM) {
+                    farmClaims.add(tterrag1112.life_in_the_village.Utilities
+                            .Geometry.Polygon.boundingBox(pb.parcel().budget()));
+                }
+            }
             for (var plot : plots) {
                 if (band != null) {
                     int px = (plot.bounds().minX() + plot.bounds().maxX()) / 2;
                     int pz = (plot.bounds().minZ() + plot.bounds().maxZ()) / 2;
                     if (band.withinOuter(px, pz)) continue;
                 }
+                boolean onField = false;
+                for (var fc : farmClaims) {
+                    if (plot.bounds().minX() <= fc.maxX()
+                            && plot.bounds().maxX() >= fc.minX()
+                            && plot.bounds().minZ() <= fc.maxZ()
+                            && plot.bounds().maxZ() >= fc.minZ()) {
+                        onField = true;
+                        break;
+                    }
+                }
+                if (onField) continue;
                 data.addGardenPlot(plot);
             }
             // Green-commons subdistricts: render each band fill block as a

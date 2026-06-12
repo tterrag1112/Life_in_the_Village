@@ -298,7 +298,8 @@ public final class FarmComplexPlanner {
                 spec.plotTypeMix(),
                 in.fmap().cellSize(),
                 in.seed(),
-                in.verbose()));
+                in.verbose(),
+                STRIP_ASPECT));
         if (bsp.plots().isEmpty()) {
             return PlanResult.fail(Status.NO_VIABLE_PLOTS,
                     "BSP produced zero plots above minPlotSize=" + spec.minPlotSize()
@@ -461,6 +462,14 @@ public final class FarmComplexPlanner {
      *  reads as a distinctive feature rather than the dominant
      *  plot type. */
     private static final double APIARY_PROMOTION_RATE = 0.10;
+
+    /** Agriculture-ring stage 1 (design 13 ⚑2) — target long:short plot
+     *  aspect (~1:2.5–1:3 band, midpoint) fed to the BSP so plots read
+     *  as field STRIPS (~12–16 deep × 30–45 long at typical claim
+     *  sizes) rather than squares. minPlotSize is unchanged. Constant
+     *  (not a spec field) until a second consumer needs a different
+     *  value. */
+    private static final double STRIP_ASPECT = 2.75;
 
     private static Polygon buildApronPolygon(Input in) {
         BlockPos o = in.farmhouseOrigin();
