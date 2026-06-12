@@ -3781,6 +3781,14 @@ public final class PhasedPlanner {
             LOGGER.info("agriculture ring: none (no FARMHOUSE selected)");
             return;
         }
+        // Batch-1 guard — SHRINE is a lead type and two SACRED strategies
+        // BIND it (it then places in batch 1, before this hook); the same
+        // protection covers STABLE defensively. Roster instances already
+        // placed are not available to the ring.
+        for (PlacedBuilding pb : state.placed) {
+            if (pb.type() == BuildingType.STABLE && stablesAvail > 0) stablesAvail--;
+            if (pb.type() == BuildingType.SHRINE && shrinesAvail > 0) shrinesAvail--;
+        }
         int stableTake = Math.min(stablesAvail, farmCount);
         int shrineTake = Math.min(shrinesAvail, DistrictRecipes.cap(
                 DistrictRecipes.DistrictType.AGRICULTURE, state.ctx.tier(),

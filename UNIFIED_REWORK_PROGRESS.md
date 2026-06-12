@@ -10341,3 +10341,231 @@ main..HEAD diff re-read; brace/paren balance checked on both touched files;
 grep-verified zero remaining references to the deleted RING_MEMBERS /
 CRAFT_SET / DISTRICT_TYPES constants; DistrictReport ctor arity checked at
 all three construction sites (freeze, empty, harness reads accessors only).
+
+## 2026-06-12 — Agriculture-ring stage 1: the farmstead ring (cowork/agriculture-ring-1)
+
+Stage 1 of `.claude/planning/13-AGRICULTURE-RING-DESIGN.md` (all six ⚑s
+accepted as recommended). `DISTRICT_ONLY_MODE` stays ON — the flip is
+stage 2. Four code commits + this entry.
+
+**Disposition.** Code truth re-verified on current main before drafting:
+the flag's four read sites (PP:205 filter, the two farmReserve sites, the
+adapter abort-relax), the 4b gate (PP placeOne) + `reserveComplexParcel`
+FARM arm, `FloodFillRegionClaim` (pure, statically callable, takes a
+containment boundary polygon + exclusion polygons), the adapter farm loop
+(seeds from `parcel.budget()` centroid, bounded to it), `DistrictRecipes`
+(merged step 3a — the recipe seam this stage keys on), `seatDistrict[Oriented]`
+/ `tryGateAt`, `BlockServingRouter` (terminal per placed building unless in
+`noBranchBlocks` — farmsteads are NOT no-branch, so lanes come free), and
+`ParkCandidateFinder` (occupancy = building footprints ONLY — a drift gap
+the design's §7 risk note assumed away; closed below).
+
+**Commit 1 — WELL roster type retired (⚑5).** WELL never had building NBT
+(sparse_holding pointed it at `stockpile/level_1`; everywhere else it
+self-dropped as unavailable). Removed from: InclinationProfile core sets
+(×6), PopulationRoster service rule, PlacementDefaults profile,
+NucleusRules affinities (×4), LeadBuildingTypes, LayoutStrategyRegistry
+bindings (×2), VillageTypeDatagen + the checked-in generated
+`sparse_holding.json` (hand-synced — datagen can't run in the sandbox),
+FixedFootprintProvider, PhasedPlanner getBatch arm. KEPT (runtime surfaces
+that tolerate a never-placed type; old saves may hold WELL Buildings):
+the enum value, BuildingRegistry, BuildingResourceProfile,
+BusinessActionPacket guard list. The `well_hamlet` decoration stamp and
+all plaza/green/courtyard well stamping are unrelated and untouched.
+
+**Commit 2 — the AGRICULTURE recipe (⚑3, ⚑5).** `DistrictType.AGRICULTURE`
+with FARMHOUSE (uncapped — one farmstead NODE per roster instance), STABLE
+(cap 1 = one per node; MOVED out of WORKSHOP_QUARTER), SHRINE (cap 1 per
+ring). No exhaustive switches exist over DistrictType — membership tables
+only, so the new value needs no arm work. Recipe membership re-admits the
+three types through the PP:205 filter: **farms at normal spawns under the
+flag is the intended stage-1 behaviour** (design §4) — no test command
+needed; `/litv district residential` is unaffected (its forced roster has
+no FARMHOUSE). `ZonePartition.zonedRadiusCap(tier, scanRadius)` exposes
+the cap `compute()` already used (single-sourced).
+
+**Commit 3 — the farmstead ring (the core).** `reserveAgricultureRing`
+runs LAST at the batch-3 hook (after workshop + residential reserves — it
+needs both band outers). Per the survey's district contract:
+- *Ring:* `ringInner = max(civic reach, residential band outer, outermost
+  residential/workshop gate corner) + DISTRICT_GAP`; nucleus seats sweep
+  up to the zoned cap; field claims may spill to `scan radius − 4`.
+- *Wedges (⚑1):* one per roster FARMHOUSE; fan rotated onto the primary
+  gateway bearing (±15° jitter), filled in cost-distance order
+  (`Cell.distToAnchor` at mid-ring) — density falls outward.
+- *Seat:* nucleus clearance only (farmhouse + dealt stable + yard margin
+  3 ≈ 26×22), oriented along the band, 5-bearing fan × 4-block radii via
+  `tryGateAt` (which gained a target-list self-overlap reject —
+  byte-identical for existing callers, whose lists were already checked).
+- *Dry-run:* `FloodFillRegionClaim.run` — the REAL realization shaper,
+  same spec budget (600) / slope limit / arable threshold / null biome
+  predicate as the adapter — seeded just behind the nucleus, bounded to
+  the wedge sector polygon, nucleus gate excluded. Pass ⇔ claim ≥ 200
+  cells (quantum, ≈ the 4b min-box area in budget units; safely above the
+  realization floor of 100) AND cross-field relief ≤ 6 (max−min cell
+  elevation — the terraced-field guard, §7).
+- *Escalation ladder:* all seats at quantum 200 → all seats at 150 →
+  honest `NO_VIABLE_COMPLEX_PARCEL` drop naming the wedge.
+- *Commit:* the PROVEN claim polygon becomes the farmhouse's
+  `Parcel.budget` (`materializeFarmstead` — parcel-carrying
+  materialisation; reservation folds in the claim bbox). The adapter farm
+  loop is UNCHANGED: it seeds at the claim centroid and bounds the
+  realization fill to the claim — planning proxy = realization shaper.
+  A farmhouse materialise failure rolls back stable + gate (no
+  half-committed node).
+- *Convert-then-delete:* the 4b gate, `reserveComplexParcel`'s FARM arm +
+  its district-overlap check, `complexBudgetHalfExtents`' FARM branch
+  (now MARKET-only), and the orphaned `overlapsAnyDistrict` +
+  `aabbOverlapsPoly` are gone in the same commit. No parallel farm path.
+- *STABLE / SHRINE:* one stable dealt per farmstead while roster stables
+  last; the shrine seats as a wayside on the first committed farmstead's
+  lane (between gate and anchor — the router's terminal lane passes
+  there), falling back to the batch-6 scorer if its seat fails. getBatch
+  routes AGRICULTURE-member STABLE→4 / SHRINE→6 (their old affinity
+  batch 3 runs BEFORE the hook); a batch-1 guard subtracts
+  already-placed instances (SHRINE is a bound lead type in two SACRED
+  strategies). Counter-based batch-loop skips (the civicHouseSkip
+  pattern) prevent double-placement; surplus stables/shrines honestly
+  fall through to the scorer.
+- *Diagnostics:* DistrictReport/Accum gain
+  `farmsteadsRequested/Seated/DryRunFailed/Placed` (in-memory record, not
+  a codec — the 16-field codec ceiling doesn't apply; the harness mirror
+  reads accessors and is unaffected until extended).
+
+**Commit 4 — scan 192 (⚑6), strips (⚑2), park de-dup, dump sync.**
+`FEATURE_MAP_RADIUS` 160→192 (CITY fringe past the ~140 zoned cap grows
+~20→~50 blocks; +44% scan cells, one-time; Track C staging is the flagged
+relief valve). Consumer audit: LayoutDumpSerializer re-synced 150→192
+(its "sync with the spawn grid" contract had silently gone stale at the
+160 bump); harness RunExecutor keeps its own 100 (synthetic terrain);
+FarmDebugCommand's local 100 scan is independent; VillageExtent /
+ZonePartition derive from tier radius, not scan. Adapter park pass now
+skips garden plots intersecting a committed FARM claim bbox — the park
+finder can't see parcels, and realization excludes park polygons from the
+re-fill, so an on-field park would shrink a PROVEN field (§7 drift risk,
+closed). `BspSubdivider.Input` gains `stripAspect` (0 = legacy
+alternation, byte-identical; back-compat ctors kept): hinted nodes cut
+the long axis when stringier than the hint, else the SHORT axis, so
+leaves oscillate around the target ratio. `FarmComplexPlanner` feeds
+`STRIP_ASPECT = 2.75` (the ⚑2 1:2.5–1:3 midpoint); `minPlotSize`
+unchanged; a constant, not a spec field (no second consumer yet).
+
+**What normal spawns now produce (flag still ON).** AGRICULTURAL CITY:
+the district village as before, PLUS a ring of farmsteads in wedges past
+the bands — each with a farmhouse (+stable while roster stables last),
+flood-fill field strips behind it, an organic lane from the router's
+terminal, and one wayside shrine; drops only as
+`NO_VIABLE_COMPLEX_PARCEL` with the wedge + quantum + relief detail.
+Other inclinations get proportionally fewer farmhouses (roster housing
+fill). MINE / GUARD_TOWER / CASTLE / tier-3/4 loose types stay filtered
+until stage 2.
+
+**Dry-run accounting.** Requested = roster FARMHOUSE count;
+seated = nodes whose seat + probe passed; placed = committed (farmhouse
+materialised with claim); dryRunFailed = wedges dropped (includes the
+rare seated-but-materialise-failed rollback — detail strings
+distinguish). Every roster farmhouse is consumed by the ring pass:
+placed or dropped, never re-attempted by the scorer (no strays, no
+over-drop re-runs).
+
+**Tie-in audit.**
+- *Quarter minus STABLE:* `reserveWorkshopDistricts` / quarter sizing /
+  craft skips all derive from the recipe — CITY quarter demand drops by
+  one member class automatically. CITYTEST-class baselines shift:
+  workshopCraftsRequested at CITY decreases (e.g. 8→7 with one roster
+  stable), quarter rectangles size smaller, and per-type placement rates
+  in the harness will move — re-baseline note below.
+- *WELL removal:* roster/selector/datagen/profile surfaces in commit 1;
+  reconciliation reads the roster so it simply never sees WELL; runtime
+  surfaces kept.
+- *FEATURE_MAP_RADIUS consumers:* audited in commit 4 (above).
+- *Rural exclusion vs wedge seats:* `findBestCandidate`'s batch-2
+  exclusion still exists but the FARMHOUSE scorer path no longer runs
+  (skip-consumed); ring seats use `tryGateAt`, whose reservation +
+  gate-list rejects replace it; ringInner > band outer by construction.
+- *ViabilityValidator:* farms back means MORE distinct types at every
+  tier (FARMHOUSE/STABLE/SHRINE) — diversity minima get easier; the
+  flag-gated abort-relax is untouched (stage 2 re-tightens).
+- *Router/lanes:* farmsteads get per-building terminals (NOT
+  no-branch-suppressed — verified the suppression list is courtyard
+  decor + served blocks only); no new road machinery.
+- *FarmComplexPlanner contract:* unchanged inputs; `parcelBoundary` is
+  now the PROVEN claim polygon instead of a budget rectangle — the
+  Stage-2b containment semantics are identical (BFS bounded by
+  `Polygon.contains`).
+- *Harness:* RunMetrics/MetricsComputer mirror reads accessors —
+  unaffected; district metrics + per-type placement rates WILL shift
+  (farms now place; quarter smaller; baselines need a re-run once gradle
+  is available).
+
+**Simplification sweep.** Deleted as part of the change: the 4b gate,
+the FARM arm + FARM branch (`complexBudgetHalfExtents` kind param
+dropped), `overlapsAnyDistrict`, `aabbOverlapsPoly` (orphaned by the arm
+deletion), the getBatch WELL arm, and every WELL roster surface.
+`RESIDENTIAL_FARM_RESERVE` + the two farmReserve sites stay (flag-off
+path still reads them) — they collapse at the stage-2 flip per design §2.
+
+**Deviations from prompt.**
+1. "Surplus stables stay quarter-side at CITY" (⚑3): with STABLE fully out
+   of the quarter recipe, surplus stables (roster stables − farmsteads)
+   fall through to the batch-4 scorer via STABLE's GATEWAY affinity —
+   near the gates, not the quarter. Keeping them quarter-side would have
+   required STABLE to remain a quarter member (a parallel allocation
+   path). Flagged for Garrett; trivially revertible by re-adding a
+   CITY-only quarter row.
+2. The probe seeds just behind the nucleus while realization seeds at the
+   claim centroid — same shaper, same bounds, but a concave claim whose
+   centroid falls outside itself would fail realization
+   (SEED_NOT_ADMISSIBLE). Blobby flood-fill claims make this rare;
+   quantum 200 vs floor 100 gives margin. Accepted + logged here rather
+   than adding a centroid-containment fixup nobody has seen fail yet.
+3. `farmsteadsDryRunFailed` also counts the rare post-probe materialise
+   rollback (detail strings distinguish) — one counter, honest total.
+
+**Out-of-scope but flagged.**
+- Roads may route THROUGH field claims: the router's obstacle mask takes
+  footprints/voids, not parcels — pre-existing class (4b parcels had it
+  too), now more visible with bigger fields. Candidate stage-2/3 item:
+  feed FARM claim bboxes as router obstacles or accept lanes-through-
+  fields as the look.
+- The flood-fill probe runs per seat candidate (worst case ~5 bearings ×
+  ~10 radii × 2 quanta per wedge × farm count); each BFS is budget-capped
+  at 600 cells so CITY worst case is bounded, but if spawn time moves,
+  cache seed-cell admissibility per cell first.
+- `tryGateAt` logs "district seated" at INFO for gates the probe then
+  rolls back — spawn-time only, but noisy on hard terrain; demote to
+  DEBUG if it masks diagnostics in stage-3 validation.
+- Harness baselines (district metrics, per-type placement rates) need a
+  re-baseline run when gradle is reachable.
+- The DistrictCommand selection-override seam could grow a
+  `/litv district agriculture <count>` channel for isolated-ring
+  iteration; not needed for stage-1 testing since normal spawns show the
+  ring.
+
+**Smoke-test plan (Garrett).**
+1. Superflat, `/litv spawn` (or natural spawn path) an AGRICULTURAL CITY.
+   Expect: log line `agriculture ring: N/N farmstead(s) committed … (ring
+   [inner, cap], fields to 188)`; in-world, farmsteads ringing the
+   village in distinct wedge directions, the first wedge toward the main
+   gateway; field strips (elongated plots, not squares) behind each
+   farmhouse; a lane from the road network to each farmhouse; one wayside
+   shrine near a farm lane; one stable beside farmhouses while the roster
+   had stables.
+2. Same spawn: verify NO farmhouse without fields (no strays) and no
+   `placed FARMHOUSE` lines from the scorer path (all placements come
+   from the ring pass); drops (if any) read `agriculture wedge K: …`.
+3. Real terrain (hill+river class site), CITY: expect some wedges to drop
+   with the quantum/relief detail instead of terraced fields rendering;
+   committed fields should sit on visually coherent ground (relief ≤ 6).
+4. TOWN and HAMLET spawns: smaller rings (fewer farmhouses), seats closer
+   in; verify the ring still clears the residential band and nothing
+   overlaps a precinct.
+5. Quarter regression: CITY workshop quarter now sizes WITHOUT STABLE —
+   verify the craft set (minus stables) still seats as QUARTER in the log
+   (`workshop quarter` lines) and stables appear ring-side instead.
+6. Parks: confirm no garden plot renders inside a field claim.
+7. `/litv district residential 8` still works unchanged (no farmhouse in
+   its forced roster → no ring).
+
+Build verification deferred (sandbox blocks maven.neoforged.net; no
+Java-21 javac available — static review + brace/paren balance check).
