@@ -10776,3 +10776,173 @@ profile-less types (data with intent, see table).
 
 Build verification deferred (sandbox blocks maven.neoforged.net; no
 Java-21 javac available — static review + brace/paren balance check).
+
+## 2026-06-12 — Agriculture-ring band fix: seat cap survives the built edge outgrowing the zoned cap (cowork/agri-ring-band-fix)
+
+Surgical fix round — no redesign. Superflat CITY AGRICULTURAL
+(CITYTEST6) logged `agriculture ring: 0/22 farmstead(s) committed, 22
+dropped … (ring [153, 140], fields to 188)`: the seat band was
+INVERTED (inner 153 > outer 140) and all 22 wedges dropped
+`NO_VIABLE_COMPLEX_PARCEL` without a single flood-fill probe.
+
+**Root cause (confirmed by code read, matches the field diagnosis).**
+`reserveAgricultureRing` derives `ringInner = bandsOuter +
+DISTRICT_GAP(4)` where `bandsOuter = max(civicReach,
+residentialBandOuterR, gateOuterRadius(every residential + workshop
+gate))` and `gateOuterRadius` is the FARTHEST-CORNER Euclidean distance
+of the gate AABB from the anchor. The seat ceiling, though, was
+`ZonePartition.zonedRadiusCap(tier, scanRadius)` =
+`min(round(VillageExtent.radiusFor(tier) × zoneRadiusFactor), scan)` —
+derived from village extent, NOT from where districts actually seated.
+District gates are seated on centre radius, so their corners legally
+poke past the cap; CITY's 94×64 workshop quarter cornered at ~149 →
+`bandsOuter` 149 → `ringInner` 153 > cap 140 (CITY factor 1.0625 ×
+extent). `seatFarmstead`'s first move is `innerR = ringInner +
+halfRadial; outerR = seatCap − halfRadial; if (innerR > outerR) return
+null` — instant null per wedge, with ~35 blocks of scanned ground out
+to `fieldOuter` 188 never considered.
+
+**The fix (planner layer, one method).** In `reserveAgricultureRing`
+(PhasedPlanner), the seat cap becomes
+
+```
+maxHalfRadial = max(fhFp.length(), stFp != null ? stFp.length() : 0) / 2
+                + FARMSTEAD_YARD_MARGIN
+minBandDepth  = 2 * maxHalfRadial + 4
+seatCap       = min(fieldOuter,
+                    max(zonedRadiusCap(tier, scan), ringInner + minBandDepth))
+```
+
+Not a magic constant: `maxHalfRadial` is the SAME half-radial
+`seatFarmstead` computes for its seat window (worst case — stable
+dealt; while no farmstead has committed every wedge probes WITH the
+stable footprint, since `stablesDealt` only advances on success), and
+`+4` is `seatFarmstead`'s radial sweep step (`for r = innerR; r <=
+outerR; r += 4`). So the raised cap guarantees every wedge a non-empty
+seat window with at least one sweep step of play. The `min(fieldOuter,
+…)` clamp keeps nucleus seats on-grid — a seat past `fieldOuter` would
+seed its field probe off the scanned grid. The declaration moved below
+the footprint lookups it now depends on (nothing between the old and
+new positions read it).
+
+**Zone-membership verification (the critical check).** Raising
+`seatCap` alone IS sufficient — nothing in the ring path gates on zone
+membership:
+- `tryGateAt`: centre cell `OPEN`/`SHORE` + `localSlope() <= MAX_SLOPE`
+  + AABB clear of reservations and all three gate lists. No zone read.
+- `materializeBuilding` / `materializeFarmstead`: identical category +
+  slope + `overlapsAnyReservation` admissibility. No zone read.
+- `probeField` / `FloodFillRegionClaim.run`: fmap cells (scanned, not
+  zoned), bounded by the wedge polygon.
+- The zone gate (`zoneIdAt < 0 → rejZone`) lives only in
+  `findBestCandidate` — the scorer pass, which the ring bypasses
+  entirely. The class javadoc was updated to state this explicitly.
+
+**Degenerate-band guard + log hygiene.** When even the raised cap
+cannot fit one nucleus (`ringInner + 2*maxHalfRadial > seatCap` — only
+possible when the `fieldOuter` clamp bites, i.e. the ring inner is
+pushed against the scan edge), one
+`agriculture ring: band empty (inner X > cap Y) — N farmstead(s)
+skipped` WARN replaces N identical per-wedge drop lines. The drops are
+still recorded in `state.dropped` (planner result + dump accounting
+need them) and the skip/accumulator fields (`agriFarmhouseSkip = N`,
+`agriStableSkip = 0`, `farmsteadsSeated/Placed = 0`,
+`farmsteadsDryRunFailed = N`) are set exactly as the all-fail loop
+would have set them — the guard is outcome-equivalent to running the
+loop, minus the log spam.
+
+**bandsOuter metric decision (asked to decide, one line).** Farthest-
+corner Euclidean STAYS: it is what guarantees `DISTRICT_GAP` clearance
+between any district geometry and farmstead gates — a tighter metric
+(centre radius) would just push the collision into `tryGateAt`'s
+overlap rejections with worse diagnostics. The cap, not the metric,
+was wrong.
+
+**Tie-in audit.**
+- *Upstream feeders:* `ringInner` inputs (civic precinct, residential
+  band outer, gate lists) untouched; `fieldOuter` untouched;
+  footprint lookups (`defaultFootprint`) already computed for the
+  probe spec — reused, not duplicated.
+- *`zonedRadiusCap` callers:* exactly two in the repo —
+  `ZonePartition.partition` itself (L178, behaviour UNCHANGED) and
+  this ring (now a floor inside a `max`). No other reader.
+- *`seatCap` readers in the ring path:* the wedge `midR` cost sample
+  (`min(seatCap, ringInner + 12)`), the `seatFarmstead` call
+  (`outerR`, drop-detail strings), and the summary log — all
+  intentionally see the raised cap.
+- *Downstream of the guard:* `state.dropped` (planner result + layout
+  dump), the batch-loop `agriFarmhouseSkip`/`agriStableSkip` consumers
+  (scorer-pass skip at the FARMHOUSE/STABLE arms), `districtAccum`
+  farmstead fields (DistrictReport freeze) — all fed the same values
+  the natural all-fail path produces. SHRINE: `firstGate` would be
+  null anyway, `agriShrineSkip` stays 0, shrine falls through to the
+  batch-6 scorer — identical to the pre-guard all-fail path.
+- *Sibling systems:* router lanes/connection nodes read
+  `farmsteadGates` (empty in the guard path, same as all-fail);
+  `FarmComplexPlanner` only sees committed parcels. Unaffected.
+- *Exhaustive switches / enums / records:* none touched. No new
+  tags/enums/primitives.
+
+**Simplification sweep.** Scope was one method + one javadoc; no
+orphans created or discovered inside it. (`zonedRadiusCap` keeps both
+callers; `gateOuterRadius` keeps its one caller.) Nothing to delete.
+
+**Files touched.**
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/Layer4/PhasedPlanner.java`
+  (reserveAgricultureRing: seat-cap derivation + degenerate-band guard;
+  method javadoc updated to the verified zone-membership reality).
+- `UNIFIED_REWORK_PROGRESS.md` (this entry).
+
+**Deviations from prompt.**
+1. *Salvage:* the prior agent's run died AFTER editing PhasedPlanner
+   but before committing. The uncommitted diff was independently
+   re-verified line-by-line against the live code (all referenced
+   fields/constants exist; the guard is outcome-equivalent to the
+   loop; the minBandDepth geometry matches seatFarmstead's) and
+   adopted rather than rewritten — same end state either way.
+2. *WARN values:* the prompt's template said `inner X > cap Y`; the
+   logged X/Y are the seat-window endpoints (`ringInner +
+   maxHalfRadial`, `seatCap − maxHalfRadial`) rather than raw
+   ringInner/seatCap, because post-fix the WINDOW is what inverts
+   (raw `ringInner > seatCap` is no longer the only failure shape).
+   The drop-detail string carries all four numbers.
+3. None otherwise — no scope growth, no metric redesign.
+
+**Out-of-scope but flagged.**
+- `tryGateAt` / `materializeBuilding` / `materializeFarmstead` call
+  `cellAt(...)` and dereference without a null check after `inBounds`
+  — fine if `inBounds ⇒ non-null` is the fmap contract, but it is
+  implicit. Pre-existing pattern, untouched.
+- The raised cap means CITY farmstead nuclei can now legally seat
+  outside the ZONED region (in the scanned RURAL fringe). Zone-kind
+  consumers (density profile, decoration passes keyed on zone) treat
+  those cells as unzoned — today nothing in those passes targets
+  farmstead nuclei, but a future zone-keyed pass should know the ring
+  may live outside the partition.
+- `seatDistrictOriented` (workshop quarter) has the same
+  "window can collapse" shape if bands ever outgrow ITS cap input;
+  today its caller passes a band cap derived from the same extent
+  family, and no field report shows it inverting. Not touched.
+
+**Smoke-test plan (Garrett).**
+1. *Superflat CITY (AGRICULTURAL)* — the CITYTEST6 repro: expect
+   `agriculture ring: K/22 farmstead(s) committed` with K > 0, and the
+   ring log's band NON-inverted (`ring [153, ~165+]` — inner < cap),
+   `fields to 188` unchanged. Farmhouses with field strips visible
+   beyond the workshop quarter.
+2. *Same spawn, log check:* no `band empty` WARN, and no run of 22
+   identical `NO_VIABLE_COMPLEX_PARCEL` wedge drops; any remaining
+   wedge drops should cite real probe failures (quantum/relief), not
+   the band.
+3. *Superflat TOWN:* ring places as before (TOWN's 1.25× cap already
+   exceeded its band — behaviour should be byte-identical; compare
+   the `ring [inner, cap]` numbers to a pre-fix TOWN log if handy).
+4. *Superflat HAMLET:* same — unchanged ring numbers, farmsteads
+   commit.
+5. *Sanity on placement:* committed CITY farmsteads sit just outside
+   the district edge (~157+ from the anchor), stables beside
+   farmhouses, no overlap with the workshop quarter or residential
+   blocks; roads still reach the farmstead lanes.
+
+Build verification deferred (sandbox blocks maven.neoforged.net; no
+Java-21 javac available — static review + brace/paren balance check).
