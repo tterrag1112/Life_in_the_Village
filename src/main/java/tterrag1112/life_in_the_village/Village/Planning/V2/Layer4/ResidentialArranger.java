@@ -98,6 +98,18 @@ public final class ResidentialArranger {
     /** GRID_BLOCKS — alley corridor width (FOOTPATH tier). Public for the
      *  district sizer's alley-overhead estimate. */
     public static final int GRID_ALLEY_WIDTH = 2;
+    /** 4c-c r4 — span (blocks) consumed by the internal alley between two
+     *  adjacent shelf ROWS inside a multi-demand shelf leaf: exactly the
+     *  alley corridor width, WITHOUT the corridor/2+1 per-side margin the
+     *  BSP-cut corridors add. Tighter on purpose: every shelf cell already
+     *  keeps footprints >= 1 block inside its boundary (the facing axis via
+     *  {@code pullToCorridor}'s setback, the cross axis by centring), so
+     *  the FOOTPATH paint (coreHalf 1 -> 3 wide) fills the gap plus those
+     *  margin strips — a tight service-lane look — and the span enters the
+     *  NFDH bound, where each extra block costs the planner growth steps
+     *  (CITYTEST5 cells single-block at this span; +2 more pushes the root
+     *  street cut infeasible in the 94x64 first candidate). */
+    private static final int SHELF_ALLEY_SPAN = GRID_ALLEY_WIDTH;
     /** GRID_BLOCKS — front setback (blocks) between a house's corridor-facing
      *  footprint edge and its leaf-cell boundary. The leaf boundary already
      *  sits at corridor/2 + 1 from the corridor centerline, so a setback of 1
@@ -700,7 +712,8 @@ public final class ResidentialArranger {
     /** 4c-c — the arranged workshop quarter: per-member placements
      *  (index-aligned with the input members), the central street + the
      *  edge-node entry stitch (the planner renders these VILLAGE_PATH), the
-     *  alleys (FOOTPATH), and the shared work-yard cell left OPEN (the
+     *  alleys (FOOTPATH — the BSP-cut corridors AND r4's shelf-leaf
+     *  internal lanes), and the shared work-yard cell left OPEN (the
      *  planner stamps the well at {@code yardCentre}). 4c-c fix-up —
      *  {@code yardCentre}/{@code yard} are NULL when arranged with
      *  {@code yardSide <= 0} (the split quarter's yard-less second block). */
@@ -743,8 +756,8 @@ public final class ResidentialArranger {
         List<List<BlockPos>> streets = new ArrayList<>();
         List<List<BlockPos>> alleys = new ArrayList<>();
         boolean[] failed = {false};
-        bsp(x0, z0, x1, z1, 0, demands, quarterGuide(leaves, failed), rng,
-                streets, alleys);
+        bsp(x0, z0, x1, z1, 0, demands, quarterGuide(leaves, alleys, failed),
+                rng, streets, alleys);
         if (failed[0] || streets.isEmpty()
                 || leaves.size() != members.size() + (hasYard ? 1 : 0)) {
             return null;
@@ -839,6 +852,7 @@ public final class ResidentialArranger {
      *  planner's dry-run+grow loop grows the block. Deterministic (no
      *  jitter): the cut positions are fully demand-derived. */
     private static BspGuide<List<Integer>> quarterGuide(List<int[]> leaves,
+                                                        List<List<BlockPos>> alleys,
                                                         boolean[] failed) {
         return new BspGuide<>() {
             @Override
@@ -901,7 +915,7 @@ public final class ResidentialArranger {
                     leaves.add(new int[]{x0, z0, x1, z1});
                     return;
                 }
-                if (!emitShelfLeaves(x0, z0, x1, z1, node, leaves)) {
+                if (!emitShelfLeaves(x0, z0, x1, z1, node, leaves, alleys)) {
                     failed[0] = true;        // defensive — invariant breach
                 }
             }
@@ -922,14 +936,19 @@ public final class ResidentialArranger {
     }
 
     /** One NFDH orientation: shelves of width {@code shelfW} stacked along
-     *  {@code stackLen}, demands (descending) placed next-fit. */
+     *  {@code stackLen}, demands (descending) placed next-fit. 4c-c r4 —
+     *  each shelf TRANSITION also consumes {@link #SHELF_ALLEY_SPAN} (the
+     *  internal alley between adjacent rows), so the bound accounts for the
+     *  exact layout {@link #emitShelfLeaves} emits and stays constructive.
+     *  Monotonicity is preserved: widening the shelf only merges rows,
+     *  which drops both a shelf height AND its gap span from the stack. */
     private static boolean shelfFitsOriented(int shelfW, int stackLen,
                                              List<Integer> ds) {
         int used = 0, curH = 0, curW = 0;
         for (int d : ds) {
             if (d > shelfW || d > stackLen) return false;
             if (curH == 0 || curW + d > shelfW) {
-                used += curH;
+                used += curH == 0 ? 0 : curH + SHELF_ALLEY_SPAN;
                 curH = d;                    // descending ⇒ ≤ prior shelf
                 curW = d;
             } else {
@@ -945,8 +964,9 @@ public final class ResidentialArranger {
      *  {@code maxLen} can't. Binary search — {@link #shelfFits} is monotone
      *  in the length: widening the shelf axis only merges NFDH shelves
      *  (each shelf holds a greedy prefix run, so wider shelves never push an
-     *  item later), lengthening the stack axis only adds room, and the OR of
-     *  two monotone orientations is monotone. */
+     *  item later — and r4's per-transition {@link #SHELF_ALLEY_SPAN} only
+     *  shrinks with the shelf count), lengthening the stack axis only adds
+     *  room, and the OR of two monotone orientations is monotone. */
     private static int minFeasibleLen(List<Integer> ds, int cross, int maxLen) {
         int lo = ds.get(0), hi = maxLen;
         if (lo > hi || !shelfFits(hi, cross, ds)) return -1;
@@ -964,13 +984,19 @@ public final class ResidentialArranger {
      *  longer axis when that orientation fits, else the shorter. Exact-size
      *  cells keep the greedy descending assignment safe — a bigger demand
      *  can never steal a smaller demand's cell, so leaves dominate demands
-     *  elementwise and Hall's condition holds. No corridor is emitted inside
-     *  the leaf (demand sides already carry the planner's gap). Returns
-     *  false when neither orientation fits — the guide invariant says never;
-     *  defensive only. */
+     *  elementwise and Hall's condition holds. 4c-c r4 — adjacent shelf
+     *  ROWS are separated by a {@link #SHELF_ALLEY_SPAN} gap carrying a
+     *  FOOTPATH alley CENTERLINE spanning the leaf rect (emitted into
+     *  {@code alleys}, the same collection the BSP-cut alleys land in, so
+     *  it flows through the unified realizer + router no-branch mask
+     *  unchanged); a single-row leaf emits no alley. The gap arithmetic
+     *  mirrors {@link #shelfFitsOriented} exactly — the bound stays
+     *  constructive. Returns false when neither orientation fits — the
+     *  guide invariant says never; defensive only. */
     private static boolean emitShelfLeaves(int x0, int z0, int x1, int z1,
                                            List<Integer> ds,
-                                           List<int[]> leaves) {
+                                           List<int[]> leaves,
+                                           List<List<BlockPos>> alleys) {
         int lenX = x1 - x0, lenZ = z1 - z0;
         boolean xFirst = lenX >= lenZ;
         for (int pass = 0; pass < 2; pass++) {
@@ -980,7 +1006,8 @@ public final class ResidentialArranger {
             if (!shelfFitsOriented(shelfW, stackLen, ds)) continue;
             int total = 0, h = 0, w = 0;     // total stack height (centring)
             for (int d : ds) {
-                if (h == 0 || w + d > shelfW) { total += h; h = d; w = d; }
+                if (h == 0) { h = d; w = d; }
+                else if (w + d > shelfW) { total += h + SHELF_ALLEY_SPAN; h = d; w = d; }
                 else w += d;
             }
             total += h;
@@ -988,7 +1015,16 @@ public final class ResidentialArranger {
             int curH = 0, curW = 0;
             for (int d : ds) {
                 if (curH == 0 || curW + d > shelfW) {
-                    v += curH;
+                    if (curH > 0) {
+                        v += curH;
+                        int mid = v + SHELF_ALLEY_SPAN / 2;
+                        alleys.add(alongX
+                                ? List.of(new BlockPos(x0, 0, z0 + mid),
+                                          new BlockPos(x1, 0, z0 + mid))
+                                : List.of(new BlockPos(x0 + mid, 0, z0),
+                                          new BlockPos(x0 + mid, 0, z1)));
+                        v += SHELF_ALLEY_SPAN;
+                    }
                     curH = d;
                     curW = 0;
                 }
