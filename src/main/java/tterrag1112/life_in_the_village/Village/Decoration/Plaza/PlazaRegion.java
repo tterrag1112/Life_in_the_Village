@@ -5,6 +5,7 @@ import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.UUIDUtil;
 import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadFormality;
 
 import java.util.List;
 import java.util.Set;
@@ -43,6 +44,12 @@ import java.util.stream.Collectors;
  * @param orientationRadians 0 for cardinal-aligned shapes,
  *                           &ne;0 for rotated (e.g. 45°-square,
  *                           ridge-aligned LINEAR plaza)
+ * @param formality          plan-time {@link RoadFormality} at the
+ *                           plaza centroid (the density-profile zone,
+ *                           same machinery as street paint) — the
+ *                           paver keys its treatment on this so the
+ *                           plaza matches the surrounding streets.
+ *                           ORGANIC for pre-feature saves.
  */
 public record PlazaRegion(
         UUID plazaId,
@@ -52,7 +59,8 @@ public record PlazaRegion(
         BlockPos centroid,
         int floorY,
         Set<UUID> connectedRoadIds,
-        float orientationRadians
+        float orientationRadians,
+        RoadFormality formality
 ) {
     public PlazaRegion {
         if (plazaId == null) throw new IllegalArgumentException("plazaId");
@@ -62,6 +70,7 @@ public record PlazaRegion(
         if (centroid == null)  throw new IllegalArgumentException("centroid");
         connectedRoadIds = connectedRoadIds == null
                 ? Set.of() : Set.copyOf(connectedRoadIds);
+        formality = formality == null ? RoadFormality.ORGANIC : formality;
     }
 
     public static final Codec<PlazaRegion> CODEC = RecordCodecBuilder.create(i -> i.group(
@@ -80,9 +89,11 @@ public record PlazaRegion(
             UUIDUtil.CODEC.listOf().optionalFieldOf("connectedRoadIds", List.of())
                     .forGetter(p -> List.copyOf(p.connectedRoadIds)),
             Codec.FLOAT.optionalFieldOf("orientationRadians", 0f)
-                    .forGetter(PlazaRegion::orientationRadians)
-    ).apply(i, (id, pu, sh, ft, c, y, ids, o) -> new PlazaRegion(
+                    .forGetter(PlazaRegion::orientationRadians),
+            RoadFormality.CODEC.optionalFieldOf("formality", RoadFormality.ORGANIC)
+                    .forGetter(PlazaRegion::formality)
+    ).apply(i, (id, pu, sh, ft, c, y, ids, o, f) -> new PlazaRegion(
             id, pu, sh, ft, c, y,
             ids.stream().collect(Collectors.toUnmodifiableSet()),
-            o)));
+            o, f)));
 }

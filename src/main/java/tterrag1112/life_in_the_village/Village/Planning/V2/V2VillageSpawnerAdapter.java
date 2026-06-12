@@ -339,8 +339,16 @@ public final class V2VillageSpawnerAdapter {
         }
 
         // ── Build RealizedLayout + Village + register ───────────────────
+        // City-morphology step 2a — the density profile (area-budget zones
+        // over the distToAnchor field). Deterministic from (fmap, tier), so
+        // this instance always agrees with the planner's State-side one.
+        // Built once here: buildRealizedLayout stamps each plaza's plan-time
+        // formality from it, and the road-realize pass below reuses it.
+        tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
+                densityProfile = tterrag1112.life_in_the_village.Village.Planning.V2
+                        .Layer2.DensityProfile.of(fmap, siteCtx.tier());
         RealizedLayout realized = buildRealizedLayout(siteCtx, roads,
-                phased.civicSquare(), phased.marketSquare());
+                phased.civicSquare(), phased.marketSquare(), densityProfile);
         Village village = new Village(villageName, villageType);
         // applyLayout sets center / town square / ring radii / gate
         // positions and the main-gate endpoint from the realised layout.
@@ -566,14 +574,10 @@ public final class V2VillageSpawnerAdapter {
         // great-road pipeline (UnifiedRoadPlacer + culture palette + tiering),
         // replacing the retired RoadPainter (the checkerboard renderer).
         try {
-            // City-morphology step 2a — the density profile (area-budget
-            // zones over the distToAnchor field) drives per-edge formality
-            // (FORMAL core = crisp stone; MIXED/ORGANIC = byte-identical to
-            // today). Deterministic from (fmap, tier), so this instance
-            // always agrees with the planner's State-side one.
-            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
-                    densityProfile = tterrag1112.life_in_the_village.Village.Planning.V2
-                            .Layer2.DensityProfile.of(fmap, siteCtx.tier());
+            // City-morphology step 2a — the density profile drives per-edge
+            // formality (FORMAL core = crisp stone; MIXED/ORGANIC =
+            // byte-identical to today). Same instance the plaza formality
+            // stamp used above, so streets and plazas always agree.
             VillageRoadRealizer.realize(level, roads, culture, densityProfile);
             // Layout Rework — residential variant internal lanes (street-row
             // footpath now; courtyard entry path later) render through the SAME
@@ -915,7 +919,9 @@ public final class V2VillageSpawnerAdapter {
     private static RealizedLayout buildRealizedLayout(
             SiteContext siteCtx, RoadNetwork roads,
             tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB civicSquare,
-            tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB marketSquare) {
+            tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB marketSquare,
+            tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
+                    densityProfile) {
         LayoutDensityProfile density = LayoutDensityProfile.forLevel(BUILDING_LEVEL);
         BlockPos anchor = siteCtx.anchor();
 
@@ -936,15 +942,22 @@ public final class V2VillageSpawnerAdapter {
         // raw anchor.getY() buried the pavement one block under the grass AND
         // sank every decoration; +1 puts floorY at the surface for both.
         int plazaFloorY = anchor.getY() + 1;
+        // Plaza formality — plan-time, from the density-profile zone at the
+        // plaza centroid, through the SAME mapping street paint uses
+        // (RoadFormality.at: CORE→FORMAL, MIDTOWN→MIXED, else ORGANIC). The
+        // paver reads the stamped value off the persisted region, so a CORE
+        // plaza paves crisp stone-brick exactly like the core streets.
         if (nonDegenerate(civicSquare)) {
             plazas.add(squarePlaza(civicSquare, plazaFloorY,
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
-                            .PlazaPurpose.CIVIC));
+                            .PlazaPurpose.CIVIC,
+                    centroidFormality(densityProfile, civicSquare)));
         }
         if (nonDegenerate(marketSquare)) {
             plazas.add(squarePlaza(marketSquare, plazaFloorY,
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
-                            .PlazaPurpose.MARKET));
+                            .PlazaPurpose.MARKET,
+                    centroidFormality(densityProfile, marketSquare)));
         }
 
         // Layout Rework Stage 3d — gates come from the routed network's
@@ -1005,13 +1018,27 @@ public final class V2VillageSpawnerAdapter {
         return a != null && a.maxX() > a.minX() && a.maxZ() > a.minZ();
     }
 
+    /** Plaza-formality stamp — {@link tterrag1112.life_in_the_village.Village
+     *  .Planning.V2.Layer4.RoadFormality#at} at the square's centroid, the
+     *  exact zone→formality mapping the street realizer paints with. */
+    private static tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadFormality
+            centroidFormality(
+                    tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
+                            profile,
+                    tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB a) {
+        return tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadFormality
+                .at(profile, (a.minX() + a.maxX()) / 2, (a.minZ() + a.maxZ()) / 2);
+    }
+
     /** Stage 4a — a square {@link tterrag1112.life_in_the_village.Village
      *  .Decoration.Plaza.PlazaRegion} from a reserved void AABB. */
     private static tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion
             squarePlaza(tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB a,
                         int floorY,
                         tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaPurpose
-                                purpose) {
+                                purpose,
+                        tterrag1112.life_in_the_village.Village.Planning.V2.Layer4
+                                .RoadFormality formality) {
         var poly = new tterrag1112.life_in_the_village.Utilities.Geometry.Polygon(List.of(
                 new BlockPos(a.minX(), floorY, a.minZ()),
                 new BlockPos(a.maxX(), floorY, a.minZ()),
@@ -1022,7 +1049,7 @@ public final class V2VillageSpawnerAdapter {
         return new tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaRegion(
                 java.util.UUID.randomUUID(), purpose,
                 tterrag1112.life_in_the_village.Village.Decoration.Plaza.PlazaShape.SQUARE,
-                poly, centroid, floorY, java.util.Set.of(), 0f);
+                poly, centroid, floorY, java.util.Set.of(), 0f, formality);
     }
 
     /** Stage 4a / fix-up #6 — centroid of the market's square: the MARKET

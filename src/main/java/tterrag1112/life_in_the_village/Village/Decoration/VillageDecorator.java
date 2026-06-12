@@ -87,10 +87,10 @@ public class VillageDecorator {
         if (footprint == null) {
             footprint = BuildingFootprint.fromVillage(village, data);
         }
+        // MIXED/ORGANIC plaza base material — FORMAL (CORE) plazas
+        // override to the crisp stone-brick street pair inside the paver.
         PathMaterial material = PathMaterial.forBiomeAndTier(
                 style, village.getPathTier());
-        RoadShape.RoadTier roadTier = RoadShape.fromPathTier(
-                village.getPathTier());
 
         Set<Long> allPathXZ = new java.util.HashSet<>();
         for (BlockPos p : squarePavement) {
@@ -99,7 +99,7 @@ public class VillageDecorator {
         for (var region : village.getPlazaRegions()) {
             Set<BlockPos> plazaPaved = tterrag1112.life_in_the_village
                     .Village.Decoration.Plaza.PlazaPaver.pave(
-                            level, region, material, roadTier, footprint);
+                            level, region, material, footprint);
             for (BlockPos p : plazaPaved) {
                 allPathXZ.add(xzKey(p.getX(), p.getZ()));
             }

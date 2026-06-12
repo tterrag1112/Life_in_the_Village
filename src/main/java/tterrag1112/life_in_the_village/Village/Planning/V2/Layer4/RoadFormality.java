@@ -1,6 +1,8 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer4;
 
+import com.mojang.serialization.Codec;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.StringRepresentable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
@@ -46,8 +48,15 @@ import java.util.List;
  * point is the midpoint of the edge ENDPOINTS (invariant under the rewrite),
  * not the middle waypoint.
  */
-public enum RoadFormality {
+public enum RoadFormality implements StringRepresentable {
     FORMAL, MIXED, ORGANIC;
+
+    /** Persistence codec — {@code PlazaRegion} stores the plan-time
+     *  formality of its plaza so the decorator's paver matches the
+     *  surrounding streets without rebuilding the density profile.
+     *  Codec stability: append-only. */
+    public static final Codec<RoadFormality> CODEC =
+            StringRepresentable.fromEnum(RoadFormality::values);
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RoadFormality.class);
 
@@ -142,6 +151,9 @@ public enum RoadFormality {
         return new NetworkSpec(spec.topology(), spec.nodes(), out,
                 spec.primaryBindings());
     }
+
+    @Override
+    public String getSerializedName() { return name(); }
 
     private static boolean isDistrictNode(String nodeId) {
         return nodeId != null && nodeId.startsWith(DISTRICT_ID_PREFIX);

@@ -11,8 +11,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
-import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.BuildingFootprint;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadFormality;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -43,6 +43,18 @@ import java.util.Set;
  * polygon, an edge sample is placed with deterministic coverage
  * noise (~50%) — mirrors the way road shoulders thin into terrain
  * rather than ending in a hard line.
+ *
+ * <h3>Formality (city-morphology step 2a follow-up)</h3>
+ * The treatment keys on the region's plan-time {@link
+ * PlazaRegion#formality()} (the density-profile zone at the plaza
+ * centroid), reusing the EXACT pair the street realizer paints FORMAL
+ * edges with ({@code VillageRoadRealizer}): {@link
+ * PathMaterial#stoneBrick()} + crisp placement. FORMAL (CORE) plazas
+ * pave full-coverage stone-brick core samples with no organic edge
+ * outset (the polygon boundary is a clean line, like a crisp street
+ * boundary); MIXED/ORGANIC plazas keep the caller's material and the
+ * organic edge thinning — byte-identical to the pre-formality look,
+ * mirroring how MIXED/ORGANIC street paint is unchanged.
  */
 public final class PlazaPaver {
 
@@ -68,9 +80,14 @@ public final class PlazaPaver {
     public static Set<BlockPos> pave(ServerLevel level,
                                      PlazaRegion region,
                                      PathMaterial material,
-                                     RoadShape.RoadTier tier,
                                      BuildingFootprint footprint) {
         if (level == null || region == null || material == null) return Set.of();
+
+        // FORMAL = the street realizer's crisp pair: stone-brick base,
+        // core-only sampling, no organic boundary dropout. Anything else
+        // keeps the caller's (tier/biome) material and the organic edge.
+        boolean crisp = region.formality() == RoadFormality.FORMAL;
+        PathMaterial mat = crisp ? PathMaterial.stoneBrick() : material;
 
         RandomSource random = level.getRandom();
         Set<BlockPos> paved = new HashSet<>();
@@ -94,10 +111,10 @@ public final class PlazaPaver {
                     // Interior: clamp Y to floor band; place core block.
                     pavePos = clampAndCarveColumn(level, x, z, floorY);
                     if (pavePos == null) continue;
-                    BlockState state = material.sampleCore(random);
+                    BlockState state = mat.sampleCore(random);
                     placeAndClearAbove(level, pavePos, state);
                     paved.add(pavePos);
-                } else if (distToEdge <= EDGE_OUTSET) {
+                } else if (!crisp && distToEdge <= EDGE_OUTSET) {
                     // Edge transition: deterministic coverage noise.
                     if (!shouldPlaceEdge(x, z, distToEdge)) continue;
                     int surfY = level.getHeight(
@@ -105,15 +122,16 @@ public final class PlazaPaver {
                     pavePos = new BlockPos(x, surfY - 1, z);
                     BlockState existing = level.getBlockState(pavePos);
                     if (existing.liquid()) continue;
-                    BlockState state = material.sampleEdge(random);
+                    BlockState state = mat.sampleEdge(random);
                     placeAndClearAbove(level, pavePos, state);
                     paved.add(pavePos);
                 }
             }
         }
 
-        LOGGER.info("PlazaPaver: paved {} blocks for {} plaza at {}",
-                paved.size(), region.purpose(), region.centroid().toShortString());
+        LOGGER.info("PlazaPaver: paved {} blocks for {} plaza ({}) at {}",
+                paved.size(), region.purpose(), region.formality(),
+                region.centroid().toShortString());
         return paved;
     }
 
