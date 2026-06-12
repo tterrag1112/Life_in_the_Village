@@ -10027,3 +10027,135 @@ JRE-only sandbox, no javac). Static review: full-diff re-read of all 6 touched f
 grep-verified zero stale references to the deleted constants/`terraceWeight`/fmap-keyed
 formality signatures; scope-collision check caught and fixed an adapter-local `profile`
 name clash (renamed `densityProfile`); exhaustive-switch + caller audits above.
+
+## 2026-06-12 — Plaza formal palette + market-ground single owner (cowork/plaza-formal-palette)
+
+Two surgical visual fixes, sequenced after density-gradient step 2a (the plaza work
+reads the `DensityProfile` that step shipped).
+
+**Task 1 — plazas match the surrounding road formality.** What was actually happening
+(the suspected palette confusion): `PlazaPaver` was palette-CORRECT but zone-BLIND —
+`VillageDecorator` fed every plaza one material, `PathMaterial.forBiomeAndTier(style,
+village.getPathTier())` (the village-wide path tier, dirt-mix on fresh villages), and
+the paver added a 2-block edge outset at ~50% positional dropout. That is exactly the
+ORGANIC road treatment, which is why CIVIC/MARKET squares read as patchy half-grass
+dirt next to step-2a's crisp stone-brick core streets. No second palette system was
+involved.
+
+Fix, planner-over-realiser: `buildRealizedLayout` (adapter) stamps each CIVIC/MARKET
+`PlazaRegion` with `RoadFormality.at(profile, centroid)` — the EXACT zone→formality
+mapping street paint uses (CORE→FORMAL, MIDTOWN→MIXED, else ORGANIC) — and the paver
+keys on the stamped value:
+- FORMAL: the street realizer's crisp pair verbatim — `PathMaterial.stoneBrick()`,
+  core-only samples, full coverage, NO edge outset (clean boundary, like crisp streets'
+  no-dropout EDGE zone). No new palette objects.
+- MIXED / ORGANIC: byte-identical to the previous treatment. (In the road machinery
+  MIXED *paint* is also identical to ORGANIC today — only FORMAL diverges; the plaza
+  mirrors that 1:1. The stored formality means MIXED plazas pick up any future MIXED
+  street paint divergence for free.)
+- Mechanics: `RoadFormality` gains a `StringRepresentable` codec; `PlazaRegion` gains
+  a 9th component `formality` (`optionalFieldOf`, default ORGANIC; 9 fields, under the
+  16-field codec ceiling). Adapter's `DensityProfile.of(fmap, tier)` build hoisted
+  above `buildRealizedLayout` so the plaza stamp and the road-realize pass share one
+  instance (deterministic, still agrees with the planner's State-side instance).
+- Render order preserved: decorator paves (PlazaPaver), then `CivicPlazaComplex`
+  stamps fountain/gardens on top; gardens still replace the paving block at floorY-1
+  with grass + plant at floorY — the floorY+1 convention is material-independent.
+
+**Task 2 — ONE owner for market ground.** Disposition of the two painters: (1)
+`MarketComplexRenderer` (spawn loop, first) graded the full pad polygon (hall
+footprint + margin ≤ 10) flat at `padY = hall centre Y`, surface block AT padY;
+(2) `PlazaPaver` (decorator, later) paved the MARKET plaza square at `floorY - 1`
+where `floorY = anchor Y + 1`. On superflat `hall centre Y == anchor Y`, so both
+slabs coincide invisibly; on slopes the two independent Y sources rendered two nested
+pads — the field-confirmed double border.
+
+Single-owner ruling implemented: the zone-matched PlazaPaver plaza IS the market
+ground treatment. When a plaza region exists (MARKET, else the shared CIVIC square —
+`marketPlazaCentroid` generalized to `marketPlazaRegion`, same selection order), the
+adapter skips `MarketComplexRenderer.render` entirely and derives `padY =
+plazaRegion.floorY() - 1` — ONE Y authority: ground block at floorY-1, stalls seat at
+`padY + 1 = floorY` (StallAllocator's "stand on top of the pad surface"), standing ON
+the plaza pavement. Evidence showed the complex pad needs no unique ground paint of
+its own EXCEPT the degenerate no-plaza fallback (belt-and-suspenders sites where both
+square AABBs collapsed): there the pad render is kept so stalls never seed onto raw
+terrain. Stall seeding/ownership untouched — planner XZ geometry, `MarketStallSeeder`,
+`StallAllocator` byte-identical (diff-verified: Task-2 diff touches only the adapter +
+the renderer's javadoc); on superflat even the padY VALUE is unchanged.
+
+**Tie-in audit:**
+- *PlazaPaver callers:* one (`VillageDecorator.decorateVillage`) — updated (dead
+  `RoadShape.RoadTier` param deleted, see sweep). `decorateExpansionBuilding`'s
+  `roadTier` is for `VillageRoadNetwork.connectExpansionBuilding`, untouched.
+- *PlazaRegion consumers:* `CivicPlazaComplex`, `PlazaPieceRenderer`,
+  `DecorationSlotEmitter`, `Plaza` façade, `LayoutPlan`/`Village` codecs — all read
+  existing fields; new optional field is additive (the `Plaza` façade's design note —
+  persisted state belongs ON `PlazaRegion` — is honored). Constructor sites: 2 (codec
+  apply + adapter `squarePlaza`), both updated.
+- *CivicPlazaComplex render order:* unchanged (`runDownstream`: decorator → pieces).
+- *Market pad painter + readers:* `MarketComplexRenderer.render` has one caller (the
+  adapter loop, now plaza-gated). `PlanResult.padY()` readers: the renderer (gated)
+  and `MarketStallSeeder→StallAllocator` (seatY = padY+1 — the aligned Y is the fix).
+- *Stall systems:* `MarketStallSeeder`/`StallAllocator`/stall claim path untouched.
+- *Exhaustive switches:* no enum VALUES added; no switches over `RoadFormality` exist
+  (only the realizer/paver equality checks and `RoadFormality.at`'s own total switch
+  over `DensityZone`).
+- *Harness:* untouched; `VillageRoadRealizer`/`PhasedPlanner` signatures unchanged.
+
+**Simplification sweep:** `PlazaPaver.pave`'s `RoadShape.RoadTier tier` parameter was
+never read — deleted (sole caller updated, decorator's plaza-side `roadTier` local
+removed). No other orphans surfaced in the touched scope; `MarketComplexRenderer`
+retained (concrete fallback consumer) with ownership documented in its javadoc.
+
+**Deviations from prompt:**
+- "MIDTOWN → the mixed treatment": implemented as the realizer implements MIXED —
+  paint identical to today's organic look (in the current machinery only FORMAL
+  diverges). No third plaza palette was invented; the stamped formality makes a future
+  MIXED divergence automatic.
+- The pad render was kept for the no-plaza degenerate fallback rather than deleted
+  outright ("whatever evidence shows it needs") — without it, stalls on a plaza-less
+  site would seed onto ungraded terrain.
+
+**Out-of-scope but flagged:**
+- The pad rectangle (hall footprint + margin) is not geometrically guaranteed inside
+  the plaza square; if a wide hall + max margin overruns the plaza edge, the stall
+  band's outer sliver sits on unpaved ground (plaza edge outset covers ~2 blocks,
+  and zero on FORMAL plazas). Clamping the pad to the plaza AABB would change stall
+  seating — left untouched per the stalls-identical constraint.
+- The pad's HEAD_CLEARANCE=5 vegetation/terrain-bump clearing is stronger than the
+  plaza's 1-block clear-above; on rough real terrain a tall obstruction inside the
+  market square now survives until the plaza pass (which carves only dirt-family
+  columns). Cosmetic, watch on real-terrain spawns.
+- Plaza paving still runs AFTER stalls are placed (pre-existing order); pave-over is
+  prevented only by stall blocks being non-replaceable. Unchanged behavior, noted.
+- `PlazaPurpose.RELIGIOUS_COURTYARD` regions (none produced today) would default
+  ORGANIC — fine for the monastery thread to revisit.
+
+**Smoke test plan (user-executable):**
+1. Superflat CITY spawn: log shows `PlazaPaver: paved N blocks for CIVIC plaza
+   (FORMAL) at ...` and the same for MARKET (both squares sit at the anchor — CORE).
+   In-world: both squares are solid crisp stone-brick-dominant (stone bricks/stone/
+   polished andesite/cobble), full coverage, hard clean edge — visually continuous
+   with the step-2a core streets; no dirt-path speckle, no grass gaps.
+2. Civic square: fountain centred, corner/mid-edge gardens present with GRASS bases
+   and plants sitting ON the paving level — not buried, not floating.
+3. Market: stalls seed and claim exactly as before (same count, same `[MarketStall
+   Seeder] seeded N vacant stall(s)` line); stalls stand ON the stone plaza; log shows
+   `V2: market ground for X owned by the MARKET plaza (pad paint skipped; ...)` and
+   NO `market pad rendered` line.
+4. ONE border: walk the market perimeter — a single pavement edge, no second nested
+   pad ring (superflat: previously invisible; verify the log line flipped anyway).
+5. Real-terrain (sloped) spawn with a market: single flat pavement around the hall at
+   the plaza's level; no second offset slab; stalls flush on it.
+6. TOWN/HAMLET (or any plaza outside the CORE band): log prints `(MIXED)` or
+   `(ORGANIC)` and the square keeps today's patchy dirt look — small villages keep
+   their dirt squares.
+7. Old-save load (optional): pre-feature villages load, plazas read `formality=
+   ORGANIC` (codec default) — no decode errors.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net; JRE-only sandbox, no javac). Static review: full main..HEAD diff
+re-read (caught and fixed a global string-replace that had deleted the expansion
+method's still-used `roadTier` local, and a dangling javadoc); grep-verified call-site
+arities (pave ×1, squarePlaza ×2, buildRealizedLayout ×1, PlazaRegion ctor ×2,
+marketPlazaCentroid ×0 remaining); codec component/apply arity 9/9.
