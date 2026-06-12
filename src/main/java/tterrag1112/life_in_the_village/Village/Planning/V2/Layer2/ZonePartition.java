@@ -104,6 +104,18 @@ public final class ZonePartition {
      *  nowhere to go (22 drops). 85 gives the periphery room while keeping a
      *  ~15-block fringe inside the grid for fields. TOWN/HAMLET unchanged
      *  (1.25×). Baseline; raise toward the grid if CITY still drops. */
+    /** Agriculture-ring stage 1 — the zoned-region radius cap for a tier,
+     *  clamped to the scan radius: {@code min(VillageExtent.radiusFor(tier)
+     *  × zoneRadiusFactor(tier), scanRadius)}. The same value {@link #of}
+     *  bounds the zoned cells with; exposed so the farmstead-ring seating
+     *  can keep nucleus SEATS inside the zoned region while letting field
+     *  claims spill into the scanned-but-unzoned fringe. */
+    public static int zonedRadiusCap(ViabilityTier tier, int scanRadius) {
+        return Math.min(
+                (int) Math.round(VillageExtent.radiusFor(tier) * zoneRadiusFactor(tier)),
+                scanRadius);
+    }
+
     private static double zoneRadiusFactor(ViabilityTier tier) {
         return tier == ViabilityTier.CITY ? 1.0625 : 1.25;
     }
@@ -163,9 +175,7 @@ public final class ZonePartition {
         // Cap = VillageExtent.radiusFor(tier) × zoneRadiusFactor(tier),
         // clamped to the scan radius. Fix-up #5: the CITY factor (0.8) puts
         // the cap below the grid so CITY actually compacts.
-        int radiusCap = Math.min(
-                (int) Math.round(VillageExtent.radiusFor(tier) * zoneRadiusFactor(tier)),
-                fmap.radius());
+        int radiusCap = zonedRadiusCap(tier, fmap.radius());
         long radiusCapSq = (long) radiusCap * radiusCap;
 
         // Reachable buildable cells within the village radius, ascending

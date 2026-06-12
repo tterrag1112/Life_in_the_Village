@@ -39,7 +39,7 @@ import java.util.Map;
 public final class DistrictRecipes {
 
     /** The shipped district kinds (survey contract + step-3 scope). */
-    public enum DistrictType { CIVIC, MARKET, WORKSHOP_QUARTER, RESIDENTIAL, GREEN_COMMONS }
+    public enum DistrictType { CIVIC, MARKET, WORKSHOP_QUARTER, RESIDENTIAL, GREEN_COMMONS, AGRICULTURE }
 
     /** One member row: a district of this kind may hold up to {@code cap}
      *  buildings of {@code type}; {@code weight} is the (reserved) dealing
@@ -72,6 +72,18 @@ public final class DistrictRecipes {
     //                     remaining house into residential districts.
     //  GREEN_COMMONS    — no building members; it is band FILL (seated
     //                     green blocks), not a roster-allocated district.
+    //  AGRICULTURE      — the outer ring of FARMSTEAD nodes (design doc
+    //                     13, agriculture-ring stage 1). One node per
+    //                     roster FARMHOUSE (uncapped — the dealer mints a
+    //                     node per instance); STABLE cap 1 reads as ONE
+    //                     PER FARMSTEAD NODE (the ring pass deals one
+    //                     stable beside each farmhouse while roster
+    //                     stables last — moved here OUT of the
+    //                     WORKSHOP_QUARTER craft set); SHRINE cap 1 is
+    //                     per RING (one wayside shrine on a rural lane).
+    //                     Membership re-admits these types through the
+    //                     DISTRICT_ONLY_MODE filter — farms at normal
+    //                     spawns are stage 1's intended behaviour.
     // =====================================================================
 
     private static final Map<DistrictType, List<Member>> DEFAULTS;
@@ -92,11 +104,14 @@ public final class DistrictRecipes {
                 new Member(BuildingType.MILLER, 1, UNCAPPED),
                 new Member(BuildingType.WOODCUTTER, 1, UNCAPPED),
                 new Member(BuildingType.STOCKPILE, 1, UNCAPPED),
-                new Member(BuildingType.WAREHOUSE, 1, UNCAPPED),
-                new Member(BuildingType.STABLE, 1, UNCAPPED)));
+                new Member(BuildingType.WAREHOUSE, 1, UNCAPPED)));
         d.put(DistrictType.RESIDENTIAL, List.of(
                 new Member(BuildingType.HOUSE, 1, UNCAPPED)));
         d.put(DistrictType.GREEN_COMMONS, List.of());
+        d.put(DistrictType.AGRICULTURE, List.of(
+                new Member(BuildingType.FARMHOUSE, 1, UNCAPPED),
+                new Member(BuildingType.STABLE, 1, 1),
+                new Member(BuildingType.SHRINE, 1, 1)));
         DEFAULTS = Map.copyOf(d);
         CITY_EXTRAS = Map.of(DistrictType.CIVIC, List.of(
                 new Member(BuildingType.HOUSE, 1, 2)));
