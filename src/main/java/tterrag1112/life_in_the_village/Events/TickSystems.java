@@ -297,16 +297,24 @@ class VillageDailyTickSystem implements TickSubsystem {
             }
 
 
-            // ── Kingdom economy (staggered separately) ───────────────────────
-            for (Kingdom kingdom : vdata.getAllKingdoms()) {
-                long kOffset = Math.abs(
-                        kingdom.getName().hashCode() % 24000L);
-                if ((tick + kOffset + 1000L) % 24000L == 0) {
-                    KingdomEconomyEngine.evaluate(level, kingdom, vdata);
-                }
-            }
-
             vdata.setDirty();
+        }
+
+        // ── Kingdom economy (hoisted out of the per-village loop) ─────────────
+        // Perf/correctness fix (perf-noon-social-food): this loop used to live
+        // INSIDE the per-village loop, gated only by the kingdom offset. That
+        // meant KingdomEconomyEngine.evaluate ran once per kingdom PER VILLAGE
+        // that happened to fire on the kingdom's offset tick — in a world where
+        // two villages share an offset tick the same kingdom was evaluated
+        // twice in one tick, and the cost scaled with village count. Hoisted to
+        // run at most ONCE per kingdom per day, independent of how many villages
+        // fired this tick. The +1000 stagger from the village daily window is
+        // preserved.
+        for (Kingdom kingdom : vdata.getAllKingdoms()) {
+            long kOffset = Math.abs(kingdom.getName().hashCode() % 24000L);
+            if ((tick + kOffset + 1000L) % 24000L == 0) {
+                KingdomEconomyEngine.evaluate(level, kingdom, vdata);
+            }
         }
     }
 

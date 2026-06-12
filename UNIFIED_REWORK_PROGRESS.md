@@ -11140,3 +11140,246 @@ Static review in its place: multi-line greps on every touched symbol
 `normalizeAngle`/`parcelInteriorSeed`/`runFill`/`chunkCapFor`/
 `truncationWarned`), brace/paren/bracket balance on all five touched
 files, placeholder-vs-arg count on every changed log line.
+
+## 2026-06-12 — Perf: noon/day-rollover spike + WORK→SOCIAL stampede + food-access diagnostic (cowork/perf-noon-social-food)
+
+Investigation-first round on two reported tick-time spikes (every
+in-game day at the day rollover the user calls "noon"; and the
+WORK→SOCIAL boundary) plus the "NPCs report no food while a food
+merchant exists" complaint. Verified every prior hypothesis against
+current code; corrected two of them.
+
+### Item 1 — the noon / day-rollover spike
+
+**Verified mechanism (the prior hypothesis was only half right).**
+The flagged "kingdom loop nested inside the per-village daily loop at
+TickSystems ~L301" IS still nested — but it was already offset-gated,
+so it was not multiplying KingdomEconomyEngine cost by village count
+the way the audit assumed. The real, larger driver is upstream of that
+one block:
+
+- `VillageDailyTickSystem` (the per-village pass) IS staggered per
+  village (`(tick + nameHash%24000) % 24000 == 0`), so villages do not
+  all process on the same tick. Good — not the spike.
+- BUT ~20+ standalone daily `TickSubsystem`s (priorities 180–204:
+  `road_upkeep`, `npc_daily_decay`, `province_recompute`/`_daily`,
+  `audience_loop`, `npc_ruler_audit`, `rebellion`, `vassal_rebellion`,
+  `kingdom_collapse`, `voluntary_union`, `war_engine`,
+  `religion_authority`, `convert_province`, `age_cycle`,
+  `office_elections`, `house_founding`, `law_decision`, `crime_trial`,
+  `religion_rite`, `health_daily`, `plague_roll`, …) all use
+  `interval()==24000` and therefore ALL fire on the SAME tick
+  (`tick % 24000 == 0`). They are NOT staggered. Most iterate every
+  kingdom/province, so their cost scales with kingdom count — which is
+  exactly why multi-village/multi-kingdom worlds hit ~800 ms while the
+  superflat single CITY hits ~120 ms.
+- `npc_daily_decay` additionally runs TWO full O(N) passes over
+  `level.getEntities().getAll()` plus an O(N²) social-proximity sweep,
+  all on that same tick — the dominant single-village cost.
+
+So the spike is "every daily system landing on one tick," not the
+kingdom loop alone.
+
+**What I did NOT do (and why).** Staggering the individual daily
+systems across ticks is NOT low-risk: their priority comments encode
+same-day causal ordering (e.g. province recompute → office elections →
+rebellion → war → religion-authority all read the previous step's
+same-tick output). Splitting them across ticks would break those
+same-day chains. Per the workflow ("planning-layer correctness over
+realiser heroics; surgical only"), I instrumented instead of
+restructuring the daily ordering, and left a flagged follow-up below.
+
+**What I fixed (cheap + certain).** Hoisted the kingdom-economy loop
+out of the per-village loop in `VillageDailyTickSystem.tick`. As
+written it ran inside `for (village …)`, so on any tick where two
+villages both fired AND matched a kingdom's offset, that kingdom was
+evaluated TWICE in one tick; the work also scaled with the number of
+villages that fired. Now it runs at most once per kingdom per day,
+independent of village count. The `+1000` stagger is preserved. This
+is a latent correctness fix, not the main perf lever, but it is the
+one certain, self-contained change (single call site; tie-in audit
+below confirms no other caller).
+
+**What I instrumented.** Added a threshold-gated, once-per-spike
+attribution log to `TickSubsystemRegistry.tickAll`. The registry
+already recorded per-system last-tick nanos (`LAST_TIMING`); I sum the
+pass and, only when it exceeds the 50 ms server-tick budget (and at
+least 100 ticks since the last report — guards back-to-back overruns),
+emit one INFO line naming the top-6 heaviest subsystems with their ms.
+No per-tick spam: ordinary ticks run only interval==1/20 systems and
+stay far under budget, so this is silent except on the actual spike.
+
+### Item 2 — the WORK→SOCIAL stampede (premise already solved)
+
+**Corrected premise.** The proposed fix — "derive a stable per-NPC
+0..~200-tick offset from UUID and delay the phase switch to smear the
+stampede" — ALREADY EXISTS and is wider than the ask:
+
+- `ScheduleResolver.phaseJitter(npc)` derives a stable ±300-tick offset
+  from `npc.getUUID().hashCode()` (Liveliness L3) and applies it
+  EXACTLY ONCE inside `phaseAt`, so every NPC's WORK/SOCIAL/MEAL/REST
+  boundary already lands at a UUID-stable jittered time across a
+  ~30-second window — not in lockstep.
+- `NpcSchedules.tick` only calls `setActiveActivityIfPossible` when the
+  derived Activity actually CHANGES, so the boundary tick is a cheap
+  no-op for NPCs whose Activity is unchanged.
+- Brain cadence LOD (`TownspersonMob.brainTickInterval`: FULL ≤48 b,
+  1/4 to 96 b, 1/8 beyond, staggered by entity id) and the budgeted
+  path sink are both present as described.
+
+So the stampede the prompt describes is already mitigated by exactly
+the proposed mechanism. Adding a second jitter would double-jitter the
+lookup (the class header for `NpcSchedules.tick` documents a prior
+2×-jitter bug that was explicitly fixed). **No code change made for
+Item 2** — duplicating the existing jitter would regress it.
+
+Rite/festival caveat checked: synchronized attendance is handled
+separately via `isEventTime()` collapsing WORK→LEISURE in `phaseAt`
+(event override), independent of the per-NPC phase jitter, so the
+existing jitter does not desync gatherings. No conflict.
+
+### Item 3 — "no access to food" with a food merchant present (instrumented)
+
+**Verified mechanism.** The "no access to food" string the user saw is
+`EatMealBehavior`'s `setCurrentActivity("No food available")`. The
+merchant-present-but-rejected path is L132: `findAnyFoodSource`
+returned null. That method scans MARKET/BAKERY *buildings* and, via
+`BuildingStorageAccess.countItem`, only inspects Container block
+entities INSIDE the building's `getShape()` min/max box.
+
+**The suspected latent bug is plausible but NOT certain, so I
+instrumented rather than fixed.** `MerchantStartingStock` stocks the
+stall's chest at `stall.getChestPos()` (set post-placement at a stall
+slot). Whether that chest falls inside the parent MARKET building's
+`getShape()` box is layout-dependent: stalls are placed at allocator
+slot positions around the market plaza and the chest is not guaranteed
+to be within the recorded building bounds. If it is outside,
+`countItem` sees an empty market while the merchant "has food" in its
+stall chest — the documented stall-vs-building inventory mismatch.
+Pointing the buy path at stall chests would also have to re-route
+payment (currently `NpcEconomy.npcPay` to the in-bounds vendor) and
+arguably should go through `NpcEconomy.marketPurchase` per the
+behavior skill — that's a design change, not a surgical fix, so it is
+left for a ruling.
+
+**What I instrumented.** Added `logFoodAccessFailure` to
+`EatMealBehavior`, DEBUG-gated and once-per-episode (per-NPC `long
+lastFoodFailLogTick`, NOT a brain MemoryModuleType — per the
+registration trap). On the failure branch of `start()` it logs the
+NPC, village, wealth vs the 20-bronze gate, personal/home food state,
+and for each MARKET/BAKERY candidate whether the building-bounds scan
+found affordable food. Crucially, for each MARKET it also walks
+`getStallsForMarket(...)` and counts stall chests that DO contain food;
+when a stall chest has food but the building-bounds scan does not see
+it, the line prints an explicit `STALL-CHEST FOOD NOT SEEN BY
+BUILDING-BOUNDS SCAN` marker — confirming or ruling out the bug from
+one log line.
+
+### Files touched
+
+- `src/main/java/.../Events/TickSystems.java` — hoisted the
+  kingdom-economy loop out of the per-village loop in
+  `VillageDailyTickSystem.tick`.
+- `src/main/java/.../Events/TickSubsystemRegistry.java` — added
+  `SPIKE_THRESHOLD_NANOS` / `SPIKE_REPORT_MIN_GAP_TICKS` /
+  `lastSpikeReportTick` fields, total-nanos accumulation in `tickAll`,
+  and the private `reportSpikeIfOver` attribution logger.
+- `src/main/java/.../Npc/Brain/Behaviors/EatMealBehavior.java` — added
+  LOGGER, the per-NPC `lastFoodFailLogTick` field, and the
+  `logFoodAccessFailure` DEBUG diagnostic invoked on the L132 failure
+  branch.
+
+### Tie-in audit
+
+- **Upstream feeders.** Item 1 daily systems are fed by
+  `ServerTickDispatcher.onServerTick` → `tickAll`; unchanged. Kingdom
+  loop reads `vdata.getAllKingdoms()` (method scope `tick`/`level`/
+  `vdata`, all still in scope after the village loop — verified).
+- **Downstream callers.** `KingdomEconomyEngine.evaluate` — the moved
+  block is its ONLY call site (grep-confirmed). `tickAll` — only caller
+  is `ServerTickDispatcher`; signature unchanged. `getAllTimingsMicros`
+  / `getLastTimingNanos` (used by `DebugTickCommand`) — `LAST_TIMING`
+  semantics unchanged, so `/liv debug timings` is unaffected.
+  `EatMealBehavior` — no public signature change; new method/field are
+  private; no callers affected.
+- **Sibling systems.** Spike log only READS `LAST_TIMING`; no shared
+  state mutated. Food diagnostic only READS stall chests / building
+  storage; no economy mutation.
+- **Exhaustive switches / enums.** None touched. No new enum/tag/
+  MemoryModuleType introduced (food guard is a plain long).
+
+### Deviations from prompt
+
+- Item 1: the prompt offered "hoist the kingdom loop AND stagger
+  per-village daily processing." Per-village processing is ALREADY
+  staggered (verified), so only the hoist was applicable; the real
+  multiplier (the ~20 un-staggered standalone daily systems) was
+  instrumented, not restructured, because their same-day ordering
+  chain makes cross-tick staggering non-surgical.
+- Item 2: no code change — the proposed jitter already exists (±300
+  ticks, applied once in `phaseAt`). Adding it again would reintroduce
+  the documented 2×-jitter regression.
+- Item 3: instrumented only; the stall-vs-building fix needs payment
+  re-routing / `marketPurchase` adoption (design), not a surgical edit.
+
+### Out-of-scope but flagged
+
+- **The real noon fix (deferred, needs a ruling):** stagger the ~20
+  standalone daily `TickSubsystem`s so they don't all land on
+  `tick % 24000 == 0`. Because they form same-day causal chains
+  (province → elections → rebellion → war → religion), the right shape
+  is probably to keep the chain ordered but spread the WHOLE chain to a
+  per-day offset (e.g. run all kingdom-D3 dailies at one staggered
+  daytick, NPC dailies at another), or to split kingdom processing
+  across kingdoms/ticks within the day. The new `[TickSpike]` log will
+  name which subsystem to attack first.
+- `npc_daily_decay` does two full `getEntities().getAll()` passes + an
+  O(N²) social sweep on one tick. If the spike log fingers
+  `npc_daily_decay`, fold the two entity passes into one and consider
+  spatial bucketing for the social sweep.
+- The food buy path (`tryBuyFood`) uses `BuildingStorageAccess.takeItem`
+  + `NpcEconomy.npcPay` directly rather than the canonical
+  `NpcEconomy.marketPurchase`; if the stall-chest bug is confirmed, the
+  fix should adopt `marketPurchase` and source from stall chests in one
+  pass.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+Static review in its place: brace/paren/bracket balance confirmed on
+all three touched files; every touched symbol grep-verified
+(`getStallsForMarket`, `getChestPos`, `isActive`, `getNpcName`,
+`Building.getId/getType/getShape`, `KingdomEconomyEngine.evaluate`
+single call site, `LAST_TIMING`); log-line placeholder/arg counts
+checked (`[TickSpike]` = 3/3; `[FoodAccess]` uses `sb.toString()`,
+0 placeholders).
+
+### Smoke-test plan (Garrett)
+
+1. **Multi-village world, watch the rollover spike + attribution log.**
+   Run until an in-game day rolls over (the spike moment). With the
+   server log at INFO, look for a line:
+   `[TickSpike] tick <N> subsystem pass <X> ms (budget 50 ms) — top:
+   <name>=<ms>ms, …`. Note the named top offenders — that is the
+   attribution the next perf pass will target. If no line appears, the
+   pass stayed under 50 ms.
+2. **Confirm the kingdom-economy hoist didn't change behavior.** Over
+   several in-game days, kingdom economy effects (export/import,
+   treasury shifts) should still occur once per kingdom per day; no
+   doubled effects, no missing days.
+3. **Single superflat CITY (~112 NPCs), WORK-end smoothness.** Stand in
+   the city and watch the WORK→SOCIAL transition at workday end. NPCs
+   should peel off to social spots staggered over ~30 s (existing
+   jitter), not all at once. (No new code here — this confirms the
+   existing mitigation is intact after the other edits.)
+4. **Provoke the food complaint and capture the diagnostic.** Enable
+   DEBUG logging for the mod. Get an NPC to fail to eat while a food
+   merchant is present (e.g. a market with a stocked food stall but the
+   NPC reports "No food available"). Look for:
+   `[FoodAccess] npc=… village=… wealth=…b minWealthGate=20b … src=MARKET@… affordableFoodInBuildingBounds=false stalls=N stallChestsWithFood=M`
+   - If it ends with `STALL-CHEST FOOD NOT SEEN BY BUILDING-BOUNDS
+     SCAN`, the stall-vs-building inventory bug is confirmed → schedule
+     the buy-path fix (flagged above).
+   - If `affordableFoodInBuildingBounds=true` but the NPC still failed,
+     the cause is elsewhere (pathing / wealth gate / price) and the
+     same line shows wealth vs the gate.

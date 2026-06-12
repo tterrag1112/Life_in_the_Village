@@ -50,6 +50,25 @@ public final class TickSubsystemRegistry {
      */
     private static final Map<String, Integer> ERROR_COUNTS = new LinkedHashMap<>();
 
+    // ── Spike attribution (perf-noon-social-food) ────────────────────────────
+    /**
+     * When the summed cost of all subsystems in a single tick exceeds this
+     * many nanoseconds, {@link #tickAll} logs a once-per-spike INFO line
+     * naming the heaviest subsystems. Threshold-gated, NOT per-tick: the
+     * daily kingdom/NPC sweeps land on {@code tick % 24000 == 0}, so this
+     * fires roughly once per in-game day when (and only when) the daily pass
+     * is actually slow. Set to 50 ms = one server-tick budget.
+     */
+    private static final long SPIKE_THRESHOLD_NANOS = 50_000_000L;
+    /**
+     * Minimum tick gap between two spike reports, so a sustained heavy patch
+     * (e.g. a long combat burst) can't spam the log every tick. The daily
+     * spike is naturally ~24000 ticks apart; this only guards pathological
+     * back-to-back overruns.
+     */
+    private static final long SPIKE_REPORT_MIN_GAP_TICKS = 100L;
+    private static long lastSpikeReportTick = Long.MIN_VALUE;
+
     // =========================================================================
     // Registration
     // =========================================================================
@@ -189,6 +208,7 @@ public final class TickSubsystemRegistry {
 
         long tick = ctx.tick();
 
+        long totalNanos = 0L;
         for (TickSubsystem system : SYSTEMS) {
             if (tick % system.interval() != 0) continue;
 
@@ -205,7 +225,50 @@ public final class TickSubsystemRegistry {
             }
             long elapsed = System.nanoTime() - startNanos;
             LAST_TIMING.put(system.name(), elapsed);
+            totalNanos += elapsed;
         }
+
+        // ── Spike attribution (perf-noon-social-food) ────────────────────────
+        // Threshold-gated, once-per-spike. Only when the whole subsystem pass
+        // overruns the 50 ms server-tick budget do we name the heaviest
+        // subsystems, so the next in-game test attributes the noon/day-rollover
+        // spike to a specific system instead of guessing. No per-tick spam:
+        // most ticks run only interval==1/20 systems and stay far under budget;
+        // the gap guard stops a sustained overrun from repeating the line.
+        reportSpikeIfOver(tick, totalNanos);
+    }
+
+    /**
+     * Logs a single INFO line attributing a slow tick to its heaviest
+     * subsystems. Called every tick from {@link #tickAll}; no-ops unless
+     * {@code totalNanos} exceeds {@link #SPIKE_THRESHOLD_NANOS} and at least
+     * {@link #SPIKE_REPORT_MIN_GAP_TICKS} have elapsed since the last report.
+     */
+    private static void reportSpikeIfOver(long tick, long totalNanos) {
+        if (totalNanos < SPIKE_THRESHOLD_NANOS) return;
+        if (tick - lastSpikeReportTick < SPIKE_REPORT_MIN_GAP_TICKS) return;
+        lastSpikeReportTick = tick;
+
+        // Top 6 offenders by last-tick cost. LAST_TIMING holds the most recent
+        // per-system nanos (only systems that actually ran this tick were just
+        // overwritten; stale entries from prior ticks are filtered by sorting
+        // and capping — a stale entry can only be small relative to a 50 ms
+        // spike, so it cannot mislead the attribution).
+        List<Map.Entry<String, Long>> top = new ArrayList<>(LAST_TIMING.entrySet());
+        top.sort((a, b) -> Long.compare(b.getValue(), a.getValue()));
+
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (Map.Entry<String, Long> e : top) {
+            if (shown >= 6) break;
+            if (e.getValue() <= 0L) continue;
+            if (shown > 0) sb.append(", ");
+            sb.append(e.getKey()).append('=').append(e.getValue() / 1_000_000L).append("ms");
+            shown++;
+        }
+        LOGGER.info("[TickSpike] tick {} subsystem pass {} ms (budget 50 ms) — "
+                        + "top: {}",
+                tick, totalNanos / 1_000_000L, sb);
     }
 
     // =========================================================================

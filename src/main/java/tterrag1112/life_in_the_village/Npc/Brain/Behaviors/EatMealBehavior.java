@@ -44,6 +44,17 @@ import java.util.UUID;
  */
 public class EatMealBehavior extends Behavior<TownspersonMob> {
 
+    private static final org.slf4j.Logger LOGGER =
+            com.mojang.logging.LogUtils.getLogger();
+
+    /** Game-tick of the last food-access failure we DEBUG-logged for this NPC.
+     *  Per-NPC because a fresh EatMealBehavior is constructed for each NPC's
+     *  brain. Guards the diagnostic to once per failure episode (a meal window
+     *  that ends with "No food available") rather than once per tick. A plain
+     *  long timestamp — deliberately NOT a brain MemoryModuleType, per the
+     *  registration trap. */
+    private long lastFoodFailLogTick = Long.MIN_VALUE;
+
     private static final int EAT_DURATION = 80;
     private static final double HOME_CLOSE_SQ = 256.0;
     private static final double INTERACT_SQ = 16.0;
@@ -129,8 +140,94 @@ public class EatMealBehavior extends Behavior<TownspersonMob> {
             return;
         }
 
+        logFoodAccessFailure(level, entity, gameTime, homeHasFood);
         entity.setCurrentActivity("No food available");
         phase = Phase.DONE;
+    }
+
+    /**
+     * DEBUG-gated, once-per-episode diagnostic for the "merchant sells food
+     * but the NPC reports no food" complaint (perf-noon-social-food). Walks the
+     * same MARKET/BAKERY candidates {@link #findAnyFoodSource} considers and
+     * records why each was rejected — wealth gate, no affordable food in the
+     * building's scanned containers, etc. Crucially it also reports the stall
+     * chests registered to each MARKET via {@code getStallsForMarket}: if a
+     * merchant has stocked its STALL chest but that chest sits OUTSIDE the
+     * MARKET building's getShape() box, {@link BuildingStorageAccess#countItem}
+     * (which only scans the building bounds) sees an empty market — the
+     * suspected latent bug. The line names that mismatch so the next test
+     * confirms or rules it out.
+     *
+     * <p>No per-tick spam: only fires from the failure branch of {@code start()}
+     * (once per meal window, gated by MEAL_COOLDOWN) and additionally guards on
+     * {@link #lastFoodFailLogTick}. Entirely skipped unless DEBUG logging is on.
+     */
+    private void logFoodAccessFailure(ServerLevel level, TownspersonMob entity,
+                                      long gameTime, boolean homeHasFood) {
+        if (!LOGGER.isDebugEnabled()) return;
+        if (gameTime - lastFoodFailLogTick < 200L) return; // de-dupe within a window
+        lastFoodFailLogTick = gameTime;
+
+        long wealth = CoinHelper.getWealth(entity.getPersonalInventory()).toBronze();
+        String villageName = entity.getAssignedVillageName().orElse(null);
+        VillageSavedData data = VillageSavedData.get(level);
+        var village = villageName == null
+                ? null : data.getVillageByName(villageName).orElse(null);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[FoodAccess] npc=").append(entity.getNpcName())
+          .append(" village=").append(villageName)
+          .append(" wealth=").append(wealth).append('b')
+          .append(" minWealthGate=").append(MIN_WEALTH_BRONZE).append('b')
+          .append(" personalFood=").append(hasPersonalFood(entity))
+          .append(" homeHasFood=").append(homeHasFood);
+
+        if (wealth < MIN_WEALTH_BRONZE) {
+            sb.append(" -> REJECTED: below min-wealth gate (findAnyFoodSource "
+                    + "returns null before scanning any source)");
+        }
+        if (village == null) {
+            sb.append(" -> REJECTED: no assigned village");
+            LOGGER.debug(sb.toString());
+            return;
+        }
+
+        MarketPriceData priceData = MarketPriceRegistry.INSTANCE.getDefault();
+        int sources = 0;
+        for (UUID id : village.getBuildingIds()) {
+            Building b = data.getBuildingById(id).orElse(null);
+            if (b == null || !FOOD_SOURCE_TYPES.contains(b.getType())) continue;
+            sources++;
+            boolean affordable = hasFoodAffordable(level, entity, b);
+            sb.append(" | src=").append(b.getType())
+              .append('@').append(b.getShape().getOrigin())
+              .append(" affordableFoodInBuildingBounds=").append(affordable);
+
+            if (b.getType() == BuildingType.MARKET) {
+                var stalls = data.getStallsForMarket(b.getId());
+                int withFood = 0;
+                for (var stall : stalls) {
+                    if (!stall.isActive()) continue;
+                    var be = level.getBlockEntity(stall.getChestPos());
+                    if (!(be instanceof net.minecraft.world.Container chest)) continue;
+                    for (int i = 0; i < chest.getContainerSize(); i++) {
+                        var st = chest.getItem(i);
+                        if (!st.isEmpty() && isFood(st.getItem())) { withFood++; break; }
+                    }
+                }
+                sb.append(" stalls=").append(stalls.size())
+                  .append(" stallChestsWithFood=").append(withFood);
+                if (withFood > 0 && !affordable) {
+                    sb.append(" !! STALL-CHEST FOOD NOT SEEN BY BUILDING-BOUNDS "
+                            + "SCAN — chestPos likely outside MARKET getShape(); "
+                            + "this is the suspected stall-vs-building inventory bug");
+                }
+            }
+        }
+        if (sources == 0) sb.append(" | no MARKET/BAKERY buildings in village");
+        if (priceData == null) sb.append(" | WARN: MarketPriceRegistry default is null");
+
+        LOGGER.debug(sb.toString());
     }
 
     @Override
