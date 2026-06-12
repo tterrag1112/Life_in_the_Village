@@ -197,8 +197,13 @@ public final class PhasedPlanner {
         // untouched `sortedSelection` and behaviour is byte-for-byte today's.
         // The roster/reconciliation upstream is untouched (this filters their
         // already-reconciled output). NOT a permanent roster change.
+        // Step 3 — the member-type set is read from the composition recipes
+        // (DistrictRecipes.allMemberTypes: the union of every district's
+        // member table at this tier), not a hardcoded constant.
+        EnumSet<BuildingType> districtMemberTypes =
+                DistrictRecipes.allMemberTypes(ctx.tier());
         List<BuildingType> selection = DISTRICT_ONLY_MODE
-                ? sortedSelection.stream().filter(DISTRICT_TYPES::contains).toList()
+                ? sortedSelection.stream().filter(districtMemberTypes::contains).toList()
                 : sortedSelection;
         if (DISTRICT_ONLY_MODE) {
             LOGGER.info("DISTRICT_ONLY_MODE on: {} of {} selected types kept "
@@ -281,7 +286,10 @@ public final class PhasedPlanner {
                 // 4c-a fix-up #3 — craft set is placed EXPLICITLY 1-per-precinct in
                 // reserveWorkshopDistricts (batch-3 hook); skip the scorer pass so
                 // they aren't double-placed / dropped by global-best greedy.
-                if (CRAFT_SET.contains(type) && !state.workshopGates.isEmpty()) {
+                if (DistrictRecipes.memberTypes(
+                                DistrictRecipes.DistrictType.WORKSHOP_QUARTER,
+                                state.ctx.tier()).contains(type)
+                        && !state.workshopGates.isEmpty()) {
                     continue;
                 }
                 boolean foundation = (batch == 1 || batch == 2)
@@ -410,20 +418,27 @@ public final class PhasedPlanner {
             return false;
         }
 
-        // Stage 4b — single central market (cap 1). CITY rosters select
-        // MARKET=2; the fix-up-#7 binding would bind BOTH halls to the same
+        // Stage 4b — single central market. CITY rosters select MARKET=2;
+        // the fix-up-#7 binding would bind BOTH halls to the same
         // sub-district centre → fatal footprint overlap → spawn aborts. Drop
-        // every MARKET past the first (MARKET isn't required, so the village
-        // stays viable; multi-market districts are a deferred feature).
+        // every MARKET past the recipe cap (MARKET isn't required, so the
+        // village stays viable; multi-market districts are a deferred
+        // feature). Step 3 — the cap is the MARKET district's recipe row
+        // (1 at every tier today, the old hardcoded cap-1 rule verbatim).
         if (type == BuildingType.MARKET) {
+            int cap = DistrictRecipes.cap(DistrictRecipes.DistrictType.MARKET,
+                    state.ctx.tier(), BuildingType.MARKET);
+            int already = 0;
             for (PlacedBuilding pb : state.placed) {
-                if (pb.type() == BuildingType.MARKET) {
-                    state.dropped.add(new DroppedBuilding(type,
-                            DropReason.NO_VIABLE_CANDIDATE,
-                            "single central market — extra MARKET dropped (cap 1)"));
-                    LOGGER.info("dropped extra MARKET: cap 1 (one central market)");
-                    return false;
-                }
+                if (pb.type() == BuildingType.MARKET) already++;
+            }
+            if (already >= cap) {
+                state.dropped.add(new DroppedBuilding(type,
+                        DropReason.NO_VIABLE_CANDIDATE,
+                        "single central market — extra MARKET dropped (cap "
+                                + cap + ")"));
+                LOGGER.info("dropped extra MARKET: cap {} (one central market)", cap);
+                return false;
             }
         }
 
@@ -646,7 +661,7 @@ public final class PhasedPlanner {
         // bound to its sub-district centre, not ring-gated — fix-up #7.)
         BlockPos squareCentre = null;
         int ringRadius = 0;
-        if (RING_MEMBERS.contains(type) && state.civicSquare != null) {
+        if (state.civicSquare != null && isCivicRingType(state, type)) {
             squareCentre = squareCentreOf(state.civicSquare);
             ringRadius = state.civicRingRadius;
         }
@@ -1523,10 +1538,15 @@ public final class PhasedPlanner {
         // Batch 2 — rural nucleus types per strategy (typically
         // FARMHOUSE for AGRICULTURAL).
         if (rules != null && rules.ruralNucleusTypes().contains(type)) return 2;
-        // 4c-a — the craft set goes to the WORKSHOP BAND batch (not civic
-        // batch 3), gated into the reserved workshop precincts. This pulls
-        // BLACKSMITH/BAKERY out of the civic core → the civic precinct shrinks.
-        if (CRAFT_SET.contains(type)) return WORKSHOP_BATCH;
+        // 4c-a — the craft set (the WORKSHOP_QUARTER recipe members) goes to
+        // the WORKSHOP BAND batch (not civic batch 3), gated into the reserved
+        // workshop precincts. This pulls BLACKSMITH/BAKERY out of the civic
+        // core → the civic precinct shrinks.
+        if (DistrictRecipes.memberTypes(
+                DistrictRecipes.DistrictType.WORKSHOP_QUARTER,
+                ctx.tier()).contains(type)) {
+            return WORKSHOP_BATCH;
+        }
         // Bulk-distributed HOUSE goes to batch 5 regardless of any
         // CIVIC pull (HOUSE is "the rest of the village," not a
         // core lead).
@@ -1693,13 +1713,17 @@ public final class PhasedPlanner {
      *  reservation (no edge-clip → no NO_REGION). */
     private static final int MARKET_PAD_SLACK = 2;
 
-    /** Stage 4 redesign — the plaza RING MEMBERS: the civic buildings that
-     *  ring and front the central town square. The square is sized so all
-     *  of these (that the village actually selects) can seat around its
-     *  perimeter. Other CIVIC-affinity buildings are not ring members; they
-     *  distribute across the CIVIC zone via the normal zone gate. */
-    private static final EnumSet<BuildingType> RING_MEMBERS = EnumSet.of(
-            BuildingType.TOWN_HALL, BuildingType.CHAPEL, BuildingType.INN);
+    /** Stage 4 redesign / step 3 — is {@code type} a plaza RING MEMBER: a
+     *  civic building that rings and fronts the central town square? The
+     *  square is sized so all of these (that the village actually selects)
+     *  can seat around its perimeter. Other CIVIC-affinity buildings are not
+     *  ring members; they distribute across the CIVIC zone via the normal
+     *  zone gate. Membership is the CIVIC district's recipe table
+     *  ({@link DistrictRecipes}) — TOWN_HALL / CHAPEL / INN today. */
+    private static boolean isCivicRingType(State state, BuildingType type) {
+        return DistrictRecipes.memberTypes(DistrictRecipes.DistrictType.CIVIC,
+                state.ctx.tier()).contains(type);
+    }
 
     /** Stage 4 redesign — gap (blocks) reserved along the plaza perimeter
      *  between adjacent ring members, so they don't abut. */
@@ -1756,7 +1780,7 @@ public final class PhasedPlanner {
      * tiers (where the radius, not the footprints, is the binding limit).
      */
     private static Sized sizeDistrictToMembers(State state,
-                                               EnumSet<BuildingType> members) {
+                                               List<BuildingType> members) {
         double perim = 0;
         int maxWidth = 0;
         int maxDepth = 0;
@@ -1775,6 +1799,27 @@ public final class PhasedPlanner {
         half = Math.min(half, cap);
         int ring = half + maxDepth + LARGE_VARIANT_PAD + RING_SLACK;
         return new Sized(half, ring);
+    }
+
+    /** Step 3 — the civic plaza ring MULTISET: each CIVIC recipe member
+     *  present in {@code selection}, cap-clamped (one list entry per
+     *  building the ring must hold, so {@link #sizeDistrictToMembers} sums
+     *  one frontage per instance). Today's table (TOWN_HALL/CHAPEL/INN,
+     *  cap 1 each) reproduces the old RING_MEMBERS ∩ selection set
+     *  exactly. Falls back to TOWN_HALL alone on rosters with no ring
+     *  member (the district keeps a real centre). */
+    private static List<BuildingType> civicRingMembers(State state,
+                                                       List<BuildingType> selection) {
+        EnumMap<BuildingType, Integer> counts = new EnumMap<>(BuildingType.class);
+        for (BuildingType t : selection) counts.merge(t, 1, Integer::sum);
+        List<BuildingType> ring = new ArrayList<>();
+        for (DistrictRecipes.Member m : DistrictRecipes.members(
+                DistrictRecipes.DistrictType.CIVIC, state.ctx.tier())) {
+            int n = Math.min(m.cap(), counts.getOrDefault(m.type(), 0));
+            for (int i = 0; i < n; i++) ring.add(m.type());
+        }
+        if (ring.isEmpty()) ring.add(BuildingType.TOWN_HALL);
+        return ring;
     }
 
     /**
@@ -1843,7 +1888,8 @@ public final class PhasedPlanner {
     /**
      * Stage 4 redesign — reserve the central civic district as building-less
      * voids BEFORE any building places. The civic square is sized to the
-     * plaza {@link #RING_MEMBERS} the village actually selects; the adjacent
+     * plaza ring members (the CIVIC recipe table, cap-clamped — see
+     * {@link #civicRingMembers}) the village actually selects; the adjacent
      * market square is sized to the MARKET footprint. The reservation gate
      * ({@code overlapsAnyReservation}) keeps building footprints out of the
      * voids, so the ring members front the square (TOWN_HALL pushed off the
@@ -1869,12 +1915,11 @@ public final class PhasedPlanner {
         EnumSet<BuildingType> present = EnumSet.noneOf(BuildingType.class);
         present.addAll(selection);
 
-        // Civic square — sized to the ring members the village selects.
-        // Always keep at least TOWN_HALL so the district has a real centre
-        // even on rosters that drop the other two.
-        EnumSet<BuildingType> ring = EnumSet.noneOf(BuildingType.class);
-        for (BuildingType t : RING_MEMBERS) if (present.contains(t)) ring.add(t);
-        if (ring.isEmpty()) ring.add(BuildingType.TOWN_HALL);
+        // Civic square — sized to the ring members the village selects:
+        // the CIVIC recipe's member table, cap-clamped against the roster
+        // (step 3). Always keep at least TOWN_HALL so the district has a
+        // real centre even on rosters that drop the other two.
+        List<BuildingType> ring = civicRingMembers(state, selection);
         Sized civic = sizeDistrictToMembers(state, ring);
         Polygon.AABB civicAabb = squareAt(anchor.getX(), anchor.getZ(), civic.half());
         state.civicSquare = civicAabb;
@@ -1982,42 +2027,27 @@ public final class PhasedPlanner {
     // =========================================================================
 
     /** Stage 4b fix-up — temporary district-only dev mode. When true, only the
-     *  district-member types ({@link #DISTRICT_TYPES}) place; the rural pass +
-     *  loose buildings are filtered out so the districted work is legible in
-     *  isolation. Default on for now (Garrett flips it off to restore the full
-     *  village). Reversible: off ⇒ today's behaviour exactly.
+     *  district-member types ({@link DistrictRecipes#allMemberTypes} — the
+     *  union of every district recipe's member table at the tier) place; the
+     *  rural pass + loose buildings are filtered out so the districted work is
+     *  legible in isolation. Default on for now (Garrett flips it off to
+     *  restore the full village). Reversible: off ⇒ today's behaviour exactly.
      *
      *  <p>Public so the spawner adapter can RELAX the Layer-5 viability abort
-     *  while it's on: CITY's diversity minimum (6 distinct types) exceeds the
-     *  {@link #DISTRICT_TYPES} count (5), so a district-only CITY is
-     *  legitimately "not viable" by the full-village rule — the adapter logs
-     *  and proceeds instead of aborting (it's an intentional partial village). */
+     *  while it's on: a district-only roster can sit below a tier's diversity
+     *  minimum, so a district-only village is legitimately "not viable" by the
+     *  full-village rule — the adapter logs and proceeds instead of aborting
+     *  (it's an intentional partial village). */
     public static final boolean DISTRICT_ONLY_MODE = true;
-    /** The district-member types kept under {@link #DISTRICT_ONLY_MODE}: civic
-     *  core (TOWN_HALL, CHAPEL, INN), market (MARKET), residential (HOUSE). */
-    private static final EnumSet<BuildingType> DISTRICT_TYPES = EnumSet.of(
-            BuildingType.TOWN_HALL, BuildingType.CHAPEL, BuildingType.INN,
-            BuildingType.MARKET, BuildingType.HOUSE,
-            // 4c-a — the craft set is now a district (workshop band), so keep it
-            // under DISTRICT_ONLY_MODE (it was skipped as loose pre-4c).
-            BuildingType.BLACKSMITH, BuildingType.BAKERY, BuildingType.CARPENTRY,
-            BuildingType.MILLER, BuildingType.WOODCUTTER, BuildingType.STOCKPILE,
-            BuildingType.WAREHOUSE, BuildingType.STABLE);
-
-    /** 4c-a — the craft set routed into the WORKSHOP BAND (out of the civic
-     *  batch-3 core, so the civic precinct shrinks). Placed by the scorer GATED
-     *  into the reserved workshop precincts (the craft-quarter LOOK is 4c-b). */
-    private static final EnumSet<BuildingType> CRAFT_SET = EnumSet.of(
-            BuildingType.BLACKSMITH, BuildingType.BAKERY, BuildingType.CARPENTRY,
-            BuildingType.MILLER, BuildingType.WOODCUTTER, BuildingType.STOCKPILE,
-            BuildingType.WAREHOUSE, BuildingType.STABLE);
     /** 4c-a — batch the craft set runs in (after the batch-3 hook reserves the
      *  workshop precincts; NOT batch 3, so they leave the civic precinct). */
     private static final int WORKSHOP_BATCH = 4;
 
     /** 4c-c — craft types that take the quarter's BACK/alley cells (goods
-     *  in/out, not customer-facing). The rest of {@link #CRAFT_SET} fronts
-     *  the quarter's central street. */
+     *  in/out, not customer-facing). The rest of the craft set (the
+     *  WORKSHOP_QUARTER recipe members) fronts the quarter's central
+     *  street. This is an ARRANGEMENT split, not allocation — it stays a
+     *  planner constant, not a recipe row. */
     private static final EnumSet<BuildingType> CRAFT_STORAGE_SET = EnumSet.of(
             BuildingType.STOCKPILE, BuildingType.WAREHOUSE);
     /** 4c-c — demand side (blocks) of the quarter's shared work-yard cell:
@@ -2089,8 +2119,14 @@ public final class PhasedPlanner {
      */
     private static void reserveResidentialDistricts(State state,
                                                     List<BuildingType> selection) {
+        // Step 3 — the residential allocation is the RESIDENTIAL recipe's
+        // member types (HOUSE, uncapped today), not a literal HOUSE check.
+        EnumSet<BuildingType> residentialTypes = DistrictRecipes.memberTypes(
+                DistrictRecipes.DistrictType.RESIDENTIAL, state.ctx.tier());
         int houseCount = 0;
-        for (BuildingType t : selection) if (t == BuildingType.HOUSE) houseCount++;
+        for (BuildingType t : selection) {
+            if (residentialTypes.contains(t)) houseCount++;
+        }
         if (houseCount == 0) {
             LOGGER.info("residential districts: none (no HOUSE selected)");
             return;
@@ -2318,8 +2354,12 @@ public final class PhasedPlanner {
      */
     private static void reserveWorkshopDistricts(State state,
                                                  List<BuildingType> selection) {
+        // Step 3 — the craft set is the WORKSHOP_QUARTER recipe's member
+        // types (uncapped today), not a hardcoded constant.
+        EnumSet<BuildingType> craftTypes = DistrictRecipes.memberTypes(
+                DistrictRecipes.DistrictType.WORKSHOP_QUARTER, state.ctx.tier());
         int workshopCount = 0;
-        for (BuildingType t : selection) if (CRAFT_SET.contains(t)) workshopCount++;
+        for (BuildingType t : selection) if (craftTypes.contains(t)) workshopCount++;
         // Diagnostics (read-only) — craft set size; seating filled below.
         state.districtAccum.workshopCraftsRequested = workshopCount;
         if (workshopCount == 0) {
@@ -2328,17 +2368,17 @@ public final class PhasedPlanner {
         }
         BlockPos anchor = state.ctx.anchor();
         // Size from the largest AVAILABLE craft footprint — the craft types
-        // actually in `selection` (CRAFT_SET ∩ selection). 4c-a fix-up #2: the
-        // static CRAFT_SET includes no-NBT types (MILLER/WAREHOUSE) for which
+        // actually in `selection` (craft set ∩ selection). 4c-a fix-up #2: the
+        // static craft set includes no-NBT types (MILLER/WAREHOUSE) for which
         // StructureSizeCache returns the 32×32 fallback, which inflated the block
         // ~2× (36×36) so it never fit the band — and spammed the resolver ERROR.
         // Authored crafts are 20×16 → a 24×24 block that can seat.
-        // Size from the largest AVAILABLE craft footprint (CRAFT_SET ∩ selection;
+        // Size from the largest AVAILABLE craft footprint (craft set ∩ selection;
         // no-NBT types would give the 32×32 fallback). cellPitch = along-lane
         // spacing; craftDepth = radial depth of a craft row.
         int wMaxDim = 0, wMaxDepth = 0;
         for (BuildingType t : selection) {
-            if (!CRAFT_SET.contains(t)) continue;
+            if (!craftTypes.contains(t)) continue;
             StructureSizeCache.FootprintInfo f = defaultFootprint(state, t);
             wMaxDim = Math.max(wMaxDim, Math.max(f.width(), f.length()));
             wMaxDepth = Math.max(wMaxDepth, f.length());
@@ -2354,7 +2394,7 @@ public final class PhasedPlanner {
         }
         java.util.List<Double> dirs = residentialDirections(state, anchor);
         java.util.List<BuildingType> craftList = new ArrayList<>();
-        for (BuildingType t : selection) if (CRAFT_SET.contains(t)) craftList.add(t);
+        for (BuildingType t : selection) if (craftTypes.contains(t)) craftList.add(t);
 
         // 4c-c — TIER GATE (Garrett-approved design): CITY seats the workshop
         // QUARTER (falling back to the row, then lots); TOWN keeps the 4c-b
