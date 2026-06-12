@@ -343,7 +343,7 @@ public final class PhasedPlanner {
         // ANY consumer reads the routed geometry: skeleton segments,
         // vegetation clearing, building orientation, the nav-graph commit
         // and the realizer all see the same centerlines.
-        routed = RoadFormality.applyGeometry(routed, fmap);
+        routed = RoadFormality.applyGeometry(routed, state.density);
         state.skeleton = new Skeleton(routed, ctx.primaryAxis(),
                 ctx.anchor(), SPINE_WIDTH);
         LOGGER.info("routed network: {} nodes, {} edges → {} road segments",
@@ -3779,6 +3779,13 @@ public final class PhasedPlanner {
         final tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingAvailability availability;
         final int villageRadius;
         final String culture;
+        /** City-morphology step 2a — the density gradient (cost-distance
+         *  area budgets, design doc §1). Built once per plan from the
+         *  fmap's distToAnchor field + the tier; read by the router's
+         *  CORE rectilinear pass, the formality geometry rewrite, and
+         *  residential variant selection. */
+        final tterrag1112.life_in_the_village.Village.Planning.V2.Layer2
+                .DensityProfile density;
         /** Layout Rework Stage 3c — the skeleton is no longer built up
          *  front from {@code ctx.network()}. It is built AFTER placement
          *  from {@link BlockServingRouter}'s routed network (roads-last),
@@ -3893,6 +3900,10 @@ public final class PhasedPlanner {
             // Layout Rework Stage 3c — skeleton is built post-placement
             // from the routed network (see run); left null here.
             this.skeleton = null;
+            // Step 2a — deterministic from (fmap, tier); the adapter builds
+            // its own identical instance for the realizer's paint pass.
+            this.density = tterrag1112.life_in_the_village.Village.Planning.V2
+                    .Layer2.DensityProfile.of(fmap, ctx.tier());
             // Salted with PHASED_PLANNER_SALT so cross-street decisions
             // don't share Random state with SiteAnalyzer's inclination
             // sampler (which uses a different salt off the same seed).

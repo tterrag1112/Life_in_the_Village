@@ -4,10 +4,9 @@ import net.minecraft.core.BlockPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ZonePartition;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -19,13 +18,13 @@ import java.util.List;
  * §4): regular, straight, stone streets in the dense core; the current
  * organic look kept at the outskirts and beyond.
  *
- * <p><b>v1 PROXY.</b> Formality is sampled from the terrain-warped
- * cost-distance field ({@code Cell#distToAnchor}, the Stage-3a weighted
- * Dijkstra — preferred over Euclidean radius per the §1 ruling: bands follow
- * valleys instead of drawing circles) at the edge midpoint. The tier
- * thresholds below are CONSTANTS and are the explicit replacement target for
- * city-morphology step 2 (the density profile as a real object:
- * cost-distance AREA BUDGETS, not fixed radii). Tier semantics:
+ * <p><b>Step 2a — reads the {@link DensityProfile}.</b> The v1 fixed
+ * cost-distance thresholds are gone; formality is now the profile's zone at
+ * the edge midpoint — FORMAL = CORE, MIXED = MIDTOWN, ORGANIC =
+ * OUTSKIRTS/RURAL (design doc §4 keyed to §1's area-budget gradient). The
+ * underlying field is still the terrain-warped {@code Cell#distToAnchor}
+ * Dijkstra, so bands follow valleys instead of drawing circles. Tier
+ * semantics:
  * <ul>
  *   <li>{@link #FORMAL} — straight segments between waypoints (the routed
  *       cell-path micro-wiggle is simplified away), district approaches
@@ -52,16 +51,6 @@ public enum RoadFormality {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(RoadFormality.class);
 
-    /** v1 proxy threshold — cost-distance below this is FORMAL. Units are
-     *  {@code distToAnchor} cost units ≈ world blocks on open ground
-     *  (ZonePartition's flat-open step cost ≈ cellSize). STEP-2 REPLACEMENT
-     *  TARGET: becomes the core area budget of the density profile. */
-    public static final int FORMAL_MAX_COST = 50;
-    /** v1 proxy threshold — cost-distance below this (and ≥ the formal
-     *  bound) is MIXED; everything beyond is ORGANIC. STEP-2 REPLACEMENT
-     *  TARGET: becomes the mid-town area budget of the density profile. */
-    public static final int MIXED_MAX_COST = 100;
-
     /** RDP tolerance (blocks) for straightening FORMAL centerlines. Small on
      *  purpose: the routed cell path's micro-wiggle is ~1 cell (2 blocks),
      *  and the painted strip is ≥ 5 wide, so a ≤ 1.5-block deviation always
@@ -76,27 +65,27 @@ public enum RoadFormality {
     /** Router district-node id prefix ({@code BlockServingRouter.buildTerminals}). */
     private static final String DISTRICT_ID_PREFIX = "district:";
 
-    /** Formality at a world position: terrain-warped {@code distToAnchor}
-     *  thresholds, ORGANIC (= today's look) for null maps, out-of-bounds
-     *  positions, and unreached cells. */
-    public static RoadFormality at(V2FeatureMap fmap, int worldX, int worldZ) {
-        if (fmap == null || !fmap.inBounds(worldX, worldZ)) return ORGANIC;
-        int d = fmap.cellAt(worldX, worldZ).distToAnchor();
-        if (d == ZonePartition.UNREACHED) return ORGANIC;
-        if (d < FORMAL_MAX_COST) return FORMAL;
-        if (d < MIXED_MAX_COST) return MIXED;
-        return ORGANIC;
+    /** Formality at a world position: the density profile's zone there.
+     *  ORGANIC (= today's look) for a null profile — the profile itself
+     *  answers RURAL for out-of-bounds / unreached positions. */
+    public static RoadFormality at(DensityProfile profile, int worldX, int worldZ) {
+        if (profile == null) return ORGANIC;
+        return switch (profile.zoneAt(worldX, worldZ)) {
+            case CORE -> FORMAL;
+            case MIDTOWN -> MIXED;
+            case OUTSKIRTS, RURAL -> ORGANIC;
+        };
     }
 
     /** Formality at the edge midpoint — the midpoint of the ENDPOINTS, not
      *  the middle waypoint, so the classification is invariant under the
      *  FORMAL geometry rewrite (which never moves endpoints) and the
      *  realizer's paint-time re-sample always agrees with the planner. */
-    public static RoadFormality atMid(V2FeatureMap fmap, List<BlockPos> waypoints) {
-        if (fmap == null || waypoints == null || waypoints.size() < 2) return ORGANIC;
+    public static RoadFormality atMid(DensityProfile profile, List<BlockPos> waypoints) {
+        if (profile == null || waypoints == null || waypoints.size() < 2) return ORGANIC;
         BlockPos a = waypoints.get(0);
         BlockPos b = waypoints.get(waypoints.size() - 1);
-        return at(fmap, (a.getX() + b.getX()) / 2, (a.getZ() + b.getZ()) / 2);
+        return at(profile, (a.getX() + b.getX()) / 2, (a.getZ() + b.getZ()) / 2);
     }
 
     /**
@@ -110,8 +99,8 @@ public enum RoadFormality {
      * matching and node bindings are unaffected. One summary INFO per
      * village (plan-time; no per-tick logging).
      */
-    public static NetworkSpec applyGeometry(NetworkSpec spec, V2FeatureMap fmap) {
-        if (spec == null || fmap == null || spec.edges().isEmpty()) return spec;
+    public static NetworkSpec applyGeometry(NetworkSpec spec, DensityProfile profile) {
+        if (spec == null || profile == null || spec.edges().isEmpty()) return spec;
         List<NetworkEdge> out = new ArrayList<>(spec.edges().size());
         int formal = 0, snaps = 0, mixed = 0, organic = 0;
         for (NetworkEdge e : spec.edges()) {
@@ -120,7 +109,7 @@ public enum RoadFormality {
                 out.add(e);
                 continue;
             }
-            RoadFormality f = atMid(fmap, sp.waypoints());
+            RoadFormality f = atMid(profile, sp.waypoints());
             if (f != FORMAL) {
                 if (f == MIXED) mixed++; else organic++;
                 out.add(e);              // MIXED/ORGANIC: geometry untouched
@@ -147,7 +136,7 @@ public enum RoadFormality {
                             sp.driftAmplitude(), sp.tier(), sp.seed()),
                     e.width()));
         }
-        LOGGER.info("road formality (v1 anchor-distance proxy): {} formal"
+        LOGGER.info("road formality (density profile): {} formal"
                 + " edge(s) straightened ({} approach snap(s)), {} mixed,"
                 + " {} organic", formal, snaps, mixed, organic);
         return new NetworkSpec(spec.topology(), spec.nodes(), out,

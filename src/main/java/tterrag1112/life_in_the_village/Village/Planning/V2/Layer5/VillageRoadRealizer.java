@@ -10,7 +10,7 @@ import tterrag1112.life_in_the_village.Village.Decoration.Roads.PaletteRegistry;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.PathMaterial;
 import tterrag1112.life_in_the_village.Village.Decoration.Roads.RoadShape;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
+import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.InternalPath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadFormality;
@@ -47,19 +47,20 @@ public final class VillageRoadRealizer {
     /** Fresh-at-spawn roads have full maintenance (no decay overlay). */
     private static final int FRESH_MAINTENANCE = 100;
 
-    /** Legacy entry — no formality context: every edge paints ORGANIC
+    /** Legacy entry — no density profile: every edge paints ORGANIC
      *  (byte-identical to the pre-formality pipeline). */
     public static int realize(ServerLevel level, RoadNetwork roads, Culture culture) {
-        return realize(level, roads, culture, null);
+        return realize(level, roads, culture, (DensityProfile) null);
     }
 
     /**
      * Realizes every routed village edge; returns the total blocks placed.
      *
-     * <p>City-morphology step 1 — {@code fmap} carries the terrain-warped
-     * {@code distToAnchor} field; each edge's {@link RoadFormality} is
-     * re-sampled at its ENDPOINT midpoint (the same invariant sample the
-     * planning-side geometry rewrite used, so the two passes always agree).
+     * <p>City-morphology step 2a — {@code profile} is the village's density
+     * gradient (area-budget zones over the terrain-warped cost-distance
+     * field); each edge's {@link RoadFormality} is re-sampled from it at the
+     * edge's ENDPOINT midpoint (the same invariant sample the planning-side
+     * geometry rewrite used, so the two passes always agree).
      * FORMAL edges paint CRISP (no edge-noise dropout, no accent speckle)
      * with the stone-brick TOWN_ROAD base ({@link PathMaterial#stoneBrick}
      * — the most formal surface the existing tier machinery has; the per-
@@ -68,7 +69,7 @@ public final class VillageRoadRealizer {
      * and the organic placer behavior, byte-identical to today.
      */
     public static int realize(ServerLevel level, RoadNetwork roads, Culture culture,
-                              @Nullable V2FeatureMap fmap) {
+                              @Nullable DensityProfile profile) {
         if (roads == null || roads.skeleton() == null) return 0;
 
         String cultureId = culture != null ? culture.id() : "default";
@@ -87,7 +88,7 @@ public final class VillageRoadRealizer {
 
             RoadShape.RoadTier tier = sp.tier();
             boolean formal =
-                    RoadFormality.atMid(fmap, centerline) == RoadFormality.FORMAL;
+                    RoadFormality.atMid(profile, centerline) == RoadFormality.FORMAL;
             if (formal) formalEdges++;
             // Maintenance decay is skipped on fresh roads (FRESH_MAINTENANCE);
             // the seasonal overlay still applies (winter snow on stone tiers).
@@ -119,7 +120,7 @@ public final class VillageRoadRealizer {
      */
     public static int realizePaths(ServerLevel level, List<InternalPath> paths,
                                    Culture culture) {
-        return realizePaths(level, paths, culture, null);
+        return realizePaths(level, paths, culture, (DensityProfile) null);
     }
 
     /**
@@ -132,7 +133,7 @@ public final class VillageRoadRealizer {
      * the router streets it meets.
      */
     public static int realizePaths(ServerLevel level, List<InternalPath> paths,
-                                   Culture culture, @Nullable V2FeatureMap fmap) {
+                                   Culture culture, @Nullable DensityProfile profile) {
         if (paths == null || paths.isEmpty()) return 0;
 
         String cultureId = culture != null ? culture.id() : "default";
@@ -148,7 +149,7 @@ public final class VillageRoadRealizer {
             if (centerline == null || centerline.size() < 2) continue;
             RoadShape.RoadTier tier = path.tier();
             boolean formal =
-                    RoadFormality.atMid(fmap, centerline) == RoadFormality.FORMAL;
+                    RoadFormality.atMid(profile, centerline) == RoadFormality.FORMAL;
             PathMaterial material = PathMaterial.applyOverlays(
                     formal ? PathMaterial.stoneBrick() : base,
                     FRESH_MAINTENANCE, tier, season);
