@@ -294,21 +294,27 @@ public final class PhasedPlanner {
             // beyond residential; HOUSE (batch 5) then fills the districts.
             if (batch == 3) {
                 addCivicPrecinct(state);
-                // 4c-c fix-up — the CITY workshop QUARTER seats BEFORE the
-                // residential precincts: it is a major district and must
-                // compete for band space, not scavenge what 6 precincts +
-                // the green-commons fill left over (CITYTEST3: a populated
-                // band left it no clear position even on superflat). The
-                // TOWN row / HAMLET lots stay post-residential in
-                // reserveWorkshopDistricts — their seating never lost to
-                // ordering, and moving them would re-order every tier's
-                // band contention in one change. seatDistrict cross-rejects
-                // both gate lists, so residential precincts + greens sweep
-                // around the early quarter exactly as the quarter used to
-                // sweep around them.
-                reserveWorkshopQuarterEarly(state, selection);
-                reserveResidentialDistricts(state, selection);
-                reserveWorkshopDistricts(state, selection);
+                // 4c-c fix-up round 2 — on CITY the ENTIRE workshop chain
+                // (quarter -> two-block split -> craft row -> per-craft
+                // lots) runs BEFORE the residential precincts: crafts are
+                // working districts and outrank decorative filler, so the
+                // FALLBACKS must also claim band space ahead of housing and
+                // the green-commons fill (CITYTEST4: only the quarter ran
+                // early; it failed cellability, the fallbacks ran
+                // post-residential, and 22 green-commons fills had consumed
+                // every clear 24x24 lot — BAKERY/STABLE/STABLE dropped
+                // while filler shipped). seatDistrict cross-rejects both
+                // gate lists, so precincts + greens sweep around whatever
+                // the chain seated. TOWN/HAMLET keep residential-first —
+                // their seating never lost to ordering, and swapping them
+                // would re-order every tier's band contention in one change.
+                if (state.ctx.tier() == ViabilityTier.CITY) {
+                    reserveWorkshopDistricts(state, selection);
+                    reserveResidentialDistricts(state, selection);
+                } else {
+                    reserveResidentialDistricts(state, selection);
+                    reserveWorkshopDistricts(state, selection);
+                }
             }
         }
         LOGGER.info("placement: {} primary, {} rural, {} civic, {} resource,"
@@ -2284,9 +2290,11 @@ public final class PhasedPlanner {
      * ({@link #seatDistrict} + {@link #residentialDirections}) — there's now a
      * concrete second consumer, so this is reuse, not a parallel path. Each craft
      * is then placed EXPLICITLY, one per seated precinct (fix-up #3), bypassing
-     * the scorer; the craft-quarter arrangement/look is 4c-b. Workshops seat AFTER
-     * residential (its hook runs first) and avoid both bands via seatDistrict's
-     * overlap reject; a bearing offset interleaves them with the residential precincts.
+     * the scorer; the craft-quarter arrangement/look is 4c-b. 4c-c fix-up round 2 —
+     * on CITY the whole method runs BEFORE residential (crafts outrank the
+     * green-commons filler); on TOWN/HAMLET workshops still seat AFTER residential.
+     * Either way both passes avoid each other via seatDistrict's overlap reject;
+     * a bearing offset interleaves them with the residential precincts.
      */
     private static void reserveWorkshopDistricts(State state,
                                                  List<BuildingType> selection) {
@@ -2332,11 +2340,13 @@ public final class PhasedPlanner {
         // QUARTER (falling back to the row, then lots); TOWN keeps the 4c-b
         // craft row (falling back to lots); HAMLET/OUTPOST go straight to
         // per-craft lots (a row block never fit their tight bands anyway).
-        // 4c-c fix-up — the CITY quarter attempt moved BEFORE residential
-        // (reserveWorkshopQuarterEarly); here only the fallback chain runs.
+        // 4c-c fix-up round 2 — the quarter attempt lives back in this chain
+        // (the whole method runs pre-residential on CITY, so quarter AND
+        // fallbacks claim band space before housing + green-commons fill).
         ViabilityTier tier = state.ctx.tier();
-        if (state.workshopQuarterSeated) {
-            return;          // quarter metrics already written by commitQuarter
+        if (tier == ViabilityTier.CITY
+                && reserveWorkshopQuarter(state, craftList)) {
+            return;          // quarter metrics written by commitQuarter
         }
         if (tier == ViabilityTier.CITY || tier == ViabilityTier.TOWN) {
             // 4c-b — the CRAFT ROW (a "smith's row"): one STREET_ROW block
@@ -2442,20 +2452,6 @@ public final class PhasedPlanner {
         state.districtAccum.workshopCraftsDropped = dropped;
         LOGGER.info("workshop lots (row fallback): {}/{} crafts placed, {} dropped",
                 placed, workshopCount, dropped);
-    }
-
-    /** 4c-c fix-up — the pre-residential CITY hook: attempts the workshop
-     *  QUARTER while the band is empty (civic + market only), recording the
-     *  outcome on {@code state.workshopQuarterSeated} so the post-residential
-     *  {@code reserveWorkshopDistricts} either skips (seated) or runs the
-     *  row → lots fallback chain (not seated). No-op off CITY / no crafts. */
-    private static void reserveWorkshopQuarterEarly(State state,
-                                                    List<BuildingType> selection) {
-        if (state.ctx.tier() != ViabilityTier.CITY) return;
-        List<BuildingType> craftList = new ArrayList<>();
-        for (BuildingType t : selection) if (CRAFT_SET.contains(t)) craftList.add(t);
-        if (craftList.isEmpty()) return;
-        state.workshopQuarterSeated = reserveWorkshopQuarter(state, craftList);
     }
 
     /**
@@ -3782,10 +3778,6 @@ public final class PhasedPlanner {
          *  these). Kept separate from residentialGates for the per-type gate,
          *  but both participate in seat-overlap / farm-exclusion / connection. */
         final List<Polygon.AABB> workshopGates = new ArrayList<>();
-        /** 4c-c fix-up — true when the CITY workshop QUARTER seated in the
-         *  pre-residential pass ({@code reserveWorkshopQuarterEarly});
-         *  {@code reserveWorkshopDistricts} then skips the row/lots chain. */
-        boolean workshopQuarterSeated = false;
         /** Centrality-band Part 1 — outer radius of the residential band; rural
          *  (farm) placement is kept BEYOND this so residential owns its ring.
          *  0 when no houses (farms then unconstrained). */
