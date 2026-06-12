@@ -105,9 +105,18 @@ public final class BuildingComplexRegistry {
         mix.put(CropType.ORCHARD,   0.10f);
         mix.put(CropType.VEGETABLE, 0.10f);
 
+        // Round 2 item 2 — fill-the-ring patchwork fields (user ruling):
+        // per-farmstead claims grow to fill their wedge out to the field
+        // outer, with wedge seams as the natural boundaries. The flood-fill
+        // is wedge-bounded on the ring path (and parcel-bounded at
+        // realization), so the budget's job is to NOT be the binding cap:
+        // 600 cells stopped growth long before a CITY wedge was full.
+        // radiusMultiplier raised with it so probeMaxRadius (footprint ×
+        // multiplier ≈ 120 blocks) reaches a wedge's far corners; at
+        // TOWN/HAMLET the smaller wedge polygons self-limit the claim.
         BuildingComplexSpec farmhouse = new BuildingComplexSpec(
-                /* radiusMultiplier   */ 3.0f,
-                /* blockBudget        */ 600,
+                /* radiusMultiplier   */ 6.0f,
+                /* blockBudget        */ 1800,
                 /* minPlotSize        */ 16,
                 /* targetPlotCount    */ 4,
                 /* plotTypeMix        */ mix,

@@ -239,18 +239,37 @@ public final class FarmComplexPlanner {
                 new ArrayList<>(in.excludedPolygons() == null
                         ? java.util.List.of() : in.excludedPolygons());
         floodExclusions.add(apronPoly);
-        FloodFillRegionClaim.Result fill = FloodFillRegionClaim.run(
-                new FloodFillRegionClaim.Input(
-                        seed,
-                        maxRadius,
-                        spec.blockBudget(),
-                        spec.floodFillSlopeLimit(),
-                        ArableScoring.DEFAULT_THRESHOLD,
-                        in.fmap(),
-                        in.biomeCheck(),
-                        floodExclusions,
-                        in.verbose(),
-                        in.parcelBoundary()));
+        FloodFillRegionClaim.Result fill =
+                runFill(in, spec, seed, maxRadius, floodExclusions);
+        // Round 2 item 3 — parcel-authoritative refill. The proven claim
+        // polygon is concave (it wraps the excluded farmstead nucleus and
+        // follows the ring arc), and the area-weighted centroid of a
+        // concave polygon is NOT guaranteed to lie in its interior mass —
+        // it can land outside the polygon (in the "bite"), inside the
+        // apron notch, or in a thin smoothing sliver. A bad seed floods
+        // only the few in-boundary cells reachable from it (CITYTEST7
+        // farmhouse_8: 12 cells from a 200+-cell proven parcel). When the
+        // first fill under a proven parcel fails or comes back below the
+        // realization floor, retry ONCE from a guaranteed-interior seed
+        // (the contained+arable grid cell nearest the contained-cell mean)
+        // and keep the better result.
+        if (in.parcelBoundary() != null
+                && (fill.failure() != null || fill.cellsClaimed()
+                        < FloodFillRegionClaim.MIN_VIABLE_CELLS)) {
+            BlockPos retrySeed = parcelInteriorSeed(in.parcelBoundary(),
+                    in.fmap(), floodExclusions, spec.floodFillSlopeLimit());
+            if (retrySeed != null && !retrySeed.equals(seed)) {
+                FloodFillRegionClaim.Result retry =
+                        runFill(in, spec, retrySeed, maxRadius, floodExclusions);
+                boolean better = retry.failure() == null
+                        && (fill.failure() != null
+                                || retry.cellsClaimed() > fill.cellsClaimed());
+                if (better) {
+                    fill = retry;
+                    seed = retrySeed;
+                }
+            }
+        }
         if (fill.failure() != null) {
             return switch (fill.failure()) {
                 case INSUFFICIENT_AREA -> PlanResult.fail(
@@ -432,6 +451,78 @@ public final class FarmComplexPlanner {
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /** One flood-fill invocation with the spec/threshold wiring shared by
+     *  the first attempt and the round-2 retry. */
+    private static FloodFillRegionClaim.Result runFill(Input in,
+            BuildingComplexSpec spec, BlockPos seed, int maxRadius,
+            java.util.List<Polygon> exclusions) {
+        return FloodFillRegionClaim.run(new FloodFillRegionClaim.Input(
+                seed,
+                maxRadius,
+                spec.blockBudget(),
+                spec.floodFillSlopeLimit(),
+                ArableScoring.DEFAULT_THRESHOLD,
+                in.fmap(),
+                in.biomeCheck(),
+                exclusions,
+                in.verbose(),
+                in.parcelBoundary()));
+    }
+
+    /** Round 2 item 3 — guaranteed-interior fallback seed for a proven
+     *  parcel: walk the boundary's bounding box on the feature-map cell
+     *  grid, keep cells that are contained in the boundary, outside every
+     *  exclusion polygon, and arable-admissible (slope + score), then pick
+     *  the one nearest the contained-cell mean (for a horseshoe the mean
+     *  sits in the hole, but the NEAREST CONTAINED cell sits on an arm —
+     *  always in the claim's mass, from which the bounded BFS re-reaches
+     *  the whole connected claim). One-off per farmhouse spawn; cost is
+     *  bbox-area / cellSize² point-in-polygon checks. Null when nothing
+     *  qualifies (genuinely unfarmable parcel). */
+    private static BlockPos parcelInteriorSeed(Polygon boundary,
+            V2FeatureMap fmap, java.util.List<Polygon> exclusions,
+            int slopeLimit) {
+        Polygon.AABB bb = Polygon.boundingBox(boundary);
+        int step = Math.max(1, fmap.cellSize());
+        List<int[]> contained = new ArrayList<>();
+        long sx = 0, sz = 0;
+        for (int x = bb.minX(); x <= bb.maxX(); x += step) {
+            for (int z = bb.minZ(); z <= bb.maxZ(); z += step) {
+                if (!fmap.inBounds(x, z)) continue;
+                if (!Polygon.contains(boundary, x, z)) continue;
+                boolean excluded = false;
+                for (Polygon ex : exclusions) {
+                    if (ex != null && Polygon.contains(ex, x, z)) {
+                        excluded = true;
+                        break;
+                    }
+                }
+                if (excluded) continue;
+                var cell = fmap.cellAt(x, z);
+                if (cell == null || cell.localSlope() > slopeLimit) continue;
+                if (ArableScoring.score(cell, fmap.cellSize())
+                        < ArableScoring.DEFAULT_THRESHOLD) continue;
+                contained.add(new int[]{x, z, cell.elevationY()});
+                sx += x;
+                sz += z;
+            }
+        }
+        if (contained.isEmpty()) return null;
+        double mx = sx / (double) contained.size();
+        double mz = sz / (double) contained.size();
+        int[] best = null;
+        double bestD = Double.MAX_VALUE;
+        for (int[] c : contained) {
+            double dx = c[0] - mx, dz = c[1] - mz;
+            double d = dx * dx + dz * dz;
+            if (d < bestD) {
+                bestD = d;
+                best = c;
+            }
+        }
+        return new BlockPos(best[0], best[2], best[1]);
+    }
 
     private static Polygon buildFootprintPolygon(Input in) {
         BlockPos o = in.farmhouseOrigin();

@@ -3692,19 +3692,22 @@ public final class PhasedPlanner {
      * district-contract node per roster FARMHOUSE (seat → dry-run → commit,
      * the survey's family-3 pattern done right).
      *
-     * <p>Geometry: the ring of wedge sectors beyond
-     * {@code max(residential band outer, workshop gate outer, civic reach)
-     * + DISTRICT_GAP}; one wedge per farmstead, the fan rotated onto the
-     * primary gateway bearing (farmsteads line the approach roads) and
-     * jittered per wedge. Wedges fill in cost-distance order (cheapest
-     * first — density falls outward; stragglers take the costlier wedges).
-     * Nucleus SEATS stay inside the zoned cap
-     * ({@link ZonePartition#zonedRadiusCap}) while it leaves band room;
-     * when the built edge outgrows the cap (district-gate corners may
-     * legally poke past it — the cap derives from VillageExtent, not from
-     * where districts actually seated), the effective cap is raised to
-     * {@code ringInner + minBandDepth} and clamped to the field outer, so
-     * the ring survives instead of inverting. Field claims may spill into
+     * <p>Geometry: a ring of wedge sectors whose inner edge is PER WEDGE
+     * (round 2 item 1): {@code max(civic reach, residential band outer,
+     * farthest corner of the gates whose angular sector overlaps the
+     * wedge) + DISTRICT_GAP} — so the fields hug the built edge on every
+     * bearing instead of starting at the global worst case. One wedge per
+     * farmstead, the fan rotated onto the primary gateway bearing
+     * (farmsteads line the approach roads) and jittered per wedge. Wedges
+     * fill in cost-distance order (cheapest first — density falls outward;
+     * stragglers take the costlier wedges). Nucleus SEATS stay inside the
+     * zoned cap ({@link ZonePartition#zonedRadiusCap}) while it leaves
+     * band room; when a wedge's built edge outgrows the cap
+     * (district-gate corners may legally poke past it — the cap derives
+     * from VillageExtent, not from where districts actually seated), that
+     * wedge's effective cap is raised to {@code wedgeInner + minBandDepth}
+     * and clamped to the field outer, so the ring survives instead of
+     * inverting. Field claims may spill into
      * the scanned-but-unzoned fringe either way (flood-fill needs scanned
      * cells, not zoned ones; nothing in the seat/materialise path gates on
      * zone membership — buildable category + slope + reservations only).
@@ -3769,14 +3772,16 @@ public final class PhasedPlanner {
                     (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
                     (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
         }
-        int bandsOuter = Math.max(civicReach, state.residentialBandOuterR);
-        for (Polygon.AABB g : state.residentialGates) {
-            bandsOuter = Math.max(bandsOuter, gateOuterRadius(g, anchor));
-        }
-        for (Polygon.AABB g : state.workshopGates) {
-            bandsOuter = Math.max(bandsOuter, gateOuterRadius(g, anchor));
-        }
-        int ringInner = bandsOuter + DISTRICT_GAP;
+        // Round 2 item 1 — PER-WEDGE ring inner edge. The old GLOBAL
+        // bandsOuter took the farthest gate corner over EVERY residential /
+        // workshop gate, so one far workshop corner (~149 on CITYTEST7)
+        // pushed the whole ring out uniformly and left a visible grass belt
+        // on bearings where the built edge actually ends much closer
+        // (~108). Civic reach and the residential band outer remain a
+        // ring-wide FLOOR; the gate term is computed per wedge in the fan
+        // loop below, over only the gates whose angular sector (from the
+        // anchor) overlaps that wedge.
+        int innerFloor = Math.max(civicReach, state.residentialBandOuterR);
         int fieldOuter = state.fmap.radius() - FIELD_SCAN_MARGIN;
 
         // Per-farmstead spec inputs — the SAME values realization uses
@@ -3798,46 +3803,21 @@ public final class PhasedPlanner {
         // up; district gates are seated on centre radius and their CORNERS
         // legally poke past the cap (gateOuterRadius is farthest-corner
         // Euclidean). On a CITY whose workshop quarter cornered at ~149,
-        // ringInner (153) overtook the cap (140) and every wedge dropped
-        // NO_VIABLE_COMPLEX_PARCEL without one flood-fill probe. The
-        // nucleus band must survive the built edge outgrowing the zoned
-        // cap: raise the effective cap to fit at least one nucleus seat
-        // plus one radial sweep step (seatFarmstead sweeps r += 4), and
-        // clamp to fieldOuter (a seat past it would seed its field probe
-        // off-grid). minBandDepth is derived from the same geometry
-        // seatFarmstead uses for halfRadial — the worst case (stable
-        // dealt), so every wedge's seat window is non-empty.
+        // the ring inner (153) overtook the cap (140) and every wedge
+        // dropped NO_VIABLE_COMPLEX_PARCEL without one flood-fill probe.
+        // The nucleus band must survive the built edge outgrowing the
+        // zoned cap: each wedge's effective cap is raised (in the fan loop
+        // below) to fit at least one nucleus seat plus one radial sweep
+        // step (seatFarmstead sweeps r += 4), and clamped to fieldOuter (a
+        // seat past it would seed its field probe off-grid). minBandDepth
+        // is derived from the same geometry seatFarmstead uses for
+        // halfRadial — the worst case (stable dealt), so every wedge's
+        // seat window is non-empty.
         int maxHalfRadial = Math.max(fhFp.length(),
                 stFp != null ? stFp.length() : 0) / 2 + FARMSTEAD_YARD_MARGIN;
         int minBandDepth = 2 * maxHalfRadial + 4;
-        int seatCap = Math.min(fieldOuter, Math.max(
-                ZonePartition.zonedRadiusCap(state.ctx.tier(),
-                        state.fmap.radius()),
-                ringInner + minBandDepth));
-
-        // Degenerate band — even the raised cap can't fit one nucleus
-        // (ringInner pushed against the scan edge). One WARN for the one
-        // geometric fact; the drops are still recorded (the planner result
-        // and dump accounting need them), but not one log line per wedge.
-        if (ringInner + 2 * maxHalfRadial > seatCap) {
-            int bandLo = ringInner + maxHalfRadial;
-            int bandHi = seatCap - maxHalfRadial;
-            LOGGER.warn("agriculture ring: band empty (inner {} > cap {})"
-                    + " — {} farmstead(s) skipped", bandLo, bandHi, farmCount);
-            for (int k = 0; k < farmCount; k++) {
-                state.dropped.add(new DroppedBuilding(BuildingType.FARMHOUSE,
-                        DropReason.NO_VIABLE_COMPLEX_PARCEL,
-                        "agriculture ring: band empty (seat band [" + bandLo
-                                + ", " + bandHi + "] inverted; ring inner "
-                                + ringInner + ", cap " + seatCap + ")"));
-            }
-            state.agriFarmhouseSkip = farmCount;
-            state.agriStableSkip = 0;
-            state.districtAccum.farmsteadsSeated = 0;
-            state.districtAccum.farmsteadsDryRunFailed = farmCount;
-            state.districtAccum.farmsteadsPlaced = 0;
-            return;
-        }
+        int zonedCap = ZonePartition.zonedRadiusCap(state.ctx.tier(),
+                state.fmap.radius());
 
         // The wedge fan, gateway-rotated + jittered, sorted by the
         // cost-distance of each wedge's mid-ring sample.
@@ -3846,12 +3826,38 @@ public final class PhasedPlanner {
                 new java.util.Random(state.ctx.seed() ^ 0xA6121CL);
         int n = farmCount;
         double wedgeHalf = Math.min(Math.PI / n, Math.toRadians(170));
-        record Wedge(int idx, double bearing, int cost) {}
+        record Wedge(int idx, double bearing, int cost, int inner, int cap) {}
         List<Wedge> wedges = new ArrayList<>(n);
         for (int k = 0; k < n; k++) {
             double bearing = base + (2 * Math.PI * k) / n
                     + (wedgeRng.nextDouble() * 2 - 1) * WEDGE_JITTER;
-            int midR = Math.min(seatCap, ringInner + 12);
+            // Per-wedge built edge: same farthest-corner metric as before,
+            // but only over the gates whose angular sector overlaps this
+            // wedge (bearings exceed 2π in the jittered fan — the overlap
+            // test normalises).
+            int wBandsOuter = innerFloor;
+            for (Polygon.AABB g : state.residentialGates) {
+                if (gateOverlapsWedge(g, anchor, bearing, wedgeHalf)) {
+                    wBandsOuter = Math.max(wBandsOuter,
+                            gateOuterRadius(g, anchor));
+                }
+            }
+            for (Polygon.AABB g : state.workshopGates) {
+                if (gateOverlapsWedge(g, anchor, bearing, wedgeHalf)) {
+                    wBandsOuter = Math.max(wBandsOuter,
+                            gateOuterRadius(g, anchor));
+                }
+            }
+            int wInner = wBandsOuter + DISTRICT_GAP;
+            // Band-cap fix (CITYTEST6), now wedge-local: zonedRadiusCap
+            // derives from VillageExtent, not from where districts seated;
+            // when this wedge's built edge outgrows the zoned cap, raise
+            // the effective cap to fit one nucleus seat plus one sweep
+            // step, clamped to fieldOuter (a seat past it would seed its
+            // field probe off-grid).
+            int wCap = Math.min(fieldOuter,
+                    Math.max(zonedCap, wInner + minBandDepth));
+            int midR = Math.min(wCap, wInner + 12);
             int sx = anchor.getX() + (int) Math.round(Math.cos(bearing) * midR);
             int sz = anchor.getZ() + (int) Math.round(Math.sin(bearing) * midR);
             int cost = Integer.MAX_VALUE;
@@ -3859,15 +3865,36 @@ public final class PhasedPlanner {
                 Cell c = state.fmap.cellAt(sx, sz);
                 if (c != null) cost = c.distToAnchor();
             }
-            wedges.add(new Wedge(k, bearing, cost));
+            wedges.add(new Wedge(k, bearing, cost, wInner, wCap));
         }
         wedges.sort(java.util.Comparator.comparingInt(Wedge::cost));
 
         int seated = 0, committed = 0, failed = 0, stablesDealt = 0;
+        int innerMin = Integer.MAX_VALUE, innerMax = 0, capMax = 0;
+        int degenerate = 0;
         Polygon.AABB firstGate = null;
         for (Wedge w : wedges) {
+            innerMin = Math.min(innerMin, w.inner());
+            innerMax = Math.max(innerMax, w.inner());
+            capMax = Math.max(capMax, w.cap());
+            // Degenerate band, wedge-local — even the raised cap can't fit
+            // one nucleus on this bearing (inner pushed against the scan
+            // edge). Drop recorded (planner result + dump accounting);
+            // one aggregate WARN after the loop if EVERY wedge degenerated.
+            if (w.inner() + 2 * maxHalfRadial > w.cap()) {
+                degenerate++;
+                failed++;
+                state.dropped.add(new DroppedBuilding(BuildingType.FARMHOUSE,
+                        DropReason.NO_VIABLE_COMPLEX_PARCEL,
+                        "agriculture wedge " + w.idx() + ": band empty (seat"
+                                + " band [" + (w.inner() + maxHalfRadial)
+                                + ", " + (w.cap() - maxHalfRadial)
+                                + "] inverted; wedge inner " + w.inner()
+                                + ", cap " + w.cap() + ")"));
+                continue;
+            }
             FarmsteadSeat seat = seatFarmstead(state, w.bearing(), wedgeHalf,
-                    ringInner, seatCap, fieldOuter, fhFp,
+                    w.inner(), w.cap(), fieldOuter, fhFp,
                     stablesDealt < stableTake ? stFp : null,
                     blockBudget, slopeLimit, probeMaxRadius);
             if (seat == null) {
@@ -3879,7 +3906,8 @@ public final class PhasedPlanner {
                                 + FIELD_QUANTUM_CELLS + "->"
                                 + FIELD_QUANTUM_FLOOR_CELLS
                                 + " cells, relief <= " + FIELD_RELIEF_LIMIT
-                                + ", ring [" + ringInner + ", " + seatCap + "])"));
+                                + ", ring [" + w.inner() + ", " + w.cap()
+                                + "])"));
                 LOGGER.info("agriculture wedge {}: dropped FARMHOUSE —"
                         + " NO_VIABLE_COMPLEX_PARCEL (bearing {}°)",
                         w.idx(), (int) Math.toDegrees(w.bearing()));
@@ -3959,10 +3987,16 @@ public final class PhasedPlanner {
         state.districtAccum.farmsteadsSeated = seated;
         state.districtAccum.farmsteadsDryRunFailed = failed;
         state.districtAccum.farmsteadsPlaced = committed;
+        if (degenerate == wedges.size()) {
+            LOGGER.warn("agriculture ring: band empty on every wedge (inner"
+                    + " {}-{} vs cap {}) — {} farmstead(s) skipped",
+                    innerMin, innerMax, capMax, farmCount);
+        }
         LOGGER.info("agriculture ring: {}/{} farmstead(s) committed,"
-                + " {} dropped; {} stable(s) dealt, shrine={} (ring [{}, {}],"
-                + " fields to {})", committed, farmCount, failed,
-                stablesDealt, shrinePlaced, ringInner, seatCap, fieldOuter);
+                + " {} dropped; {} stable(s) dealt, shrine={} (ring [{}-{},"
+                + " {}], fields to {})", committed, farmCount, failed,
+                stablesDealt, shrinePlaced, innerMin, innerMax, capMax,
+                fieldOuter);
     }
 
     /** One provisionally-seated farmstead: the nucleus gate, the member
@@ -4118,6 +4152,40 @@ public final class PhasedPlanner {
                     .nextDouble() * 2 * Math.PI;
         }
         return Math.atan2(g.getZ() - anchor.getZ(), g.getX() - anchor.getX());
+    }
+
+    /** Round 2 item 1 — true iff {@code g}'s angular sector (seen from the
+     *  anchor) overlaps the wedge {@code [bearing - wedgeHalf, bearing +
+     *  wedgeHalf]}. Sector = the gate-centre bearing ± the max normalised
+     *  corner deviation, so wraparound (jittered fan bearings exceed 2π)
+     *  is handled by normalisation rather than interval arithmetic. A gate
+     *  containing the anchor degenerates to half-spread ~π — conservatively
+     *  overlaps everything. */
+    private static boolean gateOverlapsWedge(Polygon.AABB g, BlockPos anchor,
+            double bearing, double wedgeHalf) {
+        double gx = (g.minX() + g.maxX()) / 2.0 - anchor.getX();
+        double gz = (g.minZ() + g.maxZ()) / 2.0 - anchor.getZ();
+        double centreAng = Math.atan2(gz, gx);
+        double halfSpread = 0;
+        int[] xs = {g.minX(), g.maxX()};
+        int[] zs = {g.minZ(), g.maxZ()};
+        for (int x : xs) {
+            for (int z : zs) {
+                double a = Math.atan2(z - anchor.getZ(), x - anchor.getX());
+                halfSpread = Math.max(halfSpread,
+                        Math.abs(normalizeAngle(a - centreAng)));
+            }
+        }
+        return Math.abs(normalizeAngle(centreAng - bearing))
+                <= wedgeHalf + halfSpread;
+    }
+
+    /** Normalise an angle to {@code (-π, π]}. */
+    private static double normalizeAngle(double a) {
+        a = a % (2 * Math.PI);
+        if (a > Math.PI) a -= 2 * Math.PI;
+        if (a <= -Math.PI) a += 2 * Math.PI;
+        return a;
     }
 
     /** Outermost corner distance of a gate AABB from the anchor — the

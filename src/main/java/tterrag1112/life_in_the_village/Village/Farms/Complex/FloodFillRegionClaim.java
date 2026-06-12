@@ -244,7 +244,15 @@ public final class FloodFillRegionClaim {
         // game-time produces the same rough edge each run.
         roughenBoundary(admitted, seedI, seedJ, in);
 
-        if (admitted.size() < MIN_VIABLE_CELLS) {
+        // Round 2 item 3 — the minimum-area gate applies only to UNPROVEN
+        // claims. When a containment boundary is present it is a proven
+        // Parcel budget (the planner's dry-run already cleared its own
+        // quantum ≥ this floor), so the refill must not re-litigate area:
+        // a bad re-seed or exclusion drift would otherwise skip a complex
+        // the planner committed. The ring's PROBE path also passes a
+        // boundary (the wedge polygon) but enforces its own stricter
+        // quantum on cellsClaimed, so it is unaffected by the skip.
+        if (admitted.size() < MIN_VIABLE_CELLS && in.boundary() == null) {
             return fail(in, FailReason.INSUFFICIENT_AREA,
                     "Insufficient arable land at this location ("
                             + admitted.size() + " < "

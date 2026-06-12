@@ -10946,3 +10946,197 @@ callers; `gateOuterRadius` keeps its one caller.) Nothing to delete.
 
 Build verification deferred (sandbox blocks maven.neoforged.net; no
 Java-21 javac available — static review + brace/paren balance check).
+
+## 2026-06-12 — Agriculture-ring round 2: per-wedge inner edge, fill-the-wedge fields, parcel-authoritative refill, chunk-loader degradation (cowork/agri-ring-round2)
+
+Four scoped fix/tuning items off the CITYTEST7 run (19/28 committed,
+ring [143,169], claims 212–326 cells, one INSUFFICIENT_AREA skip, the
+529-chunk force-load skip).
+
+**Item 1 — per-wedge ring inner edge (the grass-belt fix).**
+`reserveAgricultureRing` no longer derives ONE global `ringInner` from
+the farthest gate corner over every residential/workshop gate (the
+workshop quarter's far corner ≈149 pushed the whole ring out even on
+bearings where the built edge ends ≈108). Now: civic reach + the
+residential band outer remain a ring-wide FLOOR (`innerFloor`); the
+gate term is computed per wedge — `gateOverlapsWedge` tests whether a
+gate's angular sector from the anchor (centre bearing ± max normalised
+corner deviation, so jitter-past-2π wraparound is handled by
+normalisation) overlaps `[bearing − wedgeHalf, bearing + wedgeHalf]`,
+and only overlapping gates feed the farthest-corner max. The CITYTEST6
+band-cap fix is applied wedge-locally: `wCap = min(fieldOuter,
+max(zonedCap, wInner + minBandDepth))`; the degenerate-band guard
+moved from a global early-return to a per-wedge drop (one aggregate
+WARN only if EVERY wedge degenerates — same accounting fields as
+before, now fed by the normal end-of-loop path). The summary log
+prints `ring [innerMin-innerMax, capMax]` so logs stay diagnostic.
+`seatFarmstead`/`wedgeSectorPolygon` signatures unchanged — they
+receive the per-wedge values through the existing parameters.
+
+**Item 2 — fill-the-ring patchwork fields (user ruling).**
+Default FARMHOUSE `BuildingComplexSpec`: `blockBudget` 600 → 1800,
+`radiusMultiplier` 3.0 → 6.0 (`BuildingComplexRegistry`). CITYTEST7's
+212–326-cell claims show the binding constraint was wedge geometry +
+probe radius, not arability; the budget's job is now to never be the
+binding cap, so the wedge polygon (probe) / parcel polygon
+(realization) become the field boundary and claims grow until
+neighbouring wedges nearly touch. probeMaxRadius check: footprint
+20×16 × 3.0 = 60 blocks could not reach a wedge's far corners once the
+per-wedge inner pulls the annulus deeper (≈112 → fieldOuter) or when
+small farm counts widen wedges; ×6.0 = ~120 blocks covers both, and
+the realization-side `maxRadius = longestHalf × 2 × multiplier` lands
+on the same ~120 (probe = realization shaper preserved).
+`FIELD_QUANTUM_CELLS`/`FLOOR` untouched (pass thresholds, not caps).
+blockBudget reader audit: PhasedPlanner probe
+(`spec.map(BuildingComplexSpec::blockBudget)`) and
+`FarmComplexPlanner.runFill` (`spec.blockBudget()`) — both sides see
+1800; no other reader. Realization-path cap audit at ~3× area: BSP has
+no max-area cap (`targetPlotArea = bboxArea / targetPlotCount` scales
+with the claim — 4 bigger strips, same count); borders/paths/props are
+perimeter- or cell-linear; `deriveFootpathCells` is
+O(bboxArea × polygonChecks) — superlinear via the perimeter-sized
+vertex lists but a per-spawn one-off, ~low-millions of ops worst case
+at CITY claims; flagged, not changed. TOWN/HAMLET sanity: FARMHOUSE is
+an AGRICULTURE member at every tier, so all farmhouses stay
+wedge-bounded (probe) and parcel-bounded (realization) — the raised
+budget self-limits; the only truly unbounded fill is the
+`/litv farms` debug harness (no parcel), which will now plan larger
+test complexes (flagged below).
+
+**Item 3 — INSUFFICIENT_AREA contract violation (root cause traced).**
+Verified mechanism: the realization path does NOT re-fill the proven
+cell set — `FarmComplexPlanner.plan` re-RUNS `FloodFillRegionClaim`
+seeded at `Polygon.centroid(parcel.budget())`, bounded by the claim
+polygon, with apron + park exclusions. The proven claim polygon is
+concave (it wraps the excluded farmstead nucleus gate and follows the
+ring arc, then gets boundary-roughened and Chaikin-smoothed), and the
+area-weighted centroid of a concave polygon is not guaranteed to lie
+in its interior mass — it can land outside the polygon (in the
+"bite"), in the apron notch, or in a thin smoothing sliver.
+`FloodFillRegionClaim.run` validates the seed for bounds/biome/
+exclusion/arability but never for boundary containment, so a bad seed
+floods only the few in-boundary cells reachable from it — CITYTEST7
+farmhouse_8's 12 cells from a 200+-cell proven parcel, failed by the
+realization-side `MIN_VIABLE_CELLS = 100` gate. The parcel was NOT
+lost: the adapter passes `parcel.budget()` through on the one code
+path all ring farmhouses take; nothing painted through it (the spawn
+uses the single pre-spawn fmap scanned at adapter L200 — roads never
+mutate it). Fix (planner-layer, two parts): (a)
+`FarmComplexPlanner` — when a proven parcel exists and the first fill
+fails or returns below `MIN_VIABLE_CELLS`, retry ONCE from
+`parcelInteriorSeed` (the contained + non-excluded + arable grid cell
+nearest the contained-cell mean — for a horseshoe the mean sits in the
+hole but the nearest CONTAINED cell sits on an arm, from which the
+bounded BFS re-reaches the whole connected claim), keeping the better
+result; the path spine's seed follows the retry. (b)
+`FloodFillRegionClaim` — the `MIN_VIABLE_CELLS` gate now applies only
+when `boundary == null`: a boundary is a proven budget, the planner
+already cleared a stricter quantum, and the refill must not
+re-litigate area. Tie-in: the ring PROBE also passes a boundary (the
+wedge polygon) but enforces its own `cellsClaimed < quantum` check, so
+the gate skip cannot admit a wedge the old code rejected — verified
+against `probeField` (failure-null + quantum branches both rechecked).
+`FarmDebugCommand` passes no boundary → unchanged semantics.
+
+**Item 4 — chunk-loader graceful degradation.**
+`VillageChunkLoader`: (a) cap is tier-aware via `chunkCapFor` —
+`MAX_CITY_CHUNKS = 700` for `VillageSizeTier.CITY` (529 observed +
+headroom), 400 otherwise; (b) over-cap footprints now force-load the
+`cap` chunks nearest the footprint centre instead of skipping
+everything, with ONE WARN per village occupation naming the truncated
+count (`truncationWarned` set, cleared on release/releaseAll); (c) an
+`ABSURD_FOOTPRINT_CHUNKS = 10_000` sanity bound keeps corrupt bounds
+from enumerating millions of candidates — that path keeps the old
+skip-with-WARN behaviour. Cost audit: `footprintChunks` runs only
+inside `applyForce` ← `reconcile`, throttled to one pass per
+`RECONCILE_INTERVAL` (40 ticks) — the nearest-first sort happens at
+reconcile cadence for occupied villages only, never per tick. The
+Gate-0 `Long.MIN_VALUE` sentinel fix is untouched. Force-load path
+callers audited: `applyForce` is the only caller of
+`footprintChunks`; `reconcile` (player tick + logout) is the only
+caller of `applyForce`; public surface unchanged.
+
+**Tie-in audit.**
+- `reserveAgricultureRing` is private with one caller (planner phase
+  hook); locals only — no signature changes escaped the method.
+  `gateOuterRadius` callers: now only the per-wedge fan loop.
+  `ZonePartition.zonedRadiusCap` callers unchanged (partition + ring).
+- `seatFarmstead`/`probeField`/`wedgeSectorPolygon`/`tryGateAt`:
+  untouched signatures, per-wedge values flow through existing params.
+- `BuildingComplexSpec.blockBudget` readers: probe + realization (see
+  item 2); `radiusMultiplier` readers: same two sites.
+- `FloodFillRegionClaim.run` callers: `probeField` (boundary=wedge,
+  quantum-guarded — unaffected), `FarmComplexPlanner.runFill`
+  (boundary=parcel — the intended beneficiary). No third caller.
+- `FarmComplexPlanner.plan/planAndPersist` callers:
+  `V2VillageSpawnerAdapter` (parcel path) and `FarmDebugCommand`
+  (no parcel — old semantics).
+- Exhaustive switches: none touched (no enum changes; the
+  `fill.failure()` switch in FarmComplexPlanner still covers all four
+  FailReasons).
+
+**Simplification sweep.** The global degenerate-band early-return in
+`reserveAgricultureRing` was deleted (subsumed by the per-wedge guard
+feeding the same accounting); no other orphans created or found in
+scope — `bandsOuter`/`ringInner`/`seatCap` locals replaced by
+`innerFloor`/`zonedCap`/per-wedge fields, all old reads converted.
+
+**Deviations from prompt.**
+- Item 2 said "raise blockBudget to ~1800": done literally; note the
+  budget unit is CELLS (2×2 blocks), so 1800 is deliberately
+  far above any wedge's capacity — chosen so the wedge/parcel polygon
+  is always the binding boundary, per the prompt's intent.
+- Item 3 ships both the seed retry AND the gate override; the prompt
+  offered the override alone, but without a good seed the override
+  would commit comedy 12-cell farms — the retry restores the proven
+  area, the override is the contract backstop.
+- Item 4 adds the `ABSURD_FOOTPRINT_CHUNKS` bound not in the prompt
+  (defensive: nearest-N needs to enumerate candidates; corrupt bounds
+  should not allocate millions of ChunkPos at reconcile).
+
+**Out-of-scope but flagged.**
+- `/litv farms` debug harness (`FarmDebugCommand`) has no parcel
+  boundary, so the budget/radius raise makes its synthetic complexes
+  ~3× larger. Harness-only; re-baseline if its output is compared.
+- `deriveFootpathCells` + the renderer's bbox walks are superlinear in
+  claim size (area × polygon-vertex count). Fine as a per-spawn
+  one-off today; if CITY spawn time degrades, this is the first place
+  to look.
+- BSP `targetPlotCount` stays 4: wedge-filling claims produce four
+  large strips. If the patchwork should read finer-grained, raising
+  `targetPlotCount` (or deriving it from claim size) is a one-line
+  follow-up — not done without a ruling.
+- `perFhSeed = seed + msb ^ lsb` in the adapter mixes precedence
+  (`+` binds tighter than `^`) — determinism quirk only, untouched.
+
+**Smoke-test plan (Garrett).**
+1. *Superflat CITY (AGRICULTURAL)* — fields hug the built edge: no
+   uniform grass belt between the last houses/workshops and the
+   farmsteads; on bearings away from the workshop quarter the fields
+   start visibly closer in.
+2. *Same spawn, log check:* the ring summary reads
+   `ring [innerMin-innerMax, cap]` with innerMin clearly below the old
+   global inner (≈143) — per-wedge inners are live.
+3. *Claims fill wedges:* `farmstead committed (claim N cells…)` lines
+   show N well above the old 212–326 band on open bearings, and
+   neighbouring field claims nearly touch at the wedge seams.
+4. *Zero INSUFFICIENT_AREA:* no `farm complex skipped …
+   (INSUFFICIENT_AREA)` lines; every committed farmstead renders a
+   complex.
+5. *Force-load:* entering the city logs either a plain
+   `force-loaded N chunk(s)` (N ≤ 700) or ONE truncation WARN naming
+   the truncated count — never the old `skipping force-load` line; NPCs
+   on the far side of the village tick (walk/work) while you stand at
+   the anchor.
+6. *Superflat TOWN sanity:* ring commits as before; claims may be
+   larger but stay inside their wedges; no INSUFFICIENT_AREA; no
+   chunk-loader WARN (TOWN should sit under 400 chunks).
+7. *Superflat HAMLET sanity:* same — farmsteads commit, fields
+   bounded, no WARN spam.
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+Static review in its place: multi-line greps on every touched symbol
+(`innerFloor`/`zonedCap`/`wInner`/`wCap`/`gateOverlapsWedge`/
+`normalizeAngle`/`parcelInteriorSeed`/`runFill`/`chunkCapFor`/
+`truncationWarned`), brace/paren/bracket balance on all five touched
+files, placeholder-vs-arg count on every changed log line.

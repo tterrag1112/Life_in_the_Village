@@ -8,7 +8,10 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.phys.AABB;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -69,8 +72,16 @@ public final class VillageChunkLoader {
     private static final int  FOOTPRINT_MARGIN  = 16;
     /** Reconcile cadence — one pass per this many ticks regardless of player count. */
     private static final int  RECONCILE_INTERVAL = 40;
-    /** Defensive cap on a single village's forced-chunk count. */
+    /** Defensive cap on a single village's forced-chunk count (non-CITY). */
     private static final int  MAX_VILLAGE_CHUNKS = 400;
+    /** Round 2 item 4 — CITY cap. The agriculture ring legitimately grows a
+     *  CITY footprint past 400 (CITYTEST7 observed 529 chunks); 700 leaves
+     *  headroom without going unbounded. */
+    private static final int  MAX_CITY_CHUNKS = 700;
+    /** Absolute sanity bound — a footprint beyond this is corrupt bounds,
+     *  not a big village; we skip rather than enumerate millions of
+     *  candidate chunks at reconcile time. */
+    private static final long ABSURD_FOOTPRINT_CHUNKS = 10_000L;
 
     /** village → the chunks we currently force for it. */
     private static final Map<UUID, Set<ChunkPos>> forcedByVillage = new HashMap<>();
@@ -78,6 +89,10 @@ public final class VillageChunkLoader {
     private static final Map<UUID, Long> lastPresentTick = new HashMap<>();
     /** chunk → how many villages currently want it forced (ref-count). */
     private static final Map<ChunkPos, Integer> forceCount = new HashMap<>();
+    /** Round 2 item 4 — villages whose footprint exceeded the cap and were
+     *  truncated this occupation; gates the truncation WARN to once per
+     *  village (cleared on release). */
+    private static final Set<UUID> truncationWarned = new HashSet<>();
 
     private static long lastReconcileTick = Long.MIN_VALUE;
 
@@ -118,6 +133,7 @@ public final class VillageChunkLoader {
         forcedByVillage.clear();
         lastPresentTick.clear();
         forceCount.clear();
+        truncationWarned.clear();
         lastReconcileTick = Long.MIN_VALUE;
     }
 
@@ -203,6 +219,7 @@ public final class VillageChunkLoader {
     }
 
     private static void releaseVillage(ServerLevel level, UUID vid) {
+        truncationWarned.remove(vid);
         Set<ChunkPos> have = forcedByVillage.remove(vid);
         if (have == null) return;
         for (ChunkPos cp : have) unforce(level, cp);
@@ -231,6 +248,17 @@ public final class VillageChunkLoader {
 
     // ── Footprint → chunks ───────────────────────────────────────────────────
 
+    /** Round 2 item 4 — the cap is tier-aware: a ring-bearing CITY's
+     *  footprint legitimately exceeds the old flat 400. */
+    private static int chunkCapFor(Village v) {
+        try {
+            return v.getSizeTier() == VillageSizeTier.CITY
+                    ? MAX_CITY_CHUNKS : MAX_VILLAGE_CHUNKS;
+        } catch (Exception e) {
+            return MAX_VILLAGE_CHUNKS;   // tier derivation must never break forcing
+        }
+    }
+
     private static Set<ChunkPos> footprintChunks(Village v, VillageSavedData data) {
         AABB bounds = v.getBounds(data).orElse(null);
         if (bounds == null) return Set.of();
@@ -240,17 +268,50 @@ public final class VillageChunkLoader {
         int minCZ = (int) Math.floor(b.minZ) >> 4;
         int maxCZ = (int) Math.floor(b.maxZ) >> 4;
         long count = (long) (maxCX - minCX + 1) * (maxCZ - minCZ + 1);
-        if (count > MAX_VILLAGE_CHUNKS) {
-            LOGGER.warn("[VillageChunkLoader] village {} footprint {} chunks exceeds "
-                    + "cap {} — skipping force-load (unexpectedly large village?)",
-                    v.getName(), count, MAX_VILLAGE_CHUNKS);
+        int cap = chunkCapFor(v);
+        if (count <= cap) {
+            Set<ChunkPos> chunks = new HashSet<>();
+            for (int cx = minCX; cx <= maxCX; cx++) {
+                for (int cz = minCZ; cz <= maxCZ; cz++) {
+                    chunks.add(new ChunkPos(cx, cz));
+                }
+            }
+            return chunks;
+        }
+        if (count > ABSURD_FOOTPRINT_CHUNKS) {
+            if (truncationWarned.add(v.getId())) {
+                LOGGER.warn("[VillageChunkLoader] village {} footprint {} chunks is "
+                        + "beyond the sanity bound {} — skipping force-load "
+                        + "(corrupt bounds?)",
+                        v.getName(), count, ABSURD_FOOTPRINT_CHUNKS);
+            }
             return Set.of();
         }
-        Set<ChunkPos> chunks = new HashSet<>();
+        // Round 2 item 4 — graceful degradation instead of all-or-nothing:
+        // force the `cap` chunks nearest the footprint centre so the core
+        // of the village (anchor, square, most NPCs) stays fully ticking
+        // and only the fringe is truncated. Computed here, i.e. once per
+        // reconcile (every RECONCILE_INTERVAL ticks) for an occupied
+        // village — NOT per tick; sorting < ABSURD_FOOTPRINT_CHUNKS
+        // candidates at that cadence is negligible.
+        double ccx = (b.minX + b.maxX) / 2.0;
+        double ccz = (b.minZ + b.maxZ) / 2.0;
+        ArrayList<ChunkPos> all = new ArrayList<>((int) count);
         for (int cx = minCX; cx <= maxCX; cx++) {
             for (int cz = minCZ; cz <= maxCZ; cz++) {
-                chunks.add(new ChunkPos(cx, cz));
+                all.add(new ChunkPos(cx, cz));
             }
+        }
+        all.sort(Comparator.comparingDouble(cp -> {
+            double dx = (cp.x * 16 + 8) - ccx;
+            double dz = (cp.z * 16 + 8) - ccz;
+            return dx * dx + dz * dz;
+        }));
+        Set<ChunkPos> chunks = new HashSet<>(all.subList(0, cap));
+        if (truncationWarned.add(v.getId())) {
+            LOGGER.warn("[VillageChunkLoader] village {} footprint {} chunks exceeds "
+                    + "cap {} — force-loading the nearest {}, truncating {} fringe "
+                    + "chunk(s)", v.getName(), count, cap, cap, count - cap);
         }
         return chunks;
     }
