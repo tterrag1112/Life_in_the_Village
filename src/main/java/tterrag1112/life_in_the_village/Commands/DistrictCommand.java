@@ -31,7 +31,9 @@ import java.util.Optional;
  * residential variants + their tiling can be iterated by eye without a full
  * village. The town hall gives a stable civic anchor/precinct (visual
  * reference); the residential blocks place beyond it and tile as {@code count}
- * grows. {@code DISTRICT_ONLY_MODE} keeps rural + loose buildings off.
+ * grows. {@code DISTRICT_ONLY_MODE} keeps loose buildings off (the
+ * forced roster here has no FARMHOUSE, so the agriculture ring stays
+ * out of this tool's frame too).
  *
  * <p>{@code [variant]} forces every placed block to that
  * {@link ResidentialVariant} (A1 stage 1 — the forced value reaches

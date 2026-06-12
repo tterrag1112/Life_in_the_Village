@@ -51,6 +51,8 @@ import tterrag1112.life_in_the_village.Village.Buildings.Complex.BuildingComplex
 import tterrag1112.life_in_the_village.Village.Buildings.Complex.MarketComplexRegistry;
 import tterrag1112.life_in_the_village.Village.Buildings.Complex.MarketComplexSpec;
 import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
+import tterrag1112.life_in_the_village.Village.Farms.ArableScoring;
+import tterrag1112.life_in_the_village.Village.Farms.Complex.FloodFillRegionClaim;
 
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -189,11 +191,14 @@ public final class PhasedPlanner {
         state.forcedResidentialVariant = forcedResidentialVariant;
 
         // Stage 4b fix-up — temporary district-only dev mode. When on, filter
-        // placement to district-member types only (civic core + market +
-        // residential) so Garrett can read the districted work without the
-        // rural + loose buildings crowding the view. FARMHOUSE is filtered
-        // out, so the rural pass (and the still-rough required-farm gate)
-        // never runs. Reversible: with the flag off, `selection` == the
+        // placement to district-member types only so Garrett can read the
+        // districted work without the loose buildings crowding the view.
+        // Agriculture-ring stage 1 — FARMHOUSE / STABLE / SHRINE are now
+        // AGRICULTURE recipe members, so they PASS this filter and place via
+        // the farmstead-ring pass: farms at normal spawns under the flag is
+        // the intended stage-1 behaviour (design doc 13 §4). Loose types
+        // (MINE, GUARD_TOWER, CASTLE, ...) stay filtered until the stage-2
+        // flip. Reversible: with the flag off, `selection` == the
         // untouched `sortedSelection` and behaviour is byte-for-byte today's.
         // The roster/reconciliation upstream is untouched (this filters their
         // already-reconciled output). NOT a permanent roster change.
@@ -300,6 +305,25 @@ public final class PhasedPlanner {
                         && !state.workshopGates.isEmpty()) {
                     continue;
                 }
+                // Agriculture-ring stage 1 — roster instances the farmstead
+                // ring consumed (placed there, or dropped there with
+                // NO_VIABLE_COMPLEX_PARCEL) are skipped so the scorer pass
+                // can't double-place them. Counter-based like the civic
+                // house skip: leftovers (surplus stables beyond the
+                // farmstead count; the shrine when no farmstead committed)
+                // fall through to the scorer in their post-hook batches.
+                if (type == BuildingType.FARMHOUSE && state.agriFarmhouseSkip > 0) {
+                    state.agriFarmhouseSkip--;
+                    continue;
+                }
+                if (type == BuildingType.STABLE && state.agriStableSkip > 0) {
+                    state.agriStableSkip--;
+                    continue;
+                }
+                if (type == BuildingType.SHRINE && state.agriShrineSkip > 0) {
+                    state.agriShrineSkip--;
+                    continue;
+                }
                 boolean foundation = (batch == 1 || batch == 2)
                         || foundationTypes.contains(type);
                 if (placeOne(state, type, foundation)) perBatchCounts[batch]++;
@@ -336,6 +360,13 @@ public final class PhasedPlanner {
                     reserveResidentialDistricts(state, selection);
                     reserveWorkshopDistricts(state, selection);
                 }
+                // Agriculture-ring stage 1 — the FARMSTEAD RING reserves
+                // LAST at this hook: its inner edge derives from both band
+                // outers (residential + workshop), which exist only now.
+                // Every roster FARMHOUSE is dealt here (seat → flood-fill
+                // dry-run → commit, or an honest drop); the batch loop
+                // below skips the consumed instances.
+                reserveAgricultureRing(state, selection);
             }
         }
         LOGGER.info("placement: {} primary, {} rural, {} civic, {} resource,"
@@ -542,29 +573,17 @@ public final class PhasedPlanner {
             return false;
         }
 
-        // Stage 2a — reserve an interior complex parcel for farm/market
-        // lead buildings (graceful fallback: shrink, then skip). The
-        // parcel AABB folds into this building's reservation so later
-        // buildings avoid it.
+        // Stage 2a — reserve an interior complex parcel for the MARKET lead
+        // building (graceful fallback: shrink, then skip). The parcel AABB
+        // folds into this building's reservation so later buildings avoid
+        // it. Agriculture-ring stage 1 — the FARM arm and the Stage-4b
+        // required-farm gate are GONE: farmsteads commit their fields via
+        // the flood-fill dry-run in reserveAgricultureRing (the no-stray
+        // rule now lives there), and FARMHOUSE never reaches this path
+        // (the ring pass consumes every roster instance).
         ComplexParcel cp = reserveComplexParcel(state, type, best);
         Parcel parcel = cp != null ? cp.parcel() : null;
         Aabb parcelAabb = cp != null ? cp.aabb() : null;
-
-        // Stage 4b — required-farm gate (no stray farmhouses). A FARMHOUSE is
-        // its homestead-with-fields; if no viable field parcel could be
-        // reserved (even shrunk to the minimum box, clear of districts/other
-        // reservations + low-slope), DROP the farmhouse rather than shipping a
-        // fieldless stray. Non-fatal (FARMHOUSE isn't required); also trims
-        // CITY's farm over-supply. Every SHIPPED farm now has a bounded
-        // parcel, so the post-spawn FarmComplexPlanner flood-fill stays inside
-        // a district-clear box (kills the SEED_NOT_ADMISSIBLE strays).
-        if (type == BuildingType.FARMHOUSE && cp == null) {
-            state.dropped.add(new DroppedBuilding(type,
-                    DropReason.NO_VIABLE_COMPLEX_PARCEL,
-                    "no viable farm-field parcel (clear of districts/terrain)"));
-            LOGGER.info("dropped FARMHOUSE: NO_VIABLE_COMPLEX_PARCEL (no field box fits)");
-            return false;
-        }
 
         // Materialise the placement.
         PlacedBuilding pb = new PlacedBuilding(type, best.pos, best.footprint,
@@ -1297,7 +1316,17 @@ public final class PhasedPlanner {
             int workshopCraftsPlaced,
             int workshopCraftsDropped,
             int civicHousesPlanned,
-            int civicHousesPlaced) {
+            int civicHousesPlaced,
+            /* Agriculture-ring stage 1 — farmstead-node accounting:
+             * requested = roster FARMHOUSE count; seated = nodes whose
+             * seat + flood-fill dry-run both passed; dryRunFailed =
+             * wedges dropped (no seat with a provable field); placed =
+             * nodes whose farmhouse materialised with its committed
+             * claim. */
+            int farmsteadsRequested,
+            int farmsteadsSeated,
+            int farmsteadsDryRunFailed,
+            int farmsteadsPlaced) {
 
         /** How the craft set seated: as the CITY-tier QUARTER (4c-c — a
          *  demand-guided BSP block with a central street + work-yard), as a
@@ -1309,7 +1338,8 @@ public final class PhasedPlanner {
         /** Empty report — UNVIABLE aborts and pre-district callers. */
         public static DistrictReport empty() {
             return new DistrictReport(false, 0, false, false, 0,
-                    0, 0, 0, 0, false, 0, WorkshopSeating.NONE, 0, 0, 0, 0);
+                    0, 0, 0, 0, false, 0, WorkshopSeating.NONE, 0, 0, 0, 0,
+                    0, 0, 0, 0);
         }
     }
 
@@ -1338,6 +1368,10 @@ public final class PhasedPlanner {
         int workshopCraftsDropped;
         int civicHousesPlanned;
         int civicHousesPlaced;
+        int farmsteadsRequested;
+        int farmsteadsSeated;
+        int farmsteadsDryRunFailed;
+        int farmsteadsPlaced;
 
         DistrictReport freeze() {
             return new DistrictReport(civicReserved, civicArea,
@@ -1346,7 +1380,9 @@ public final class PhasedPlanner {
                     residentialHousesPlaced, residentialHousesDropped,
                     residentialBandActive, workshopCraftsRequested,
                     workshopSeating, workshopCraftsPlaced, workshopCraftsDropped,
-                    civicHousesPlanned, civicHousesPlaced);
+                    civicHousesPlanned, civicHousesPlaced,
+                    farmsteadsRequested, farmsteadsSeated,
+                    farmsteadsDryRunFailed, farmsteadsPlaced);
         }
     }
 
@@ -1581,6 +1617,19 @@ public final class PhasedPlanner {
                 DistrictRecipes.DistrictType.WORKSHOP_QUARTER,
                 ctx.tier()).contains(type)) {
             return WORKSHOP_BATCH;
+        }
+        // Agriculture-ring stage 1 — AGRICULTURE members place at the
+        // batch-3 hook (the farmstead ring); their batch only matters for
+        // ring-pass LEFTOVERS, which must run AFTER the hook. STABLE (no
+        // longer a quarter member) would otherwise batch-3 via its GATEWAY
+        // affinity and place BEFORE the ring could deal it; same for
+        // SHRINE's SACRED affinity. FARMHOUSE falls through (rural-nucleus
+        // batch 2 or bulk 5 — both post-hook in the {1,3,2,4,5,6} order).
+        if (DistrictRecipes.memberTypes(
+                DistrictRecipes.DistrictType.AGRICULTURE,
+                ctx.tier()).contains(type)) {
+            if (type == BuildingType.STABLE) return 4;
+            if (type == BuildingType.SHRINE) return 6;
         }
         // Bulk-distributed HOUSE goes to batch 5 regardless of any
         // CIVIC pull (HOUSE is "the rest of the village," not a
@@ -2150,9 +2199,12 @@ public final class PhasedPlanner {
     /** Stage 4b fix-up — temporary district-only dev mode. When true, only the
      *  district-member types ({@link DistrictRecipes#allMemberTypes} — the
      *  union of every district recipe's member table at the tier) place; the
-     *  rural pass + loose buildings are filtered out so the districted work is
-     *  legible in isolation. Default on for now (Garrett flips it off to
-     *  restore the full village). Reversible: off ⇒ today's behaviour exactly.
+     *  LOOSE buildings (MINE, GUARD_TOWER, CASTLE, ...) are filtered out so
+     *  the districted work is legible in isolation. Agriculture-ring stage 1
+     *  — FARMHOUSE / STABLE / SHRINE are AGRICULTURE recipe members, so the
+     *  farmstead ring places under the flag (intended; design doc 13 §4).
+     *  The stage-2 flip deletes this scaffold entirely. Reversible: off ⇒
+     *  the pre-district full village exactly.
      *
      *  <p>Public so the spawner adapter can RELAX the Layer-5 viability abort
      *  while it's on: a district-only roster can sit below a tier's diversity
@@ -3640,6 +3692,472 @@ public final class PhasedPlanner {
                 fpAabb.maxX(), fpAabb.maxZ());
     }
 
+    // =========================================================================
+    // Agriculture-ring stage 1 — the FARMSTEAD RING (design doc 13)
+    // =========================================================================
+
+    /** Yard margin (blocks) around the farmhouse(+stable) nucleus when sizing
+     *  the seat gate (~26x22 for the 20x16 farmhouse NBT). */
+    private static final int FARMSTEAD_YARD_MARGIN = 3;
+    /** Field quantum — the minimum flood-fill claim (in CELLS, the same unit
+     *  as {@code BuildingComplexSpec.blockBudget}) a farmstead must PROVE
+     *  before it commits. Approximately the old 4b min-box area in budget
+     *  units, and comfortably above the realization floor
+     *  ({@link FloodFillRegionClaim#MIN_VIABLE_CELLS} = 100) so the
+     *  realization re-fill clears the floor even after the apron / park
+     *  exclusions and boundary roughening shave the committed claim. */
+    private static final int FIELD_QUANTUM_CELLS = 200;
+    /** One-step quantum shrink — the escalation ladder's middle rung
+     *  (re-seat at every bearing/radius first, shrink the quantum once,
+     *  then drop honestly). */
+    private static final int FIELD_QUANTUM_FLOOR_CELLS = 150;
+    /** Cross-field relief limit: max−min cell elevation across the whole
+     *  claim. The per-cell slope limit admits a long ramp whose strips
+     *  would render as terraced noise on hillsides; the relief check
+     *  rejects the wedge instead (design doc 13 §7). */
+    private static final int FIELD_RELIEF_LIMIT = 6;
+    /** Bearing probes per wedge when seating its nucleus (centre-out fan:
+     *  0, ±0.35, ±0.7 of the wedge half-angle). */
+    private static final double[] WEDGE_BEARING_FRACTIONS =
+            {0.0, 0.35, -0.35, 0.7, -0.7};
+    /** Wedge bearing jitter (±15°) so the fan doesn't read as a compass. */
+    private static final double WEDGE_JITTER = Math.toRadians(15);
+    /** Margin (blocks) kept between field claims and the scan edge. */
+    private static final int FIELD_SCAN_MARGIN = 4;
+
+    /**
+     * Agriculture-ring stage 1 — reserves the FARMSTEAD RING: one
+     * district-contract node per roster FARMHOUSE (seat → dry-run → commit,
+     * the survey's family-3 pattern done right).
+     *
+     * <p>Geometry: the ring of wedge sectors beyond
+     * {@code max(residential band outer, workshop gate outer, civic reach)
+     * + DISTRICT_GAP}; one wedge per farmstead, the fan rotated onto the
+     * primary gateway bearing (farmsteads line the approach roads) and
+     * jittered per wedge. Wedges fill in cost-distance order (cheapest
+     * first — density falls outward; stragglers take the costlier wedges).
+     * Nucleus SEATS stay inside the zoned cap
+     * ({@link ZonePartition#zonedRadiusCap}); field claims may spill into
+     * the scanned-but-unzoned fringe (flood-fill needs scanned cells, not
+     * zoned ones).
+     *
+     * <p>Per node: a modest nucleus clearance (farmhouse + optional stable
+     * + yard margin) is swept inside the wedge via {@link #tryGateAt}; then
+     * the REAL field shaper ({@link FloodFillRegionClaim#run}, pure) probes
+     * from a seed just behind the nucleus, bounded to the wedge sector,
+     * with the same budget/slope/threshold the post-spawn realization uses.
+     * Pass ⇔ claim ≥ the field quantum AND cross-field relief ≤
+     * {@link #FIELD_RELIEF_LIMIT}. The PROVEN claim polygon is committed as
+     * the farmstead's {@link Parcel} budget, so
+     * {@code FarmComplexPlanner} re-fills exactly what was proven
+     * (planning proxy = realization shaper — the family-3 loop closed).
+     *
+     * <p>Escalation ladder per node: every bearing × radius in the wedge at
+     * quantum {@link #FIELD_QUANTUM_CELLS}, then once more at
+     * {@link #FIELD_QUANTUM_FLOOR_CELLS}, then an honest
+     * {@code NO_VIABLE_COMPLEX_PARCEL} drop. This replaces the deleted
+     * Stage-4b gate + {@code reserveComplexParcel} FARM arm.
+     *
+     * <p>STABLE is dealt one-per-farmstead (recipe cap 1 per node) while
+     * roster stables last; SHRINE (recipe cap 1 per ring) seats as a
+     * wayside shrine on the first committed farmstead's lane. Leftovers
+     * fall through to the scorer pass in their post-hook batches.
+     */
+    private static void reserveAgricultureRing(State state,
+                                               List<BuildingType> selection) {
+        EnumSet<BuildingType> agriTypes = DistrictRecipes.memberTypes(
+                DistrictRecipes.DistrictType.AGRICULTURE, state.ctx.tier());
+        if (!agriTypes.contains(BuildingType.FARMHOUSE)) return;
+        int farmCount = 0, stablesAvail = 0, shrinesAvail = 0;
+        for (BuildingType t : selection) {
+            if (t == BuildingType.FARMHOUSE) farmCount++;
+            else if (t == BuildingType.STABLE
+                    && agriTypes.contains(BuildingType.STABLE)) stablesAvail++;
+            else if (t == BuildingType.SHRINE
+                    && agriTypes.contains(BuildingType.SHRINE)) shrinesAvail++;
+        }
+        state.districtAccum.farmsteadsRequested = farmCount;
+        if (farmCount == 0) {
+            LOGGER.info("agriculture ring: none (no FARMHOUSE selected)");
+            return;
+        }
+        int stableTake = Math.min(stablesAvail, farmCount);
+        int shrineTake = Math.min(shrinesAvail, DistrictRecipes.cap(
+                DistrictRecipes.DistrictType.AGRICULTURE, state.ctx.tier(),
+                BuildingType.SHRINE));
+
+        BlockPos anchor = state.ctx.anchor();
+        int civicReach = 0;
+        if (state.civicPrecinct != null) {
+            civicReach = Math.max(
+                    (state.civicPrecinct.maxX() - state.civicPrecinct.minX()) / 2,
+                    (state.civicPrecinct.maxZ() - state.civicPrecinct.minZ()) / 2);
+        }
+        int bandsOuter = Math.max(civicReach, state.residentialBandOuterR);
+        for (Polygon.AABB g : state.residentialGates) {
+            bandsOuter = Math.max(bandsOuter, gateOuterRadius(g, anchor));
+        }
+        for (Polygon.AABB g : state.workshopGates) {
+            bandsOuter = Math.max(bandsOuter, gateOuterRadius(g, anchor));
+        }
+        int ringInner = bandsOuter + DISTRICT_GAP;
+        int seatCap = ZonePartition.zonedRadiusCap(state.ctx.tier(),
+                state.fmap.radius());
+        int fieldOuter = state.fmap.radius() - FIELD_SCAN_MARGIN;
+
+        // Per-farmstead spec inputs — the SAME values realization uses
+        // (BuildingComplexRegistry), so the probe is the realization shaper.
+        Optional<BuildingComplexSpec> spec = BuildingComplexRegistry.get(
+                state.culture, BuildingType.FARMHOUSE);
+        int blockBudget = spec.map(BuildingComplexSpec::blockBudget).orElse(600);
+        int slopeLimit = spec.map(BuildingComplexSpec::floodFillSlopeLimit).orElse(6);
+        double radiusMult = spec.map(s -> (double) s.radiusMultiplier()).orElse(3.0);
+        StructureSizeCache.FootprintInfo fhFp =
+                defaultFootprint(state, BuildingType.FARMHOUSE);
+        StructureSizeCache.FootprintInfo stFp = stableTake > 0
+                ? defaultFootprint(state, BuildingType.STABLE) : null;
+        int probeMaxRadius = (int) Math.round(
+                Math.max(fhFp.width(), fhFp.length()) * radiusMult);
+
+        // The wedge fan, gateway-rotated + jittered, sorted by the
+        // cost-distance of each wedge's mid-ring sample.
+        double base = gatewayBearing(state, anchor);
+        java.util.Random wedgeRng =
+                new java.util.Random(state.ctx.seed() ^ 0xA6121CL);
+        int n = farmCount;
+        double wedgeHalf = Math.min(Math.PI / n, Math.toRadians(170));
+        record Wedge(int idx, double bearing, int cost) {}
+        List<Wedge> wedges = new ArrayList<>(n);
+        for (int k = 0; k < n; k++) {
+            double bearing = base + (2 * Math.PI * k) / n
+                    + (wedgeRng.nextDouble() * 2 - 1) * WEDGE_JITTER;
+            int midR = Math.min(seatCap, ringInner + 12);
+            int sx = anchor.getX() + (int) Math.round(Math.cos(bearing) * midR);
+            int sz = anchor.getZ() + (int) Math.round(Math.sin(bearing) * midR);
+            int cost = Integer.MAX_VALUE;
+            if (state.fmap.inBounds(sx, sz)) {
+                Cell c = state.fmap.cellAt(sx, sz);
+                if (c != null) cost = c.distToAnchor();
+            }
+            wedges.add(new Wedge(k, bearing, cost));
+        }
+        wedges.sort(java.util.Comparator.comparingInt(Wedge::cost));
+
+        int seated = 0, committed = 0, failed = 0, stablesDealt = 0;
+        Polygon.AABB firstGate = null;
+        for (Wedge w : wedges) {
+            FarmsteadSeat seat = seatFarmstead(state, w.bearing(), wedgeHalf,
+                    ringInner, seatCap, fieldOuter, fhFp,
+                    stablesDealt < stableTake ? stFp : null,
+                    blockBudget, slopeLimit, probeMaxRadius);
+            if (seat == null) {
+                failed++;
+                state.dropped.add(new DroppedBuilding(BuildingType.FARMHOUSE,
+                        DropReason.NO_VIABLE_COMPLEX_PARCEL,
+                        "agriculture wedge " + w.idx() + ": no nucleus seat"
+                                + " with a flood-fill-provable field (quantum "
+                                + FIELD_QUANTUM_CELLS + "->"
+                                + FIELD_QUANTUM_FLOOR_CELLS
+                                + " cells, relief <= " + FIELD_RELIEF_LIMIT
+                                + ", ring [" + ringInner + ", " + seatCap + "])"));
+                LOGGER.info("agriculture wedge {}: dropped FARMHOUSE —"
+                        + " NO_VIABLE_COMPLEX_PARCEL (bearing {}°)",
+                        w.idx(), (int) Math.toDegrees(w.bearing()));
+                continue;
+            }
+            seated++;
+            // Commit — stable first (the field-claim bounding box joins the
+            // farmhouse's reservation and could otherwise reject it), then
+            // the farmhouse carrying the proven claim as its parcel. A
+            // farmhouse materialise failure rolls the stable + gate back so
+            // the node never half-commits.
+            int placedMark = state.placed.size();
+            int reservedMark = state.reservations.size();
+            boolean dealtStable = false;
+            if (seat.stableCentre() != null
+                    && materializeBuilding(state, BuildingType.STABLE,
+                            seat.stableCentre(), anchor) != null) {
+                dealtStable = true;
+            }
+            if (materializeFarmstead(state, seat.farmhouseCentre(), anchor,
+                    seat.claim()) == null) {
+                while (state.placed.size() > placedMark) {
+                    state.placed.remove(state.placed.size() - 1);
+                }
+                while (state.reservations.size() > reservedMark) {
+                    state.reservations.remove(state.reservations.size() - 1);
+                }
+                state.farmsteadGates.remove(seat.gate());
+                failed++;
+                state.dropped.add(new DroppedBuilding(BuildingType.FARMHOUSE,
+                        DropReason.NO_VIABLE_COMPLEX_PARCEL,
+                        "agriculture wedge " + w.idx() + ": nucleus seated +"
+                                + " field proven but the farmhouse footprint"
+                                + " failed to materialise"));
+                LOGGER.warn("agriculture wedge {}: farmhouse failed to"
+                        + " materialise after a proven field — rolled back",
+                        w.idx());
+                continue;
+            }
+            if (dealtStable) stablesDealt++;
+            committed++;
+            if (firstGate == null) firstGate = seat.gate();
+            LOGGER.info("agriculture wedge {}: farmstead committed (claim {}"
+                    + " cells{}, gate {}x{})", w.idx(), seat.claimCells(),
+                    dealtStable ? ", +stable" : "",
+                    seat.gate().maxX() - seat.gate().minX(),
+                    seat.gate().maxZ() - seat.gate().minZ());
+        }
+
+        // The wayside shrine — recipe cap 1 per ring, on the first committed
+        // farmstead's lane (between its gate and the anchor; the router's
+        // terminal lane to the farmhouse passes here). A failed seat leaves
+        // the skip unconsumed so the batch-6 scorer places it instead
+        // (FAR_FROM_CIVIC_CENTRE profile).
+        boolean shrinePlaced = false;
+        if (shrineTake > 0 && firstGate != null) {
+            BlockPos edge = edgePointToward(firstGate, anchor);
+            double ang = Math.atan2(edge.getZ() - anchor.getZ(),
+                    edge.getX() - anchor.getX());
+            StructureSizeCache.FootprintInfo shFp =
+                    defaultFootprint(state, BuildingType.SHRINE);
+            int off = Math.max(shFp.width(), shFp.length()) / 2 + 2;
+            BlockPos shrinePos = new BlockPos(
+                    edge.getX() - (int) Math.round(Math.cos(ang) * off), 0,
+                    edge.getZ() - (int) Math.round(Math.sin(ang) * off));
+            if (materializeBuilding(state, BuildingType.SHRINE, shrinePos,
+                    anchor) != null) {
+                state.agriShrineSkip = 1;
+                shrinePlaced = true;
+            }
+        }
+
+        // Every roster FARMHOUSE was dealt here (committed or dropped);
+        // stables only as actually dealt.
+        state.agriFarmhouseSkip = farmCount;
+        state.agriStableSkip = stablesDealt;
+        state.districtAccum.farmsteadsSeated = seated;
+        state.districtAccum.farmsteadsDryRunFailed = failed;
+        state.districtAccum.farmsteadsPlaced = committed;
+        LOGGER.info("agriculture ring: {}/{} farmstead(s) committed,"
+                + " {} dropped; {} stable(s) dealt, shrine={} (ring [{}, {}],"
+                + " fields to {})", committed, farmCount, failed,
+                stablesDealt, shrinePlaced, ringInner, seatCap, fieldOuter);
+    }
+
+    /** One provisionally-seated farmstead: the nucleus gate, the member
+     *  centres inside it (stable null when none dealt), and the PROVEN
+     *  field-claim polygon + its cell count. */
+    private record FarmsteadSeat(Polygon.AABB gate, BlockPos farmhouseCentre,
+                                 BlockPos stableCentre, Polygon claim,
+                                 int claimCells) {}
+
+    /** Sweeps the wedge (bearing fan × radii, nearest-first) for a nucleus
+     *  seat whose flood-fill dry-run reaches the field quantum; escalates
+     *  once to the shrunk quantum. Rolls its own gate back on every failed
+     *  probe. Null when the wedge is genuinely unfarmable. */
+    private static FarmsteadSeat seatFarmstead(State state, double bearing,
+            double wedgeHalf, int ringInner, int seatCap, int fieldOuter,
+            StructureSizeCache.FootprintInfo fhFp,
+            StructureSizeCache.FootprintInfo stFp,
+            int blockBudget, int slopeLimit, int probeMaxRadius) {
+        BlockPos anchor = state.ctx.anchor();
+        int stW = stFp != null ? stFp.width() + HOUSE_GAP : 0;
+        int stL = stFp != null ? stFp.length() : 0;
+        int halfTangent = (fhFp.width() + stW) / 2 + FARMSTEAD_YARD_MARGIN;
+        int halfRadial = Math.max(fhFp.length(), stL) / 2 + FARMSTEAD_YARD_MARGIN;
+        int innerR = ringInner + halfRadial;
+        int outerR = seatCap - halfRadial;
+        if (innerR > outerR) return null;
+        Polygon wedgePoly = wedgeSectorPolygon(anchor, bearing, wedgeHalf,
+                Math.max(0, ringInner - 2), fieldOuter);
+        int[] quanta = {FIELD_QUANTUM_CELLS, FIELD_QUANTUM_FLOOR_CELLS};
+        for (int quantum : quanta) {
+            for (double frac : WEDGE_BEARING_FRACTIONS) {
+                double ang = bearing + frac * wedgeHalf;
+                double cos = Math.cos(ang), sin = Math.sin(ang);
+                boolean radialX = Math.abs(cos) >= Math.abs(sin);
+                int halfX = radialX ? halfRadial : halfTangent;
+                int halfZ = radialX ? halfTangent : halfRadial;
+                for (int r = innerR; r <= outerR; r += 4) {
+                    int cx = anchor.getX() + (int) Math.round(cos * r);
+                    int cz = anchor.getZ() + (int) Math.round(sin * r);
+                    Polygon.AABB gate = tryGateAt(state, cx, cz, halfX, halfZ,
+                            r, state.farmsteadGates);
+                    if (gate == null) continue;
+                    FarmsteadSeat seat = probeField(state, gate, ang, cx, cz,
+                            halfRadial, radialX, wedgePoly, quantum,
+                            blockBudget, slopeLimit, probeMaxRadius,
+                            fhFp, stFp);
+                    if (seat != null) return seat;
+                    state.farmsteadGates.remove(gate);   // complete rollback
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The dry-run arm: probes the REAL field shaper behind a seated
+     *  nucleus. Seed just past the gate's anti-anchor edge (the adapter's
+     *  "complex grows out the back" geometry); bounded by the wedge sector;
+     *  the nucleus gate itself is excluded so the claim never eats the
+     *  yard. Pass ⇔ cells ≥ quantum AND cross-field relief within limit.
+     *  On success returns the seat with member centres laid along the
+     *  gate's tangent axis, both facing the anchor. */
+    private static FarmsteadSeat probeField(State state, Polygon.AABB gate,
+            double ang, int cx, int cz, int halfRadial, boolean radialX,
+            Polygon wedgePoly, int quantum, int blockBudget, int slopeLimit,
+            int probeMaxRadius, StructureSizeCache.FootprintInfo fhFp,
+            StructureSizeCache.FootprintInfo stFp) {
+        BlockPos anchor = state.ctx.anchor();
+        double cos = Math.cos(ang), sin = Math.sin(ang);
+        int seedR = (int) Math.round(Math.hypot(cx - anchor.getX(),
+                cz - anchor.getZ())) + halfRadial + 3;
+        int sx = anchor.getX() + (int) Math.round(cos * seedR);
+        int sz = anchor.getZ() + (int) Math.round(sin * seedR);
+        if (!state.fmap.inBounds(sx, sz)) return null;
+        Cell seedCell = state.fmap.cellAt(sx, sz);
+        if (seedCell == null) return null;
+        BlockPos seed = new BlockPos(sx, seedCell.elevationY(), sz);
+        List<Polygon> exclusions =
+                List.of(aabbToPolygon(toAabb(gate), seed.getY()));
+        FloodFillRegionClaim.Result fill = FloodFillRegionClaim.run(
+                new FloodFillRegionClaim.Input(seed, probeMaxRadius,
+                        blockBudget, slopeLimit,
+                        ArableScoring.DEFAULT_THRESHOLD, state.fmap,
+                        null, exclusions, false, wedgePoly));
+        if (fill.failure() != null || fill.region() == null) return null;
+        if (fill.cellsClaimed() < quantum) return null;
+        if (claimRelief(state.fmap, fill.admittedCells())
+                > FIELD_RELIEF_LIMIT) return null;
+        BlockPos fhCentre;
+        BlockPos stCentre = null;
+        if (stFp == null) {
+            fhCentre = new BlockPos(cx, 0, cz);
+        } else {
+            int offFh = (stFp.width() + HOUSE_GAP + 1) / 2;
+            int offSt = (fhFp.width() + HOUSE_GAP + 1) / 2;
+            int tx = radialX ? 0 : 1;
+            int tz = radialX ? 1 : 0;
+            fhCentre = new BlockPos(cx - tx * offFh, 0, cz - tz * offFh);
+            stCentre = new BlockPos(cx + tx * offSt, 0, cz + tz * offSt);
+        }
+        return new FarmsteadSeat(gate, fhCentre, stCentre, fill.region(),
+                fill.cellsClaimed());
+    }
+
+    /** Cross-field relief: max−min cell elevation over the claim's admitted
+     *  cells (packed as {@code CellPolygonizer.packCell(i, j)}). */
+    private static int claimRelief(V2FeatureMap fmap, Set<Long> cells) {
+        int min = Integer.MAX_VALUE, max = Integer.MIN_VALUE;
+        for (long packed : cells) {
+            int i = (int) (packed >> 32);
+            int j = (int) packed;
+            if (i < 0 || j < 0 || i >= fmap.gridSize()
+                    || j >= fmap.gridSize()) continue;
+            Cell c = fmap.cell(i, j);
+            if (c == null) continue;
+            int y = c.elevationY();
+            if (y < min) min = y;
+            if (y > max) max = y;
+        }
+        return min == Integer.MAX_VALUE ? 0 : max - min;
+    }
+
+    /** Annular wedge sector as a polygon (outer arc + inner arc back),
+     *  ~15° arc sampling. The flood-fill containment boundary. */
+    private static Polygon wedgeSectorPolygon(BlockPos anchor, double bearing,
+            double wedgeHalf, int rIn, int rOut) {
+        List<BlockPos> verts = new ArrayList<>();
+        int arcSteps = Math.max(2,
+                (int) Math.ceil((2 * wedgeHalf) / Math.toRadians(15)));
+        for (int s = 0; s <= arcSteps; s++) {
+            double a = bearing - wedgeHalf + (2 * wedgeHalf * s) / arcSteps;
+            verts.add(new BlockPos(
+                    anchor.getX() + (int) Math.round(Math.cos(a) * rOut),
+                    anchor.getY(),
+                    anchor.getZ() + (int) Math.round(Math.sin(a) * rOut)));
+        }
+        for (int s = arcSteps; s >= 0; s--) {
+            double a = bearing - wedgeHalf + (2 * wedgeHalf * s) / arcSteps;
+            verts.add(new BlockPos(
+                    anchor.getX() + (int) Math.round(Math.cos(a) * rIn),
+                    anchor.getY(),
+                    anchor.getZ() + (int) Math.round(Math.sin(a) * rIn)));
+        }
+        return new Polygon(verts);
+    }
+
+    /** Bearing of the primary gateway from the anchor; seeded-random when
+     *  no gateway was derived (degenerate sites). */
+    private static double gatewayBearing(State state, BlockPos anchor) {
+        var gw = state.ctx.gateways();
+        BlockPos g = gw != null ? gw.primary() : null;
+        if (g == null || (g.getX() == anchor.getX() && g.getZ() == anchor.getZ())) {
+            return new java.util.Random(state.ctx.seed() ^ 0xA6B0L)
+                    .nextDouble() * 2 * Math.PI;
+        }
+        return Math.atan2(g.getZ() - anchor.getZ(), g.getX() - anchor.getX());
+    }
+
+    /** Outermost corner distance of a gate AABB from the anchor — the
+     *  band-outer bound the farm ring must clear. */
+    private static int gateOuterRadius(Polygon.AABB g, BlockPos anchor) {
+        int dx = Math.max(Math.abs(g.minX() - anchor.getX()),
+                Math.abs(g.maxX() - anchor.getX()));
+        int dz = Math.max(Math.abs(g.minZ() - anchor.getZ()),
+                Math.abs(g.maxZ() - anchor.getZ()));
+        return (int) Math.ceil(Math.hypot(dx, dz));
+    }
+
+    /** Parcel-carrying farmhouse materialisation: identical admissibility
+     *  to {@link #materializeBuilding}, but the placed building owns a
+     *  FARM {@link Parcel} whose budget is the PROVEN claim polygon, and
+     *  the reservation folds in the claim's bounding box so later passes
+     *  (houses, decorative scatter, parks via the adapter's parcel filter)
+     *  stay off the field. */
+    private static Polygon.AABB materializeFarmstead(State state,
+            BlockPos centre0, BlockPos faceTarget, Polygon claim) {
+        int x = centre0.getX(), z = centre0.getZ();
+        if (!state.fmap.inBounds(x, z)) return null;
+        Cell cell = state.fmap.cellAt(x, z);
+        BlockCategory cat = cell.category();
+        if (!(cat == BlockCategory.OPEN || cat == BlockCategory.SHORE)
+                || cell.localSlope() > MAX_SLOPE) return null;
+        PlacementProfile profile = PlacementDefaults.get(BuildingType.FARMHOUSE);
+        if (profile == null) return null;
+
+        BlockPos centre = new BlockPos(x, cell.elevationY(), z);
+        String variantId = state.variantResolver.pickVariantIdForV2(
+                BuildingType.FARMHOUSE, centre, state.ctx.anchor(),
+                state.villageRadius, state.culture, Style.RURAL, state.rng,
+                state.availability);
+        StructureSizeCache.FootprintInfo info = state.sizes.get(state.culture,
+                Style.RURAL, BuildingType.FARMHOUSE, variantId, LEVEL,
+                Rotation.NONE);
+        Footprint fp = new Footprint(info.width(), info.length());
+        Rotation rotation = chooseFacing(centre, faceTarget);
+        Aabb fpAabb = footprintAabb(centre, fp, rotation);
+        if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) return null;
+
+        Polygon.AABB claimBb = Polygon.boundingBox(claim);
+        Aabb claimBox = new Aabb(claimBb.minX(), claimBb.minZ(),
+                claimBb.maxX(), claimBb.maxZ());
+        Parcel parcel = new Parcel(Parcel.Kind.FARM, claim, centre,
+                growthDirectionAwayFromAnchor(centre, state.ctx.anchor()),
+                aabbToPolygon(fpAabb, centre.getY()));
+        PlacedBuilding pb = new PlacedBuilding(BuildingType.FARMHOUSE, centre,
+                fp, rotation, profile.priority(), variantId, null, null,
+                parcel);
+        state.placed.add(pb);
+        state.reservations.add(new Reservation(fpAabb, fpAabb, claimBox,
+                BuildingType.FARMHOUSE));
+        state.events.add(PhaseEvent.placed(BuildingType.FARMHOUSE, true,
+                new ScoreBreakdown(1.0, 0.0, 0.0)));
+        return new Polygon.AABB(fpAabb.minX(), fpAabb.minZ(),
+                fpAabb.maxX(), fpAabb.maxZ());
+    }
+
     /** Number of bearings swept when seating a residential block. */
     private static final int DISTRICT_ANGLE_STEPS = 24;
 
@@ -3720,6 +4238,11 @@ public final class PhasedPlanner {
         if (aabbOverlapsAnyReservation(toAabb(gate), state.reservations)) return null;
         if (aabbOverlapsAny(gate, state.residentialGates)) return null;
         if (aabbOverlapsAny(gate, state.workshopGates)) return null;
+        // Agriculture-ring stage 1 — also reject against the TARGET list
+        // itself (farmstead gates live in neither list above). For the
+        // residential/workshop callers this duplicates the explicit checks,
+        // so their behaviour is unchanged.
+        if (aabbOverlapsAny(gate, targetGates)) return null;
         targetGates.add(gate);
         LOGGER.info("district seated: centre=({},{}) block={}x{} r={}",
                 cx, cz, 2 * halfX, 2 * halfZ, r);
@@ -3747,24 +4270,6 @@ public final class PhasedPlanner {
     private static boolean insideAny(int x, int z, List<Polygon.AABB> regions) {
         for (Polygon.AABB a : regions) if (insideAabb(x, z, a)) return true;
         return false;
-    }
-
-    /** True iff the parcel {@code box} overlaps any district (civic precinct
-     *  or a residential gate) — neither is a full {@link Reservation}, so
-     *  parcel reservation checks them separately. */
-    private static boolean overlapsAnyDistrict(State state, Aabb box) {
-        if (state.civicPrecinct != null && aabbOverlapsPoly(box, state.civicPrecinct)) {
-            return true;
-        }
-        for (Polygon.AABB g : state.residentialGates) {
-            if (aabbOverlapsPoly(box, g)) return true;
-        }
-        return false;
-    }
-
-    private static boolean aabbOverlapsPoly(Aabb a, Polygon.AABB b) {
-        return a.minX() <= b.maxX() && a.maxX() >= b.minX()
-                && a.minZ() <= b.maxZ() && a.maxZ() >= b.minZ();
     }
 
     /** Roads fix-up — each district's road-facing connection node (the point on
@@ -3813,27 +4318,29 @@ public final class PhasedPlanner {
     private record ComplexParcel(Parcel parcel, Aabb aabb) {}
 
     /**
-     * Reserves an interior complex parcel for a FARMHOUSE / MARKET lead
-     * building, growing away from the building's road frontage. Sized
-     * from the complex spec; validated like an adjunct (overlap /
-     * corridor / terrain). Shrinks toward a minimum and, failing that,
-     * returns {@code null} (graceful fallback — the building still
-     * places, just without a parcel). Returns {@code null} for any
-     * non-lead building type.
+     * Reserves an interior complex parcel for the MARKET lead building,
+     * growing away from the building's road frontage. Sized from the
+     * complex spec; validated like an adjunct (overlap / terrain).
+     * Shrinks toward a minimum and, failing that, returns {@code null}
+     * (graceful fallback — the building still places, just without a
+     * parcel). Returns {@code null} for any non-lead building type.
+     *
+     * <p>Agriculture-ring stage 1 — the FARM arm is deleted
+     * (convert-then-delete): farmstead field parcels are minted by
+     * {@link #reserveAgricultureRing}'s flood-fill dry-run, whose claim
+     * polygon IS the parcel budget.
      */
     private static ComplexParcel reserveComplexParcel(State state, BuildingType type,
                                                       Best best) {
-        Parcel.Kind kind;
-        if (type == BuildingType.FARMHOUSE) kind = Parcel.Kind.FARM;
-        else if (type == BuildingType.MARKET) kind = Parcel.Kind.MARKET;
-        else return null;
+        if (type != BuildingType.MARKET) return null;
+        Parcel.Kind kind = Parcel.Kind.MARKET;
 
         // Stage 3c — no frontage exists at placement (roads-last), so
         // grow the parcel away from the ANCHOR (the building's front is
         // rotated anchor-ward, so "away from anchor" is the building's
         // back = the interior the complex fills).
         Direction grow = growthDirectionAwayFromAnchor(best.pos, state.ctx.anchor());
-        int[] ext = complexBudgetHalfExtents(kind, best.footprintAabb, grow,
+        int[] ext = complexBudgetHalfExtents(best.footprintAabb, grow,
                 state.culture, type);
         int fullPerp = ext[0], fullDepth = ext[1], minPerp = ext[2], minDepth = ext[3];
 
@@ -3846,12 +4353,6 @@ public final class PhasedPlanner {
             int hd = (int) Math.round(minDepth + (fullDepth - minDepth) * t);
             Aabb box = budgetBox(best.pos, best.footprintAabb, grow, hp, hd);
             if (aabbOverlapsAnyReservation(box, state.reservations)) continue;
-            // Stage 4b — the FARM field parcel must also clear the districts
-            // (civic precinct + residential gates), which aren't full
-            // Reservations. The post-spawn FarmComplexPlanner bounds the
-            // flood-fill to this parcel, so a district-clear parcel keeps the
-            // field off houses/plazas (kills SEED_NOT_ADMISSIBLE strays).
-            if (kind == Parcel.Kind.FARM && overlapsAnyDistrict(state, box)) continue;
             // Stage 3c — no corridor check: roads don't exist at
             // placement (roads-last). The router routes around reserved
             // parcels' buildings; the building footprint reservation
@@ -3882,31 +4383,21 @@ public final class PhasedPlanner {
 
     /** Full + minimum parcel half-extents {@code [fullPerp, fullDepth,
      *  minPerp, minDepth]}, where "perp" is perpendicular to the growth
-     *  direction and "depth" is along it. FARM sizes from the
-     *  flood-fill {@code blockBudget}; MARKET from footprint + the pad
-     *  margin. */
-    private static int[] complexBudgetHalfExtents(Parcel.Kind kind, Aabb fp,
+     *  direction and "depth" is along it. MARKET-only post
+     *  agriculture-ring stage 1 (farm fields are flood-fill claims, not
+     *  budget boxes): footprint + the pad margin. */
+    private static int[] complexBudgetHalfExtents(Aabb fp,
                                                   Direction grow, String culture,
                                                   BuildingType type) {
         boolean growZ = grow.getAxis() == Direction.Axis.Z;
         int halfAlong = (growZ ? (fp.maxZ - fp.minZ) : (fp.maxX - fp.minX)) / 2;
         int halfPerp  = (growZ ? (fp.maxX - fp.minX) : (fp.maxZ - fp.minZ)) / 2;
-
-        if (kind == Parcel.Kind.MARKET) {
-            int padMargin = MarketComplexRegistry.get(culture, type)
-                    .map(MarketComplexSpec::padMargin).orElse(10);
-            int minMargin = MarketComplexRegistry.get(culture, type)
-                    .map(MarketComplexSpec::minPadMargin).orElse(Math.min(padMargin, 4));
-            return new int[]{halfPerp + padMargin, halfAlong + padMargin,
-                    halfPerp + minMargin, halfAlong + minMargin};
-        }
-        // FARM — size a square-ish box from the cell budget with margin.
-        int budget = BuildingComplexRegistry.get(culture, type)
-                .map(BuildingComplexSpec::blockBudget).orElse(600);
-        int side = (int) Math.ceil(Math.sqrt(Math.max(64, budget) * 1.4));
-        int fullPerp = Math.max(8, side / 2);
-        int fullDepth = Math.max(10, side / 2 + 2);
-        return new int[]{fullPerp, fullDepth, 6, 8};
+        int padMargin = MarketComplexRegistry.get(culture, type)
+                .map(MarketComplexSpec::padMargin).orElse(10);
+        int minMargin = MarketComplexRegistry.get(culture, type)
+                .map(MarketComplexSpec::minPadMargin).orElse(Math.min(padMargin, 4));
+        return new int[]{halfPerp + padMargin, halfAlong + padMargin,
+                halfPerp + minMargin, halfAlong + minMargin};
     }
 
     /** Budget box offset from the building centre in {@code grow},
@@ -4110,6 +4601,16 @@ public final class PhasedPlanner {
          *  their footprints (HOUSE isn't batch 3, so the batch filter alone
          *  would miss them). */
         final List<PlacedBuilding> civicRingHouses = new ArrayList<>();
+        /** Agriculture-ring stage 1 — committed farmstead nucleus gates
+         *  (seat AABBs). Self-overlap-rejected via tryGateAt's targetGates
+         *  check; wedge disjointness keeps them apart across wedges. */
+        final List<Polygon.AABB> farmsteadGates = new ArrayList<>();
+        /** Agriculture-ring stage 1 — roster instances the farmstead ring
+         *  consumed (placed there, or honestly dropped there); the batch
+         *  loop skips this many. Mirrors civicHouseSkip. */
+        int agriFarmhouseSkip;
+        int agriStableSkip;
+        int agriShrineSkip;
         /** Read-only district-reservation diagnostics — written by the
          *  reserve passes, frozen onto {@link Result} at emit. Pure
          *  observation; never read by placement (zero behaviour impact). */
