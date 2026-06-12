@@ -9316,3 +9316,127 @@ gridGuide vs old subdivide compared line-by-line (same RNG order); all reference
 (`truncateAtFootprints`, `snapPathToSurface`, `defaultFootprint`, `edgePointToward`,
 `seatDistrict`, `nearestCorridorPoint`, `projectToSegment`, `horizDistSqr`, `clamp`) exist
 with matching signatures.
+
+### 2026-06-11 — 4c-c fix-up: rectangular quarter, quarter-first seating, no-drop lots, extent 132
+
+CITYTEST3 (superflat — zero terrain obstacles) broke the all-crafts-place invariant: the
+quarter logged `no clear band position for a 79x79 block`, the row then ALSO failed silently,
+and the terminal lots pass dropped 3 of 10 crafts (`workshop lots (row fallback): 7/10`).
+Three root causes, all confirmed in source, all planner-layer:
+
+1. **Geometric impossibility:** a ~79-deep SQUARE can never fit the depth-60 residential band
+   (`[46, 106]` at extent 120) — no amount of clear terrain helps.
+2. **Seating order:** the quarter seated LAST, after 6 residential precincts + ~27
+   green-commons fills consumed the band.
+3. **Terminal lots dropped:** gates were seated in a count-first loop and crafts placed by
+   positional index — fewer gates than crafts ⇒ silent tail drop at INFO.
+
+**Fix 1 — rectangular, band-aware quarter (`seatQuarterBlock`):** the block is sized as a
+RECTANGLE — radial DEPTH fixed first (demand square side clamped to band depth −
+`QUARTER_BAND_MARGIN`=4, floored at biggest cell + 4; bail if the band can't host the biggest
+cell), along-band LENGTH derived from the demand area (floored at the root-cut requirement
+`max1+max2+street+4`). The BSP core was verified rectangle-native (cuts across the longer
+axis; `quarterGuide` clamps per-node). Seated via new **`seatDistrictOriented`** — per swept
+bearing the short axis maps to the more-radial world axis, and the centre radius range keeps
+the radial span inside `[bandInner, bandCap]` (the plain `seatDistrict` reach bound
+`max(halfX, halfZ)` collapses a long rect's window). `seatDistrict`'s admission body was
+extracted into shared `tryGateAt` (both sweeps use it; no duplication).
+**Two-block split before the row:** if the single rectangle can't seat or arrange, the craft
+set splits greedy-area-balanced into TWO blocks; block B sweeps from block A's bearing
+(adjacency via overlap-reject), arranges yard-less (`arrangeQuarter` now accepts
+`yardSide <= 0` → no yard cell, null `yardCentre`/`yard`); materialisation happens only after
+BOTH arrange (`QuarterSeat` carrier + `commitQuarter`), so a failed sibling never leaves half
+a quarter. Both gates join `servedBlocks`; metrics stay `QUARTER`.
+
+**Fix 2 — quarter seats BEFORE residential (CITY only):** new `reserveWorkshopQuarterEarly`
+runs at the batch-3 hook between `addCivicPrecinct` and `reserveResidentialDistricts`;
+outcome recorded on `state.workshopQuarterSeated`; `reserveWorkshopDistricts` skips to the
+row→lots chain only when false. **TOWN row / HAMLET lots deliberately NOT moved** (reported
+per prompt): their failures were never ordering-driven, and moving them would re-order every
+tier's band contention in one change — the row/lots still run post-residential.
+
+**Fix 3 — terminal lots never drop silently:** per-craft seat+materialise interleaved (no
+positional indexing); a band miss retries with the search widened to the FULL buildable
+extent (inner `lotHalf+1` — placed reservations still reject; centre out to `villageRadius`);
+a craft drops only after exhausting that, logged at **WARN** with the reason (no-lot-anywhere
+vs footprint-materialise-failure; the latter also un-seats the phantom gate — pre-fix it
+lingered in masks/connection nodes).
+
+**Fix 4 — `extentCap` CITY 120 → 132** (`VillageExtent.radiusFor`, the long-flagged lever).
+Grep for other 120-dependents found exactly one: the adapter's `FEATURE_MAP_RADIUS=150` was
+sized as zone cap (120×1.0625≈127) + ~23 margin; at 132 the cap is ≈140, leaving ~10 — less
+than a worst-case 32-fallback footprint half. Bumped **150 → 160** (+13% cells). Other `120`
+hits (`ParallelismDetector`, `SkillRecipes`, `CropSizePreferences`) are unrelated constants.
+
+**Files modified:**
+- `.../V2/Layer2/VillageExtent.java` (CITY 132)
+- `.../V2/V2VillageSpawnerAdapter.java` (FEATURE_MAP_RADIUS 160)
+- `.../V2/Layer4/PhasedPlanner.java` (hook order; `workshopQuarterSeated`; quarter rewrite —
+  `seatQuarterBlock`/`commitQuarter`/`QuarterSeat`/`QUARTER_BAND_MARGIN`;
+  `seatDistrictOriented` + `tryGateAt` extraction; lots rewrite)
+- `.../V2/Layer4/ResidentialArranger.java` (`arrangeQuarter` yard-less mode)
+
+**Tie-In Audit (ordering):**
+- *`seatDistrict` cross-reject:* symmetric over BOTH gate lists since 4c-a — residential
+  precincts, green-commons fill (same sweep), and the row all sweep around the early quarter
+  exactly as it used to sweep around them. No code change needed downstream.
+- *Residential band math:* `bandInnerR/bandOuterR` derive from civicReach + variant depths
+  only — order-independent. Precinct count/share derive from houseCount — unaffected.
+- *Rural exclusion reads `workshopGates`:* batch 2 runs AFTER batch 3 (core-first order), so
+  it always saw the gates; early-vs-late within the batch-3 hook is invisible to it.
+- *Scorer-skip (`CRAFT_SET` × `workshopGates`):* crafts are batch 4 (`WORKSHOP_BATCH`) —
+  evaluated post-hook both before and after.
+- *`residentialDirections`:* market-bearing only — deterministic, call-order-free.
+- *`districtConnectionNodes` / router / `OverlapAuditor` / harness:* list- and record-driven,
+  not order-driven; `DistrictMetrics` unchanged in shape (split still reports `QUARTER`,
+  placed summed across blocks).
+- *Exhaustive switches / codecs / per-tick:* none touched (constant-only `ViabilityTier`
+  switch edit; `QuarterSeat` is in-memory).
+
+**Simplification Sweep:** net-deduplicating again — `tryGateAt` removes the would-be second
+copy of the admission body; quarter monolith split into seat/commit phases reused by both the
+single and split paths. The 4c-c-flagged civicReach/dirs duplication now exists in three
+places (`reserveWorkshopDistricts`, `reserveWorkshopQuarter`, residential) — still flagged,
+still not worth a helper with different inner/outer semantics per caller. No orphans created;
+row and lots remain reachable (TOWN primary / terminal fallback).
+
+**Deviations from prompt:**
+- **"Falling back to the craft row" log moved:** the per-attempt INFO lines no longer carry
+  the fallback clause (a block attempt may be followed by the split, not the row); a single
+  terminal INFO (`neither a single rectangle nor a two-block split seated…`) announces the
+  row fallback instead.
+- **Lots widen floor is `lotHalf+1`, not 0:** the centre must clear its own half-extent of
+  the anchor; actual civic/market collisions are rejected by reservations, so "full buildable
+  extent" is preserved in effect.
+- **Failed-materialise lots gates are now un-seated** (pre-fix they lingered as phantom
+  inclusion/exclusion AABBs) — strictly a correctness tighten inside fix 3's scope.
+
+**Out-of-scope but flagged:**
+- The row (4c-b) can still fail band-crowded at TOWN and falls to lots — acceptable (lots no
+  longer drop), but a band-aware rectangular row is the natural follow-on if TOWN rows start
+  reading as scattered lots.
+- MILLER/WAREHOUSE 32×32 fallback footprints still inflate demand wherever they enter a
+  craft set (unchanged content gap).
+- `DISTRICT_ONLY_MODE=true` still ships farms off; the quarter's `farmReserve` branch matches
+  residential's, so flag-off behaviour stays aligned.
+
+**Smoke test plan (user-executable):**
+1. Superflat, CITY respawn (CITYTEST3 conditions) → log `workshop quarter: 10/10 crafts
+   placed (1 block(s))` (or `2 block(s)` if split), ZERO `workshop lots … dropped` WARNs;
+   in-world: the quarter as a RECTANGLE with central street, alleys, work-yard well.
+2. Same log: `residential band: [.., ..] … extentCap=132`; the quarter's `district seated:`
+   line appears BEFORE `residential precinct #1`.
+3. TOWN spawn → `workshop craft row: N/N crafts placed` unchanged (no quarter attempt logged).
+4. HAMLET spawn → `workshop lots (row fallback): N/N crafts placed, 0 dropped` (lots are
+   primary there; the line name is historical).
+5. One normal-terrain (non-superflat) CITY → quarter seats or falls back loudly; if any craft
+   drops, the log must show a WARN naming the craft + reason (silent drops are the bug).
+6. Optional harness `check`: CITY `wkSeat=QUARTER`, craftsPlaced == requested; no district
+   gate fires.
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net;
+javac absent, apt + JDK downloads blocked by the network allowlist). Static review: full-diff
+re-read; brace/paren balance verified on all 4 touched files; identifier cross-reference
+(every new symbol defined once + referenced); index alignment of crafts↔members↔buildings
+traced through the split path; `arrangeQuarter` yard-less mode traced through demands /
+leaf-count / assignment-order / result construction.
