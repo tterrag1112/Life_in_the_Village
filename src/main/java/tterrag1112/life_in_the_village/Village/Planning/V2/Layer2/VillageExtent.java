@@ -22,10 +22,14 @@ public final class VillageExtent {
      *  ring beyond the residential band (which caps at ~courtyard depth, leaving
      *  the new outer room for workshops). Carries a scan-grid bump (the scan must
      *  cover the larger footprint — see V2VillageSpawnerAdapter.FEATURE_MAP_RADIUS).
-     *  CITY-only; smaller tiers don't have the workshop-ring pressure. */
+     *  CITY-only; smaller tiers don't have the workshop-ring pressure.
+     *  4c-c fix-up — CITY 120 → 132 (the long-flagged lever): at 120 the
+     *  residential band depth (60) plus the major-district demand left the
+     *  workshop quarter no clear band room on a fully populated CITY. Carries
+     *  another scan-grid bump (see FEATURE_MAP_RADIUS, 150 → 160). */
     public static int radiusFor(ViabilityTier tier) {
         return switch (tier) {
-            case CITY -> 120;
+            case CITY -> 132;
             case TOWN -> 40;
             case HAMLET -> 20;
             case OUTPOST, UNVIABLE -> 10;
