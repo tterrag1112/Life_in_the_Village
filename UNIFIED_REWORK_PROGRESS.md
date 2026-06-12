@@ -10569,3 +10569,210 @@ path still reads them) — they collapse at the stage-2 flip per design §2.
 
 Build verification deferred (sandbox blocks maven.neoforged.net; no
 Java-21 javac available — static review + brace/paren balance check).
+
+## 2026-06-12 — Agriculture-ring stage 2: THE FLIP — DISTRICT_ONLY_MODE retired (cowork/agriculture-ring-2-flip)
+
+**Scope.** Design doc `13-AGRICULTURE-RING-DESIGN.md` §4 stage 2. The
+Stage-4b dev scaffold is gone — convert-then-delete: the public constant
+and every read site are DELETED, not set false. Builds directly on the
+stage-1 branch (see Deviations: stage 1 was bundled but not yet merged
+to main when this shipped, so this branch is stacked on
+`cowork/agriculture-ring-1`).
+
+**What changed.**
+- *Selection filter (PhasedPlanner.run).* The `DISTRICT_ONLY_MODE`
+  member filter + its INFO line are gone; `selection` is the untouched
+  reconciled `sortedSelection`. District members keep routing through
+  their district passes (civic ring / market hall / workshop quarter /
+  residential precincts / farmstead ring); the loose remainder places
+  through the nucleus-affinity batches exactly as pre-district.
+- *farmReserve mechanism DELETED* (constant + both band sites — see
+  verdict below). `bandCap = extent` at both the residential and the
+  workshop band; geometry byte-identical to the shipped flag-ON
+  behaviour (the flag-ON arm was already `farmReserve = 0`).
+- *Viability re-tightened (V2VillageSpawnerAdapter).* Post-terrain
+  `ViabilityValidator` failure ABORTS production spawns again
+  (auto-dump + `Optional.empty()`). The ONE surviving relax keys on the
+  selection-OVERRIDE seam (`selectionOverride != null && !isEmpty()`):
+  forced rosters (`/litv district residential` = {TOWN_HALL:1,
+  HOUSE:N}) are intentional partial villages and log-and-proceed. This
+  preserves `/litv district` behaviour explicitly, on the dev seam
+  where it belongs rather than on a global flag.
+- *Orphan deletion.* `DistrictRecipes.allMemberTypes` + the `ALL_TYPES`
+  cache deleted — the filter was the sole caller (grep-confirmed).
+  `memberTypes`/`members`/`cap` (the per-district lookups) survive with
+  their existing callers.
+- *Re-doc.* DistrictCommand class javadoc (override seam + viability
+  relax), DistrictRecipes AGRICULTURE table comment,
+  `docs/HEADLESS_HARNESS.md` flag section rewritten as retired history,
+  `harness/README.md` baseline warning updated.
+
+**Loose-building audit — the filter's replacement (the disposition
+table).** Selection feeders, verified: `PopulationRoster.build` is the
+only roster source (always TOWN_HALL + HOUSE/FARMHOUSE housing fill +
+the inclination's `buildings` set); a type with **no
+`PlacementProfile` is skipped at roster time** (`pp == null` →
+`continue`, "don't budget for it") and `placeOne` double-guards with a
+NOT_SELECTED drop; `ReconciliationEngine` only drops, never adds;
+selection overrides are dev-tooling and may inject anything (profile
+guard catches the rest). The full cross-tier/inclination union and
+each non-district type's disposition:
+
+| Type | Roster source | Disposition |
+|---|---|---|
+| TOWN_HALL, CHAPEL, INN | all inclinations | (a) CIVIC recipe (ring members; + HOUSE cap 2 at CITY) |
+| MARKET | all | (a) MARKET recipe (cap 1) |
+| BLACKSMITH, BAKERY, CARPENTRY, MILLER, WOODCUTTER, STOCKPILE, WAREHOUSE | per inclination | (a) WORKSHOP_QUARTER recipe |
+| HOUSE | housing fill | (a) RESIDENTIAL recipe (+ CIVIC@CITY) |
+| FARMHOUSE, STABLE, SHRINE | housing fill / per inclination | (a) AGRICULTURE recipe (stage 1) |
+| MINE | INDUSTRIAL | (b) scorer-loose, batch 4 — RESOURCE-nucleus affinity 1.0 + `requiresAggregates` terrain gate; a mine sits AT the ore site, a district can't relocate it. Per the design-doc stage-2 ruling ("keep affinity batches for now"). |
+| CASTLE | DEFENSIVE | (b) scorer-loose, batch 3 — CIVIC affinity 1.0 seats it by the core before bands reserve (precinct union then fences it). Singleton, minPop 60. Future home: the defensive/castle rework (castle kit NBT already exists). |
+| TREASURY | CIVIC, DEFENSIVE | (b) scorer-loose — batch 3 under DEFENSIVE (CIVIC affinity 0.9), batch 5 under CIVIC strategy (no affinity row). Flagged as the strongest CIVIC-recipe candidate (cap 1, plaza-fronting like INN/CHAPEL) — deliberate recipe change deferred, it resizes the CIVIC plaza for CIVIC/DEFENSIVE CITY spawns. |
+| VINEYARD | AGRICULTURAL | (c) no NBT and no PlacementProfile — never budgeted, never selected. Self-drop never even fires. |
+| WINERY, STONEMASON, TOOLSMITH, ARMORER, WEAVER, CANDLEMAKER, ATELIER, HEALER_HUT, LIBRARY, BELL_TOWER, CHANCELLERY, TEMPLE, BARRACKS, WATCHTOWER, PRISON | various tier-3/4 sets | no PlacementProfile → never rostered (NOT placement-filter survivors; the flip changes nothing for them). NBT EXISTS for all of these — each is one authored PlacementProfile away from returning. Owned by the professions/liveliness workstreams, not this flip. |
+| SCRIBE_WORKSHOP, SCHOLARS_RETREAT, GUARD_TOWER, GUILD_HALL_CRAFTSMEN/_MERCHANTS/_RELIGIOUS | CIVIC/SACRED/INDUSTRIAL/DEFENSIVE sets | no PlacementProfile AND no NBT — doubly unreachable. PopulationRoster keeps their ServiceRule rows deliberately (they activate the moment a profile is authored; deleting loses tuning intent). |
+| WELL | — | retired stage 1a (decoration stamp, not a building). |
+| NOBLE_MANOR | none | has profile + NBT but sits in NO inclination set — roster-unreachable; flagged, out of scope. |
+
+No type is silently left loose: the scorer-loose set after the flip is
+exactly {MINE, CASTLE, TREASURY}, each with the rationale above.
+
+**farmReserve verdict: DELETE (done), nothing kept.** The reserve
+(`RESIDENTIAL_FARM_RESERVE = 10`) was the pre-ring proxy for "leave
+extent for the scorer-driven farm pass beyond the bands." That pass is
+gone: stage 1c deleted the FARM arm of `reserveComplexParcel` + the 4b
+gate, and `reserveAgricultureRing` consumes EVERY roster FARMHOUSE
+(placed or honestly dropped — the skip counters cover both), so no
+FARMHOUSE ever reaches `findBestCandidate`. The ring needs no reserve:
+`ringInner = max(civicReach, residentialBandOuterR, gate outer radii) +
+DISTRICT_GAP` — beyond-the-bands by construction, seats capped by
+`zonedRadiusCap`, fields by the scan radius. Consumer check: the only
+two reads were the two `bandCap` sites, both already 0 under the
+shipped flag-ON arm — deletion is behaviour-preserving.
+
+**Viability per tier (natural pass, worst-case low population draw).**
+Validator minimums: CITY 10 placed / 6 distinct, TOWN 5/4, HAMLET 2/2,
++ TOWN_HALL present.
+- *HAMLET* (pop 12–30): TOWN_HALL + CHAPEL (minPop 12) + guaranteed
+  dwelling ≥ 3 placed / 3 distinct ≥ 2/2. Even a CHAPEL terrain-drop
+  leaves TOWN_HALL + dwellings = 2 distinct.
+- *TOWN* (pop 30–55) e.g. AGRICULTURAL at pop 30: TOWN_HALL, MARKET,
+  CHAPEL, BAKERY(+MILLER co-select), BLACKSMITH, WOODCUTTER, CARPENTRY,
+  STABLE, STOCKPILE + dwellings — ≥ 8 distinct vs 4, ≥ 10 placed vs 5.
+- *CITY* (pop 70–150): the TOWN set + INN, SHRINE, WAREHOUSE, WINERY…
+  + double-digit housing — ≥ 10 distinct vs 6, ≥ 20 placed vs 10.
+No recipe or minimum adjustments needed; an abort after the flip means
+the terrain genuinely ate the village (the gate's job).
+
+**Tie-in audit.**
+- *Selection-filter consumers:* the filter's output fed
+  `computeFoundationTypes` + the batch loop — both now read the full
+  selection; district passes are keyed by recipe membership and batch
+  routing, not by the filter (grep: no other reader of the filtered
+  list). `allMemberTypes` callers: filter only → deleted with it.
+- *Batch-3/4 scorer load with newly-loose types:* MINE (batch 4)
+  competes with the craft set's gate-fallback leftovers — pre-district
+  semantics restored, terrain-gated to ore aggregates so absent on most
+  sites; CASTLE/TREASURY (batch 3) place before the batch-3 hook
+  reserves bands, so `addCivicPrecinct` unions them in and bands sweep
+  around them (same machinery as INN/CHAPEL). DEFENSIVE CITY precincts
+  will widen — expected, stage-3 matrix watches it.
+- *Rural exclusion (`findBestCandidate`, batch-2 keyed):* structurally
+  dead for FARMHOUSE (ring consumes all instances) but kept — it is
+  generic `ruralNucleusTypes` machinery, and the RURAL nucleus system
+  it belongs to is alive (placed ring farmhouses ARE rural nuclei
+  pulling affinity types; ZonePartition reads the same set). Flagged
+  below.
+- *ViabilityValidator:* per-tier math above; validator itself
+  untouched (it was always flag-free).
+- */litv district:* preserved via the override-keyed relax (the
+  command's empty-result message already tells the user to check the
+  log for not-viable, which now can't fire for its own roster).
+  `/litv spawn`-class commands and natural spawns get the restored
+  abort — intended.
+- *Harness:* RunExecutor never ran ViabilityValidator (planner-only) —
+  unaffected; Battery configs now measure unfiltered selections —
+  baseline re-record note shipped in the docs sweep.
+- *Exhaustive switches:* none touched (no enum/sealed changes; the
+  deleted constant was a boolean).
+- *Codecs:* none touched.
+
+**Simplification sweep.** Acted on: `DISTRICT_ONLY_MODE` (constant +
+4 read sites + filter infra), `RESIDENTIAL_FARM_RESERVE` (+ both
+sites), `DistrictRecipes.ALL_TYPES`/`allMemberTypes` (orphaned by the
+filter's deletion). Checked, kept: `memberTypes`/`cap` (live callers in
+getBatch/batch-skips/ring/quarter); the rural exclusion + batch-2 arm
+(generic machinery, see audit); PopulationRoster ServiceRule rows for
+profile-less types (data with intent, see table).
+
+**Deviations from prompt.**
+1. *Stage 1 was NOT on main.* The prompt said "stage 1 is merged"; the
+   mounted repo's main tip (c267e1d) has no agriculture-ring commits —
+   stage 1 exists only as `.claude/bundles/agriculture-ring-1.bundle`
+   (based on that same main tip). This branch is therefore stacked on
+   the bundle's `cowork/agriculture-ring-1`, and the stage-2 bundle
+   `main..cowork/agriculture-ring-2-flip` carries BOTH stages (8
+   commits). Merging it brings stage 1 along; merging stage 1's bundle
+   first also works (shared commits dedupe).
+2. *Commit split.* Prompt suggested audit+recipes / flip+farmReserve /
+   viability+sweep. The audit produced ZERO new recipe rows (the
+   roster-reachable loose set is just MINE/CASTLE/TREASURY, all ruled
+   scorer-loose by the design doc), and the constant + all its read
+   sites must go in one compilable commit — so the split is:
+   flip+farmReserve+viability (1), docs sweep (2), PROGRESS (3).
+3. *Loose types at batch 4:* the prompt's example suggested recipe
+   homes "near gateways or the quarter" for resource/industry types;
+   the design doc's explicit stage-2 ruling ("MINE/GUARD_TOWER/CASTLE/
+   GUILD_HALL + tier-3/4 roster types — keep affinity batches for now,
+   each gets a one-line disposition") governs, and the audit showed
+   most of those types can't even be rostered. Followed the design doc.
+
+**Out-of-scope but flagged.**
+- *MILLER NBT orphan:* disk has `rural/mill/mill/level_1.nbt` but the
+  availability scanner maps folder→enum by name and there is no MILL —
+  MILLER (a WORKSHOP_QUARTER member!) self-drops as unavailable on
+  every spawn. A folder rename `mill` → `miller` would return it.
+  Pre-existing, asset-side, not touched.
+- *TREASURY → CIVIC recipe* (cap 1) is the one recipe change the audit
+  recommends considering; it resizes the civic plaza for CIVIC/
+  DEFENSIVE CITY, so it should ship as its own deliberate change.
+- *15 NBT-ready types with no PlacementProfile* (WINERY, TEMPLE,
+  LIBRARY, BARRACKS, WATCHTOWER, PRISON, HEALER_HUT, …): the real
+  "missing buildings" story post-flip belongs to profile authoring,
+  not placement plumbing. Candidates for the professions workstream.
+- *NOBLE_MANOR* roster-unreachable (profile + NBT, no inclination set).
+- *Rural exclusion / batch 2* dead-in-practice for FARMHOUSE; delete
+  only if/when `ruralNucleusTypes`-driven RURAL nuclei get reworked.
+- Harness baseline re-record still pending gradle access (now also
+  captures the flip).
+
+**Smoke-test plan (Garrett).**
+1. *Superflat CITY (AGRICULTURAL), full natural spawn:* NO
+   `DISTRICT_ONLY_MODE` line in the log (the filter INFO line is
+   gone); the `selection:` count map prints the full roster; civic
+   ring + market + workshop quarter + residential precincts + the
+   farmstead ring all place; farms present with field strips.
+2. *Same spawn, log check:* `viability check: … result=VIABLE` and no
+   "proceeding" line — production spawns no longer relax.
+3. *Superflat TOWN and HAMLET:* both spawn (not aborted); HAMLET shows
+   TOWN_HALL + chapel + dwellings at minimum; TOWN shows the full
+   small-village set. Farmstead rings scale down with the roster.
+4. *Former-loose types:* spawn an INDUSTRIAL site near exposed stone —
+   expect MINE placed at the resource nucleus (batch 4); a DEFENSIVE
+   spawn at pop ≥ 60 — expect CASTLE by the civic core and TREASURY
+   present; neither walled out by districts.
+5. *Abort restored:* spawn somewhere genuinely hostile (cliff face /
+   mid-ocean edge where TerrainAdapter drops most buildings) — expect
+   `V2: post-terrain not viable: …` + abort (empty spawn) instead of a
+   partial village.
+6. */litv district residential 8* (and with a variant arg): still
+   spawns the partial test village; log shows `proceeding (selection
+   override: partial village intended)` when the 2-type roster fails
+   the CITY diversity minimum.
+7. *Real-terrain CITY sanity:* full spawn on a hill+river class site;
+   confirm districts + ring still place, drops are honest (terrain
+   reasons), and the spawn either completes or aborts cleanly — no
+   half-village without an abort line.
+
+Build verification deferred (sandbox blocks maven.neoforged.net; no
+Java-21 javac available — static review + brace/paren balance check).
