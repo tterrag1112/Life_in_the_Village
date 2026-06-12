@@ -9440,3 +9440,136 @@ re-read; brace/paren balance verified on all 4 touched files; identifier cross-r
 (every new symbol defined once + referenced); index alignment of crafts↔members↔buildings
 traced through the split path; `arrangeQuarter` yard-less mode traced through demands /
 leaf-count / assignment-order / result construction.
+
+### 2026-06-11 — 4c-c fix-up round 2: cellability-driven quarter, workshops outrank filler, honest drop count
+
+CITYTEST4 (superflat) showed round 1's ordering fix WORKING (quarter seated first, 92x70
+block) but three residual planner bugs: (1) the seated block failed the demand BSP
+(`couldn't cell every member`) — area-driven sizing underestimates what the BSP cells;
+(2) the two-block split came out as 58x58 SQUARES (no band-aware rectangle sizing); (3) the
+row + lots fallbacks still ran POST-residential, so 22 green-commons fills consumed every
+clear 24x24 lot and BAKERY/STABLE/STABLE dropped while decorative filler shipped — and the
+final line claimed `placed=26 dropped=1` when 4 things actually dropped.
+
+**Fix 1 — cellability-driven sizing (`seatQuarterBlock`): dry-run + bounded growth, NOT a
+closed-form size.** Chosen over the "provably-sufficient initial size" alternative because
+no such size exists given the code: `quarterGuide`'s cut lands proportionally to demand
+area but is clamped only so each side can hold its single BIGGEST demand
+(`lo = base + a.get(0) + half`) — a subtree holding several demands can starve regardless
+of total rectangle area. The only ground truth is the arranger itself, so each candidate
+block is seated, the demand BSP + assignment dry-run, and on a cellability failure the
+along-band LENGTH grows (depth stays band-clamped) and the block re-seats:
+`QUARTER_GROWTH_STEPS`=3, `QUARTER_GROWTH_FACTOR`=+15%/step (compounding ≈1.52x). A seat
+failure stops the loop (a longer block never seats where a shorter one couldn't).
+**Reservation rollback confirmed in code:** `arrangeQuarter` is PURE (reads block+members,
+mutates no planner state), and `tryGateAt`'s only mutation is the `targetGates.add` — the
+`state.workshopGates.remove(gate)` before each retry is a complete rollback (connection
+nodes, rural exclusion, and the batch craft-skip all read the live list later). The band
+was never poisoned; the round-1 un-seat path was already correct.
+
+**Fix 2 — split blocks are band-aware rectangles:** depth no longer defaults to the
+demand-area square root (which produced squares whenever the half-set's `sqrt(area)` fit
+the band). New `QUARTER_ASPECT`=1.5 targets `depth = sqrt(cellArea / 1.5)` (still floored
+at biggest-cell+4, clamped to band depth), so EVERY block — single or split half — comes
+out elongated along the band; the existing `len >= depth` floor keeps the long axis
+tangent. Both halves run the same growth loop.
+
+**Fix 3 — workshops outrank filler:** the batch-3 hook now runs the ENTIRE workshop chain
+(quarter → split → row → lots) BEFORE `reserveResidentialDistricts` on CITY, so crafts
+claim band space before housing AND the green-commons band fill; greens keep consuming only
+what's left. TOWN/HAMLET keep residential-first (their seating never lost to ordering).
+The `workshopQuarterSeated` split-brain flag and `reserveWorkshopQuarterEarly` are DELETED —
+the quarter attempt lives back at the head of `reserveWorkshopDistricts`'s tier gate.
+
+**Fix 4 — honest drop accounting:** workshop-path drops now reach `state.dropped` (the
+final `placed=/dropped=` lines and the layout dump): quarter cell materialise failures,
+row tail/materialise failures, and lot drops each record a `DroppedBuilding`
+(`NO_VIABLE_CANDIDATE` + a path-specific detail; no new DropReason — no consumer needs the
+distinction). One guard: lot drops flush ONLY when at least one workshop gate seated — with
+ZERO gates the batch scorer pass re-attempts the whole craft set (the craft-skip guard keys
+on a non-empty gate list) and does its own accounting; recording both would double-count.
+
+**Files modified:**
+- `.../V2/Layer4/PhasedPlanner.java` only (hook ordering; tier gate; `seatQuarterBlock`
+  growth loop + `QUARTER_ASPECT`/`QUARTER_GROWTH_STEPS`/`QUARTER_GROWTH_FACTOR`;
+  `commitQuarter`/row/lots drop recording; `reserveWorkshopQuarterEarly` +
+  `State.workshopQuarterSeated` deleted)
+
+**Tie-In Audit (ordering move + accounting):**
+- *Green-commons fill / residential precincts:* both seat via `seatDistrict`→`tryGateAt`,
+  which cross-rejects `workshopGates` — they sweep around whatever the early chain seated
+  (the same mechanism that protected the early quarter in round 1).
+- *Residential band/precinct math:* `bandInnerR/bandOuterR/districtDepth/nPrecincts/share`
+  derive from civicReach + variant depths + houseCount only — order-independent.
+- *Rural exclusion reading `workshopGates`:* the dependency Garrett flagged — it reads the
+  LIVE list in `findBestCandidate`, batch 2, which runs AFTER the batch-3 hook under the
+  core-first batch order `{1,3,2,4,5,6}` in BOTH arrangements; an intra-hook reorder is
+  invisible to it. Verified at the call site (the `ruralType` gate).
+- *Batch craft-skip (`CRAFT_SET` × `!workshopGates.isEmpty()`):* crafts are batch 4 —
+  evaluated post-hook either way. The zero-gates fall-through to the scorer is preserved
+  and is exactly why lot drops flush conditionally (see fix 4).
+- *`districtConnectionNodes` / router / `OverlapAuditor`:* read final lists/placements,
+  order-independent. `servedBlocks` joins from `commitQuarter` as before.
+- *`residentialDirections`:* market-bearing only; market is reserved pre-hook.
+- *Harness (`MetricsComputer`/`Baseline`):* no gate on the raw `dropped` total (verified —
+  stored but only the asymmetric seating-downgrade / craftsPlaced gates fire), so honest
+  accounting can't trip baselines; stale baselines' `dropped` field will read lower than
+  honest current runs.
+- *Exhaustive switches / codecs / per-tick:* no enum values, record fields, or hot loops
+  touched; the growth loop runs at plan time, bounded at 4 arrangements per block.
+
+**Simplification Sweep:** net deletion — `reserveWorkshopQuarterEarly` and the
+`workshopQuarterSeated` flag (a split-brain between the early hook and the tier gate) are
+gone; `reserveWorkshopQuarter` is back to one caller. No new types beyond three constants;
+`QuarterSeat`/`commitQuarter`/`seatQuarterBlock` keep their single-responsibility split.
+The thrice-duplicated civicReach/dirs computation (workshop, quarter, residential) remains
+flagged, unchanged.
+
+**Deviations from prompt:**
+- The prompt offered growth-loop OR provably-sufficient closed-form sizing; chose the
+  growth loop and documented WHY the closed form is impossible without redesigning
+  `quarterGuide`'s clamp (proportional landing + biggest-demand-only clamp can starve a
+  subtree at any size). Strengthening the guide itself would be a redesign — not taken
+  without go-ahead.
+- The cellability-failure INFO log now reports the block as depth x length with a growth
+  suffix; the seat-failure INFO gained a `growth step` field (wording-only log changes).
+- Lot drops are conditionally flushed (zero-gate case defers to the scorer pass) — the
+  prompt asked for drops "included in the planner's final dropped count"; unconditional
+  recording would have DOUBLE-counted whenever the scorer pass re-attempts and drops the
+  same craft. The count is honest in both paths.
+
+**Out-of-scope but flagged:**
+- `quarterGuide`'s clamp could become subtree-requirement-aware (sum of each side's
+  recursive needs instead of its biggest demand) — would make first-attempt cellability
+  near-certain and the growth loop a true safety net. Planner-layer, mechanical, but a
+  guide redesign: needs go-ahead.
+- `DistrictReport.workshopCraftsDropped` in the zero-gate fall-through still reports the
+  pre-scorer drop count even though the scorer may later place some crafts (pre-existing;
+  diagnostics-only).
+- TOWN's row still seats post-residential; if TOWN logs ever show the row losing band
+  space to greens, the CITY branch generalises trivially.
+
+**Smoke test plan (user-executable):**
+1. Superflat CITY (CITYTEST4 conditions) → log shows the quarter's `district seated:` line
+   BEFORE `residential precinct #1`, then `workshop quarter: 10/10 crafts placed`
+   (1 or 2 block(s); a `growing the along-band length` INFO in between is fine);
+   in-world: rectangular quarter with central street, alleys, work-yard well.
+2. Same log: ZERO `workshop lots … dropped` / `workshop craft row: dropped` WARNs, and the
+   final `PhasedPlanner.run done: placed=N dropped=M` line where M matches the per-building
+   drop WARNs/INFOs above it (the honest count).
+3. If a split fires: both `district seated:` blocks are RECTANGLES (len > depth), not
+   58x58 squares.
+4. TOWN spawn → `workshop craft row: N/N crafts placed` unchanged, residential still seats
+   first (no ordering change off CITY).
+5. HAMLET spawn → `workshop lots (row fallback): N/N crafts placed, 0 dropped` unchanged.
+6. `/litv district residential <variant>` variants on CITY → precincts seat and sweep
+   around the workshop quarter; green fill present in leftover band space only.
+7. Optional harness `check`: CITY `wkSeat=QUARTER`, `craftsPlaced == requested`; no
+   district gate fires; expect the stored `dropped` field to read honestly (higher than a
+   stale baseline only when real drops occur).
+
+**Build verification:** Build verification deferred (sandbox blocks maven.neoforged.net;
+JRE-only JDK, no javac). Static review: full-diff re-read; lexer-accurate brace/paren/
+bracket balance pass on PhasedPlanner.java; no stale references to the two deleted symbols
+(grep); `DroppedBuilding`/`DropReason` imports pre-existing; growth-loop variable scoping
+traced (halfTangent/gate/seed per-iteration, halfRadial/depth invariant).
