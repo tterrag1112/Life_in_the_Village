@@ -170,6 +170,20 @@ public record SettlementCharter(
                 issuedTick);
     }
 
+    /**
+     * V3: promote this charter to the kingdom's capital. Sets {@code capital}
+     * true and adopts the capital name + village type. Preserves id, target
+     * cell, stage, survey, and realization fields so a map pin or an
+     * in-flight realization survives the promotion. Copy-with (record).
+     */
+    public SettlementCharter withCapital(String capitalName, String capitalVillageType) {
+        return new SettlementCharter(id, kingdomId, capitalName, stage,
+                targetCellKey, ROLE_CAPITAL, capitalVillageType, sizeBand,
+                true, digest,
+                surveyedAnchor, footprintScore, realizedVillageId,
+                issuedTick);
+    }
+
     /** C1-c: advance to REALIZED, pointing at the produced Village. */
     public SettlementCharter realized(UUID villageId) {
         return new SettlementCharter(id, kingdomId, name,

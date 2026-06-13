@@ -143,61 +143,43 @@ public final class CapitalGenerator {
                 + ", budget=" + kd.claimBudgetHint()
                 + ", culture-resistance=" + kd.claimResistance() + ")");
 
-        // ── Issue the capital settlement charter (Track C1-a) ───────────
-        // Kingdom birth is DECOUPLED from capital block-siting. We commit
-        // the capital to a CELL of the claim (not a block) and let survey
-        // (C1-b) + realization (C1-c) site it later, locally, with
-        // per-charter backoff. A claim is non-empty by construction, so a
-        // charter always issues — the kingdom can no longer die at worldgen
-        // because the capital couldn't site (the old removeKingdom path).
-        //
-        // The capital cell is the claim's origin cell: the seeder already
-        // resolved it via AtlasSiteSelector.findBest (buildable, non-ocean,
-        // spacing-clear, viable), and it is guaranteed present in the claim.
-        long capitalCellKey = territorialClaim.originCellKey();
-        int capitalCellX = tterrag1112.life_in_the_village.World.Atlas.AtlasCell
-                .unpackX(capitalCellKey);
-        int capitalCellZ = tterrag1112.life_in_the_village.World.Atlas.AtlasCell
-                .unpackZ(capitalCellKey);
-        tterrag1112.life_in_the_village.World.Atlas.AtlasCell capitalCell =
-                atlas.getCellByCoord(capitalCellX, capitalCellZ);
+        // ── Claim overlay + enumeration (Track V2) ─────────────────────
+        // Kingdom birth is DECOUPLED from capital block-siting. We enumerate
+        // the deterministic V1 VillagePlacement candidates whose landing cell
+        // falls inside this kingdom's claim and persist each as an owned
+        // settlement charter (re-roled SettlementCharter, stage CHARTERED).
+        // This SUPERSEDES the C1-a separate capital-charter issuance AND the
+        // C1-d PortfolioIssuer scan: placement is the deterministic V1 spread
+        // (doc 16), not a per-cell affinity walk and not a single hand-sited
+        // capital cell. Reads load-free digests only -- no column scan, no
+        // atlas-fill forcing, no V2 call (the cost-tier contract). The kingdom
+        // can no longer die at worldgen because a capital couldn't site (the
+        // old removeKingdom path is gone). Village -> kingdom is derived from
+        // the cell-claim (VillageSavedData.getKingdomForCell); culture is
+        // derived from the kingdom.
+        int owned = ClaimVillageEnumerator.enumerate(
+                kingdom, level, foundingTick, progress);
+        data.setDirty();
 
-        // Stage-0 size band is an estimate; realization refines to truth.
-        tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier capitalBand =
-                tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier.TOWN;
-        tterrag1112.life_in_the_village.Kingdom.Settlement.CharterDigest digest =
-                tterrag1112.life_in_the_village.Kingdom.Settlement.CharterDigest
-                        .fromCell(capitalCell, capitalBand);
-
+        // ── Capital promotion (Track V3) ───────────────────────────────
+        // The capital is NOT sited separately: promote the best-suited owned
+        // village (nearest the claim origin, best digest) to capital -- a flag
+        // on its existing charter, no new siting. This permanently removes the
+        // capital-placement-failure class. If a sparse claim produced no owned
+        // village, CapitalPromoter issues ONE fallback charter at the origin
+        // cell so the kingdom always has a capital (never a hard failure).
         String capitalName = kingdomName;  // capital takes the kingdom's name
-        var capitalCharter = kingdom.issueSettlementCharter(
-                capitalName, capitalCellKey,
-                tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter.ROLE_CAPITAL,
-                capitalVillageType, capitalBand, true, digest, foundingTick);
+        var capitalCharter = CapitalPromoter.promote(
+                kingdom, level, capitalName, capitalVillageType,
+                foundingTick, progress);
         data.setDirty();
 
-        progress.accept("Chartered capital '" + capitalName + "' ("
-                + capitalVillageType + ") in cell "
-                + capitalCellX + "," + capitalCellZ
-                + " (centre " + capitalCharter.targetCellCentre().toShortString()
-                + ", stage=" + capitalCharter.stage() + "). "
-                + "Survey + realization happen later when a player loads nearby.");
-
-        progress.accept("Founded '" + kingdomName + "' with chartered capital '"
-                + capitalName + "'. Heraldry: " + kingdom.getHeraldry().describe());
-
-        // ── Portfolio issuance (Track C1-d) ────────────────────────────
-        // Issue additional settlement charters for the claim's non-capital
-        // cells, driven by biomeAffinity / kingdomRoles / maxPerKingdom /
-        // tradePriority. Purely issuance — survey and realization are
-        // unchanged (CharterSurveyTickSystem and CharterRealizationTickSystem
-        // handle any SURVEYED charter automatically).
-        java.util.Random portfolioRng = new java.util.Random(
-                kingdom.getId().getLeastSignificantBits()
-                ^ kingdom.getId().getMostSignificantBits()
-                ^ level.getSeed());
-        PortfolioIssuer.issue(kingdom, atlas, portfolioRng, foundingTick, progress);
-        data.setDirty();
+        progress.accept("Founded '" + kingdomName + "' with " + owned
+                + " owned village(s); capital '" + capitalName
+                + "' (cell centre " + capitalCharter.targetCellCentre().toShortString()
+                + ", stage=" + capitalCharter.stage()
+                + "). Realization happens later (V4) when a player loads nearby. "
+                + "Heraldry: " + kingdom.getHeraldry().describe());
 
         // ── Fire the bus ────────────────────────────────────────────────
         // Office events fire later, post-realisation, from

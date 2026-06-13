@@ -115,12 +115,15 @@ public final class TickSubsystemRegistry {
         register(new WanderingTraderTickSystem());
 
         register(new AtlasFillSystem());
-        // Track C1-b -- advances CHARTERED settlement charters to SURVEYED
-        // (anchor-pick over the target cell). Priority 55 so a charter is
-        // surveyed before village_realisation (priority 60) considers it.
-        register(new CharterSurveyTickSystem());
+        // Track V2 -- the per-charter SURVEY tick loop (old CharterSurveyTickSystem)
+        // is REMOVED. Placement is now the deterministic V1 VillagePlacement
+        // spread (doc 16); there is no per-village siting attempt, so there is
+        // nothing to re-survey every pass. Validation defers to V2 at
+        // realization (V4). CharterRealizationTickSystem stays registered as the
+        // realization plug-in point V4 generalizes (it realizes SURVEYED
+        // charters; none exist until V4 wires the realization handoff).
         register(new VillageRealisationSystem());
-        register(new CharterRealizationTickSystem()); // C1-c: SURVEYED -> REALIZED
+        register(new CharterRealizationTickSystem()); // realization plug-in point (V4)
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());
         register(new PilgrimageTickSystem());

@@ -319,12 +319,13 @@ public class WorldgenKingdomSeeder {
     }
 
     /**
-     * Track C1-d — returns the capital village type for the given culture.
-     * The remaining composition entries (food, materials, specialist) are
-     * removed; portfolio issuance is now handled by
-     * {@link tterrag1112.life_in_the_village.Kingdom.Worldgen.PortfolioIssuer}
-     * which picks settlement types from {@code biomeAffinity} / {@code kingdomRoles}
-     * declared in village type datagen rather than from a hard-coded list.
+     * Track V2 — returns the capital village type for the given culture. The
+     * remaining composition entries (food, materials, specialist) are removed;
+     * owned-village enumeration is now handled by
+     * {@link tterrag1112.life_in_the_village.Kingdom.Worldgen.ClaimVillageEnumerator},
+     * which persists the deterministic {@code VillagePlacement} candidates that
+     * fall inside the kingdom's claim (doc 16) rather than from a hard-coded
+     * list or a per-cell affinity walk.
      */
     private static String resolveCapitalType(String culture, String capitalType) {
         Set<String> av = VillageTypeRegistry.INSTANCE.getAvailableTypes();

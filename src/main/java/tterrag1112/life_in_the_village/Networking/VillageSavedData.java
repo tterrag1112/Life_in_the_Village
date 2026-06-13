@@ -1359,6 +1359,27 @@ public class VillageSavedData extends SavedData implements
         return kingdoms.stream().filter(k -> k.containsVillage(villageId)).findFirst();
     }
 
+    /**
+     * Track V2 (sec.5) — derives the owning kingdom of an atlas cell from the
+     * persisted territorial claims, the SINGLE source of truth for village
+     * ownership. Village -> kingdom is NOT a stored back-pointer (which
+     * desyncs, the setruler/office two-representations bug pattern); it is
+     * derived here from {@code KingdomClaim.claimedCellKeys()}. The first
+     * kingdom whose claim contains the cell wins (claims are non-overlapping
+     * by construction). Returns empty for a frontier (unclaimed) cell.
+     *
+     * @param cellKey packed atlas-cell key ({@code AtlasCell.packKey}).
+     */
+    public Optional<Kingdom> getKingdomForCell(long cellKey) {
+        for (Kingdom k : kingdoms) {
+            var claim = k.getTerritorialClaim().orElse(null);
+            if (claim != null && claim.claimedCellKeys().contains(cellKey)) {
+                return Optional.of(k);
+            }
+        }
+        return Optional.empty();
+    }
+
     public void removeKingdom(UUID id) {
         kingdoms.removeIf(k -> k.getId().equals(id));
         kingdomIndex.remove(id);
