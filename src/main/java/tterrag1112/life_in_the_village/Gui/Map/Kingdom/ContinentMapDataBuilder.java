@@ -13,35 +13,45 @@ import tterrag1112.life_in_the_village.World.Atlas.ClientAtlasCache;
 import java.util.*;
 
 /**
- * Builds a {@link ContinentMapData} snapshot from the continent cells
- * and claim snapshots delivered by {@link ContinentMapSyncPacket},
- * combined with the already-synced client caches for kingdoms,
- * villages, buildings, and trade routes.
+ * Builds a {@link ContinentMapData} snapshot from the PLAYER-CENTERED
+ * viewport cells and claim snapshots delivered by {@link
+ * ContinentMapSyncPacket}, combined with the already-synced client
+ * caches for kingdoms, villages, buildings, and trade routes.
  *
- * <p>Kingdom tints are chosen deterministically from the UUID hash so
- * colors stay stable across sessions.
+ * <p>Supersedes the seed-kingdom flood-fill builder (the {@code
+ * fix-blank-maps} change): {@code continentCells} is now simply the set
+ * of sampled cells inside the player-centered viewport, and no seed
+ * Kingdom is required — the map renders terrain + in-range markers
+ * anywhere. Kingdom tints are chosen deterministically from the UUID
+ * hash so colors stay stable across sessions.
  */
 public final class ContinentMapDataBuilder {
 
     private ContinentMapDataBuilder() {}
 
     public static Optional<ContinentMapData> build(
-            UUID seedKingdomId,
+            UUID screenKeySeedId,
             Set<Long> continentCells,
             List<ContinentMapSyncPacket> unused_reserved,
             List<com.mojang.datafixers.util.Pair<UUID, List<Long>>> foreignClaims) {
 
+        // Player-centered: no seed kingdom required. continentCells is the
+        // set of sampled viewport cells (its bounds = the player-centered
+        // box, already padded server-side). If empty, the prefill budget
+        // produced nothing this pass; render nothing this frame (the screen
+        // shows a transient note over the ocean backdrop, never a blank).
         if (continentCells.isEmpty()) return Optional.empty();
 
-        Kingdom seed = Kingdom.ClientKingdomCache.getById(seedKingdomId).orElse(null);
-        if (seed == null) return Optional.empty();
+        // Region label from the screen-identity kingdom if it is known.
+        String regionName = Kingdom.ClientKingdomCache.getById(screenKeySeedId)
+                .map(Kingdom::getName).orElse("Surrounding region");
 
-        // Viewport: padded continent bounds
+        // Viewport: bounds of the sampled cells (server already padded).
         int[] bounds = boundsOf(continentCells);
-        int minCX = bounds[0] - ContinentMapScope.BUFFER_PADDING_CELLS;
-        int minCZ = bounds[1] - ContinentMapScope.BUFFER_PADDING_CELLS;
-        int maxCX = bounds[2] + ContinentMapScope.BUFFER_PADDING_CELLS;
-        int maxCZ = bounds[3] + ContinentMapScope.BUFFER_PADDING_CELLS;
+        int minCX = bounds[0];
+        int minCZ = bounds[1];
+        int maxCX = bounds[2];
+        int maxCZ = bounds[3];
 
         // Terrain grid from the client atlas cache (populated by the packet)
         Map<Long, AtlasCell> terrain = new HashMap<>();
@@ -51,18 +61,18 @@ public final class ContinentMapDataBuilder {
             }
         }
 
-        // Kingdom regions — seed plus any foreign claim we were sent
+        // Kingdom regions — every in-range claim we were sent, peer-tinted
+        // (no single seed kingdom in the player-centered model).
         List<ContinentMapData.KingdomRegion> regions = new ArrayList<>();
         for (var pair : foreignClaims) {
             UUID kid = pair.getFirst();
             Kingdom k = Kingdom.ClientKingdomCache.getById(kid).orElse(null);
             if (k == null) continue;
-            boolean isSeed = kid.equals(seedKingdomId);
-            int[] tints = tintFor(kid, isSeed);
+            int[] tints = tintFor(kid, false);
             regions.add(new ContinentMapData.KingdomRegion(
                     kid, k.getName(),
                     new LinkedHashSet<>(pair.getSecond()),
-                    tints[0], tints[1], isSeed));
+                    tints[0], tints[1], false));
         }
 
         // Villages — every village whose anchor lies in a continent cell
@@ -128,7 +138,7 @@ public final class ContinentMapDataBuilder {
         }
 
         return Optional.of(new ContinentMapData(
-                seedKingdomId, seed.getName(),
+                screenKeySeedId, regionName,
                 minCX, minCZ, maxCX, maxCZ,
                 terrain, continentCells, regions,
                 villages, landRoutes, seaRoutes));

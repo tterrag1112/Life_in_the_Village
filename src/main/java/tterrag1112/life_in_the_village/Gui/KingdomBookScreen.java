@@ -153,7 +153,8 @@ public class KingdomBookScreen extends Screen {
 
         if (mapPanel == null) mapPanel = new KingdomMapPanel(kingdomId);
         mapPanel.refresh();
-        ClientPacketDistributor.sendToServer(new RequestKingdomMapSyncPacket(kingdomId));
+        var mapReq = RequestKingdomMapSyncPacket.forLocalPlayer(kingdomId);
+        if (mapReq != null) ClientPacketDistributor.sendToServer(mapReq);
 
         buildNavEntries();
     }

@@ -3087,3 +3087,229 @@ sync registered, sent, handled for both kingdom and continent).
    the same continent tinted distinctly, and charter/village pins present.
    Press Refresh once if the first open shows "filling more" (large
    continents fill across opens).
+
+## Player-centered continent + kingdom maps (supersedes claim-based viewport)
+
+Both maps now derive their viewport from the requesting player's block
+position + a fixed radius, NOT from a kingdom claim. They render terrain +
+every in-range kingdom territory, village, and unrealized settlement-charter
+pin regardless of kingdom association, so they are usable anywhere — the
+point being to visualise village placement around the player while testing
+kingdoms. No more "No ... data available" blank blue box.
+
+### Traced old viewport logic (both maps, pre-change)
+
+- **Continent.** `ContinentMapScope.gather(level, seedKingdomId)`: resolve
+  seed Kingdom → first claim cell as a seed block pos → `ensureRegionFilled`
+  6000-block radius → flood-fill connected land cells from the claim
+  (bounded `MAX_CONTINENT_CELLS`=10000) → viewport = padded flood bounds.
+  Returned `empty(seedId)` (blank) when kingdom null / seedPos null /
+  continent empty. Client `ContinentMapScreen.openForPlayer()` picked
+  ruled-or-first kingdom (and **did not open at all** when no kingdom);
+  `onContinentSynced` built `ContinentMapData` and set
+  `"No continent data available."`; `render` drew a blank ocean box when
+  `data == null`. `ContinentMapDataBuilder.build` required a non-null seed
+  Kingdom and used flood-fill `continentCells` for village/charter filtering.
+- **Kingdom.** `KingdomMapScope.gather(level, kingdomId)`: resolve Kingdom →
+  claim cells (`influenceCellsFor`, claim-first w/ legacy village-AABB
+  fallback) → viewport = padded claim bounds → `ensureRegionFilled` over it.
+  Client `KingdomMapDataBuilder.build(kingdomId, ClaimBasedProvider)` used
+  the claim cells for the viewport; `KingdomMapPanel.render` drew
+  `"No kingdom data available."` when `data == null`. The standalone
+  `KingdomMapScreen` is never opened anywhere; the kingdom map only appears
+  embedded in `KingdomBookScreen`'s Map page.
+- **"No data" guards:** `ContinentMapScreen.render` (data==null → blank +
+  statusLine), `KingdomMapPanel.render` (data==null → "No kingdom data
+  available."), plus `empty()`/`Optional.empty()` early returns in both
+  scopes and both builders.
+
+### Player-centered change, per map
+
+- **Request packets carry player position.** Both
+  `RequestKingdomMapSyncPacket` and `RequestContinentMapSyncPacket` gained
+  `int playerX, int playerZ` (codec writes/reads symmetrically). New
+  client-side `forLocalPlayer(uuid)` factory reads
+  `Minecraft.getInstance().player` and returns null if absent (caller skips
+  the send). The retained UUID is now only a screen-identity key used to
+  match the sync reply to the open screen/book — it no longer scopes data.
+- **Server scopes are player-centered.** `KingdomMapScope.gather(level,
+  playerX, playerZ)` and `ContinentMapScope.gather(level, playerX, playerZ)`
+  prefill the atlas over a player-centered radius (reusing the existing 1s
+  `ensureRegionFilled` budget), gather every sampled cell in the box, and
+  scope roads/sea-routes/travellers to villages whose anchor cell is in the
+  box (kingdom-agnostic). Continent gather additionally emits every kingdom
+  claim that intersects the box. The continent flood-fill, `seedPos`
+  resolution, `MAX_CONTINENT_CELLS`, `floodFillContinent`/`isLandCell`, and
+  the kingdom scope's `influenceCellsFor`/`boundsOf`/`intersectsViewport`/
+  `blockToCell`/`empty()` helpers were deleted (orphans after the change).
+- **Client builders are player-centered.** `KingdomMapDataBuilder.build(
+  screenKey, playerX, playerZ)` computes the viewport from the player
+  position, puts every in-range kingdom into the `foreignKingdoms` (peer)
+  channel with empty `focusCells`, and emits every in-range village +
+  unrealized charter pin. `ContinentMapDataBuilder.build` no longer requires
+  a seed Kingdom; `continentCells` now means "sampled viewport cells" and is
+  used purely as an in-view membership test; all in-range claims are
+  peer-tinted (no `isSeed`).
+- **`KingdomMapPanel.refresh()`** now reads the local player block position
+  to rebuild (no-op before the player exists).
+
+### Radii chosen (named constants)
+
+- Continent: `ContinentMapScope.VIEWPORT_RADIUS_BLOCKS = 6000` (≈94 cells
+  radius). Matches the prior continent prefill radius, so per-open sampling
+  cost is no worse than before; the 1s prefill budget still caps cells
+  sampled per open (Refresh fills more if the budget runs out). Larger than
+  the kingdom map for a wider overview.
+- Kingdom: `KingdomMapScope.VIEWPORT_RADIUS_BLOCKS` mirrors
+  `KingdomMapDataBuilder.VIEWPORT_RADIUS_BLOCKS = 2000` (≈31 cells radius,
+  ~3.9k cells, comfortably inside the 1s budget) — tighter so village
+  placement around the player is legible.
+
+### Kingdom-map decision (stated)
+
+Chose **option (a)**: the kingdom map renders the player-centered region at
+the tighter 2000-block radius, draws terrain plus every kingdom claim /
+village / charter pin in range, and never resolves a single "focus" kingdom.
+This keeps it useful for visualising village placement and guarantees it is
+never blank, even far from any kingdom. The `focusKingdomId`/name now carry
+the screen-identity kingdom only as a label ("Surrounding region" when the
+player is unaffiliated); the territory layer renders all in-range kingdoms
+through its existing foreign-peer channel.
+
+### Empty-guard relaxation
+
+`ContinentMapScreen` and `KingdomMapPanel` no longer print "No ... data
+available" over a blank box. Terrain always renders for the player-centered
+region. The remaining `data == null` path (only hit before the first sync
+lands) shows a transient "Loading map..." / "Loading terrain..." note over
+the ocean backdrop. When zero kingdoms are in range, the continent status
+line reads "No kingdoms in range — N cells" over real terrain.
+`ContinentMapScreen.openForPlayer()` now always opens (a `NO_KINGDOM_KEY`
+sentinel screen-key is used when the player rules/knows no kingdom).
+
+### fix-blank-maps supersession note
+
+This slice supersedes the 2026-06-12 "Fix — Blank kingdom/continent maps"
+work: that aligned the server viewport to the territorial claim and added
+`ensureRegionFilled`. The claim-based viewport is now replaced (convert,
+don't coexist) by the player-centered viewport. The `ensureRegionFilled`
+pre-fill pattern and budget are reused; the claim-gather machinery
+(`KingdomBoundsProvider` + `ClaimBasedProvider`, `influenceCellsFor`, the
+flood-fill discovery) is deleted. `KingdomBoundsProvider.java` was removed
+(its only consumer was `KingdomMapPanel`).
+
+### Tie-in audit
+
+- **Upstream feeders.** Player position now feeds both request packets;
+  read server-side inside `ctx.enqueueWork(...)` before any level/atlas
+  access (confirmed — both handlers do all `ServerLevel`/`WorldAtlas` work
+  inside `enqueueWork`). Atlas prefill unchanged (`ensureRegionFilled`).
+- **Downstream callers.** `KingdomMapScope.gather` / `ContinentMapScope
+  .gather` — only callers are the two request handlers (updated).
+  `KingdomMapDataBuilder.build` — callers `KingdomMapPanel.refresh`
+  (updated). `ContinentMapDataBuilder.build` — caller
+  `ContinentMapScreen.onContinentSynced` (signature unchanged; first arg is
+  now the screen-key). Request-packet constructors — all three send sites
+  (`KingdomBookScreen`, `KingdomMapScreen`, `ContinentMapScreen`) updated to
+  the `forLocalPlayer` factory.
+- **Sibling systems.** Sync packets (`KingdomMapSyncPacket` /
+  `ContinentMapSyncPacket`) are unchanged in shape; the continent handler
+  now echoes the request's screen-key UUID (the Result no longer carries a
+  seed). Client cache identity preserved: handlers write
+  `ClientAtlasCache`/`ClientTradeConnectionCache`/`ClientTravellerCache` then
+  call the matching screen's `onMapDataSynced`/`onContinentSynced`.
+- **Exhaustive switches / enums.** None touched.
+
+### Simplification sweep
+
+Deleted as orphaned by the change: `KingdomBoundsProvider.java`
+(interface + `ClaimBasedProvider`); `KingdomMapScope.influenceCellsFor`,
+`boundsOf`, `intersectsViewport`, `blockToCell`, `empty()`,
+`INFLUENCE_RADIUS_CELLS`, `BUFFER_PADDING_CELLS`; `ContinentMapScope`
+`floodFillContinent`, `isLandCell`, `MAX_CONTINENT_CELLS`,
+`PREFILL_RADIUS_BLOCKS`, `boundsOf`, the seedPos resolution.
+
+### Files touched
+
+- `Networking/RequestKingdomMapSyncPacket.java` — +playerX/Z, codec,
+  `forLocalPlayer`, handler calls `gather(level, x, z)`.
+- `Networking/RequestContinentMapSyncPacket.java` — same; handler echoes
+  request UUID into the sync reply.
+- `Networking/ContinentMapSyncPacket.java` — doc only (removed
+  `MAX_CONTINENT_CELLS` reference).
+- `Gui/Map/Kingdom/KingdomMapScope.java` — player-centered gather; orphan
+  helpers + constants removed.
+- `Gui/Map/Kingdom/ContinentMapScope.java` — player-centered gather; flood
+  fill removed; new `VIEWPORT_RADIUS_BLOCKS`.
+- `Gui/Map/Kingdom/KingdomMapDataBuilder.java` — player-centered build; all
+  in-range kingdoms as peers; new `VIEWPORT_RADIUS_BLOCKS`.
+- `Gui/Map/Kingdom/ContinentMapDataBuilder.java` — no seed requirement;
+  viewport from sampled cells; peer tints.
+- `Gui/Map/Kingdom/KingdomMapPanel.java` — `refresh()` reads local player
+  pos; boundsProvider removed; relaxed guard text.
+- `Gui/Map/Kingdom/KingdomMapScreen.java` — `forLocalPlayer` send.
+- `Gui/Map/Kingdom/ContinentMapScreen.java` — always-open opener
+  (`NO_KINGDOM_KEY`), relaxed status + guard, `forLocalPlayer` send.
+- `Gui/KingdomBookScreen.java` — `forLocalPlayer` send.
+- Deleted `Gui/Map/Kingdom/KingdomBoundsProvider.java`.
+
+### Deviations from prompt
+
+- The prompt allowed kingdom-map option (a) or (b); chose (a) (full
+  player-centered, all in-range kingdoms, no single-kingdom resolution) as
+  the simplest never-blank option for testing village placement.
+- No new packet types were added — the existing request packets carry the
+  player position, as the prompt preferred.
+
+### Out-of-scope but flagged
+
+- `ClientAtlasCache` is a single shared singleton across both maps — opening
+  one overwrites the other's cells (harmless, one screen at a time;
+  pre-existing note).
+- `KingdomMapDataBuilder` "capital detection TODO" for realized-Village
+  capitals (C1-c/C2) is unchanged; the C1-a charter pin still flags the
+  unsited capital.
+- Continent prefill iterates the full square box of `getCellByCoord`
+  lookups (~36k cheap HashMap reads); sampling itself is still bounded by
+  the 1s budget. If the radius grows, a circular bound (as the old flood
+  used) would trim the iteration.
+- `ContinentMapData.seedKingdomId`/`KingdomMapData.focusKingdomId` are now
+  screen-identity keys, not viewport anchors; the field names were left
+  unchanged to avoid a wide rename (no abstract-method renames).
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net). Static
+review in place: brace + paren balance confirmed on all 11 touched files;
+unused imports pruned (`BlockPos`/`Kingdom`/`KingdomClaim` removed from
+`KingdomMapScope`); `ensureRegionFilled` signature matched against
+`WorldAtlas`; `AtlasCell.CELL_SHIFT`/`packKey`/`unpackX`/`unpackZ` confirmed;
+gather/build call sites all updated to the new arities; packet registration
+symmetry confirmed (`.TYPE`/`.CODEC`/`::handle` unchanged in `ModModEvents`,
+codecs read⇔write the same 3 fields, request sent⇔handled, sync handled and
+matched by screen-key).
+
+### Smoke test (user, in-world)
+
+1. New world. Walk far from spawn into unexplored, unclaimed terrain (no
+   kingdom near). Open the continent map (keybind K). EXPECT: biome-coloured
+   terrain centred on you — NOT a flat ocean rectangle, NOT "No continent
+   data available". Status line reads "No kingdoms in range — N cells" (or a
+   kingdom count if one is nearby).
+2. Open the Kingdom book → Map page anywhere (even with no kingdom). EXPECT:
+   terrain centred on you; no "No kingdom data available" box.
+3. Spawn / seed a kingdom near you (`/litv` spawn or let the seeder run).
+   Re-open the continent map. EXPECT: the kingdom's claim tinted, its
+   villages as markers, and the capital settlement-charter pin (C1-a) at the
+   capital cell centre even before the capital Village has sited.
+4. Stand near the kingdom and open the Kingdom book Map page. EXPECT: the
+   kingdom territory tinted, village markers, and the capital charter pin
+   all within ~2000 blocks of you; clicking a village marker routes to the
+   village map.
+5. Walk ~3000 blocks away from the kingdom and re-open both maps. EXPECT:
+   terrain still renders centred on your new position; the kingdom drops out
+   of range (no markers) but the map is still a full terrain view, never
+   blank.
+6. If the continent map shows "Partial: … refresh to fill more" on first
+   open over a large unexplored area, press Refresh once — more terrain
+   fills in (1s budget per pass).

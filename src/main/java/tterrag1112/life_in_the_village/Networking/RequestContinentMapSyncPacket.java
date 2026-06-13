@@ -22,10 +22,14 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Client→server request: scan the continent seeded by the given
- * kingdom and send back everything needed to render it.
+ * Client→server request for a PLAYER-CENTERED continent map. The
+ * server samples terrain and gathers all kingdom claims, villages, and
+ * settlement-charter pins within a fixed radius of the player position
+ * carried here — no continent flood-fill, no kingdom seed. {@code
+ * seedKingdomId} is retained only to match the sync reply to the
+ * requesting screen (the screen identity key).
  */
-public record RequestContinentMapSyncPacket(UUID seedKingdomId)
+public record RequestContinentMapSyncPacket(UUID seedKingdomId, int playerX, int playerZ)
         implements CustomPacketPayload {
 
     public static final Type<RequestContinentMapSyncPacket> TYPE = new Type<>(
@@ -34,12 +38,28 @@ public record RequestContinentMapSyncPacket(UUID seedKingdomId)
 
     public static final StreamCodec<RegistryFriendlyByteBuf,
             RequestContinentMapSyncPacket> CODEC = StreamCodec.of(
-            (buf, pkt) -> buf.writeUUID(pkt.seedKingdomId()),
-            buf -> new RequestContinentMapSyncPacket(buf.readUUID())
+            (buf, pkt) -> {
+                buf.writeUUID(pkt.seedKingdomId());
+                buf.writeInt(pkt.playerX());
+                buf.writeInt(pkt.playerZ());
+            },
+            buf -> new RequestContinentMapSyncPacket(
+                    buf.readUUID(), buf.readInt(), buf.readInt())
     );
 
     @Override
     public Type<? extends CustomPacketPayload> type() { return TYPE; }
+
+    /**
+     * Client-side factory: build a request centred on the local player.
+     * Returns {@code null} if no local player exists yet (caller skips send).
+     */
+    public static RequestContinentMapSyncPacket forLocalPlayer(UUID seedKingdomId) {
+        var p = net.minecraft.client.Minecraft.getInstance().player;
+        if (p == null) return null;
+        return new RequestContinentMapSyncPacket(
+                seedKingdomId, (int) Math.floor(p.getX()), (int) Math.floor(p.getZ()));
+    }
 
     public static void handle(RequestContinentMapSyncPacket pkt,
                               IPayloadContext ctx) {
@@ -48,10 +68,13 @@ public record RequestContinentMapSyncPacket(UUID seedKingdomId)
             if (!(sp.level() instanceof ServerLevel level)) return;
 
             ContinentMapScope.Result r =
-                    ContinentMapScope.gather(level, pkt.seedKingdomId());
+                    ContinentMapScope.gather(level, pkt.playerX(), pkt.playerZ());
 
+            // Echo back the request's screen-identity UUID (the Result no
+            // longer carries a seed kingdom) so the client can match the
+            // reply to the screen that requested it.
             PacketDistributor.sendToPlayer(sp, new ContinentMapSyncPacket(
-                    r.seedKingdomId(),
+                    pkt.seedKingdomId(),
                     r.cells(),
                     r.continentCells(),
                     r.claims(),

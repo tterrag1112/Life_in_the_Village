@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Gui.Map.Kingdom;
 
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Kingdom.KingdomClaim;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.*;
 import tterrag1112.life_in_the_village.Village.Village;
@@ -13,35 +14,46 @@ import java.util.*;
 /**
  * Builds a {@link KingdomMapData} snapshot on GUI open from the
  * client-side caches. Independent of chunk loading.
+ *
+ * <p>PLAYER-CENTERED: the viewport is a fixed-radius box around the
+ * player block position, NOT a kingdom claim. Every kingdom, village,
+ * and unrealized settlement-charter pin whose cell falls within the box
+ * is drawn, regardless of kingdom association — so the map is usable
+ * (and never blank) even when the player stands far from any kingdom.
+ *
+ * <p>Supersedes the prior claim-anchored builder (the {@code
+ * fix-blank-maps} change), which derived the viewport from one kingdom's
+ * {@code KingdomBoundsProvider} claim and returned empty (blank) for an
+ * unaffiliated player. The {@code KingdomBoundsProvider} indirection is
+ * no longer used by this builder.
  */
 public final class KingdomMapDataBuilder {
 
-    /** Extra cells of padding around the focus kingdom for context. */
-    public static final int BUFFER_PADDING_CELLS = 4;
+    /**
+     * Player-centered viewport radius in blocks for the kingdom map.
+     * Server-side {@code KingdomMapScope.VIEWPORT_RADIUS_BLOCKS} mirrors
+     * this so the pre-filled terrain region matches the rendered box.
+     * 2000 blocks keeps village placement around the player legible.
+     */
+    public static final int VIEWPORT_RADIUS_BLOCKS = 2000;
 
     private KingdomMapDataBuilder() {}
 
-    public static Optional<KingdomMapData> build(UUID focusKingdomId,
-                                                 KingdomBoundsProvider boundsProvider) {
-        Kingdom focus = Kingdom.ClientKingdomCache.getById(focusKingdomId).orElse(null);
-        if (focus == null) return Optional.empty();
-
-        // ── 1. Focus-owned cells + viewport bounds ───────────────────────────
-        Set<Long> focusCells = boundsProvider.getOwnedCells(focus);
-        if (focusCells.isEmpty()) {
-            // Single-cell fallback so the map still renders something useful
-            return Optional.empty();
-        }
-
-        int minCX = Integer.MAX_VALUE, minCZ = Integer.MAX_VALUE;
-        int maxCX = Integer.MIN_VALUE, maxCZ = Integer.MIN_VALUE;
-        for (long k : focusCells) {
-            int cx = AtlasCell.unpackX(k), cz = AtlasCell.unpackZ(k);
-            if (cx < minCX) minCX = cx; if (cz < minCZ) minCZ = cz;
-            if (cx > maxCX) maxCX = cx; if (cz > maxCZ) maxCZ = cz;
-        }
-        minCX -= BUFFER_PADDING_CELLS; minCZ -= BUFFER_PADDING_CELLS;
-        maxCX += BUFFER_PADDING_CELLS; maxCZ += BUFFER_PADDING_CELLS;
+    /**
+     * @param screenKeyKingdomId screen-identity UUID (matches the sync
+     *        reply to the requesting screen/book); NOT a viewport anchor.
+     * @param playerX,playerZ    player block position — the viewport centre.
+     */
+    public static Optional<KingdomMapData> build(UUID screenKeyKingdomId,
+                                                 int playerX, int playerZ) {
+        // ── 1. Player-centered viewport bounds (cell coords) ─────────────────
+        int rCells = (VIEWPORT_RADIUS_BLOCKS >> AtlasCell.CELL_SHIFT) + 1;
+        int centreCX = playerX >> AtlasCell.CELL_SHIFT;
+        int centreCZ = playerZ >> AtlasCell.CELL_SHIFT;
+        int minCX = centreCX - rCells;
+        int minCZ = centreCZ - rCells;
+        int maxCX = centreCX + rCells;
+        int maxCZ = centreCZ + rCells;
 
         // ── 2. Terrain grid in viewport ──────────────────────────────────────
         Map<Long, AtlasCell> terrain = new HashMap<>();
@@ -51,44 +63,46 @@ public final class KingdomMapDataBuilder {
             }
         }
 
-        // ── 3. Foreign kingdoms overlapping viewport ─────────────────────────
+        // ── 3. Every kingdom whose claim intersects the viewport ─────────────
+        // All in-range kingdoms render as peers (the "foreign" channel of the
+        // territory layer); there is no single focus kingdom in the
+        // player-centered model. focusCells is left empty.
         List<KingdomMapData.ForeignKingdom> foreign = new ArrayList<>();
-        for (Kingdom other : Kingdom.ClientKingdomCache.getKingdoms()) {
-            if (other.getId().equals(focusKingdomId)) continue;
-            Set<Long> cells = boundsProvider.getOwnedCells(other);
+        Set<UUID> inRangeKingdoms = new HashSet<>();
+        for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
+            Set<Long> cells = k.getTerritorialClaim()
+                    .map(KingdomClaim::claimedCellKeys)
+                    .map(list -> (Set<Long>) new LinkedHashSet<>(list))
+                    .orElse(Collections.emptySet());
             Set<Long> inView = new HashSet<>();
-            for (long k : cells) {
-                int cx = AtlasCell.unpackX(k), cz = AtlasCell.unpackZ(k);
+            for (long key : cells) {
+                int cx = AtlasCell.unpackX(key), cz = AtlasCell.unpackZ(key);
                 if (cx >= minCX && cx <= maxCX && cz >= minCZ && cz <= maxCZ) {
-                    inView.add(k);
+                    inView.add(key);
                 }
             }
             if (!inView.isEmpty()) {
                 foreign.add(new KingdomMapData.ForeignKingdom(
-                        other.getId(), other.getName(), inView));
+                        k.getId(), k.getName(), inView));
+                inRangeKingdoms.add(k.getId());
             }
         }
 
-        // ── 4. Villages ──────────────────────────────────────────────────────
+        // ── 4. Villages whose centre falls in the viewport ───────────────────
         Map<UUID, UUID> villageToKingdom = new HashMap<>();
         for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
             for (UUID vid : k.getVillageIds()) villageToKingdom.put(vid, k.getId());
         }
 
-        Set<UUID> viewableVillageIds = new HashSet<>(focus.getVillageIds());
-        for (KingdomMapData.ForeignKingdom fk : foreign) {
-            Kingdom.ClientKingdomCache.getById(fk.id())
-                    .ifPresent(k -> viewableVillageIds.addAll(k.getVillageIds()));
-        }
-
         List<KingdomMapData.VillageMarker> villages = new ArrayList<>();
+        Set<UUID> viewableVillageIds = new HashSet<>();
         for (Village v : Building.ClientBuildingCache.getVillages()) {
-            if (!viewableVillageIds.contains(v.getId())) continue;
             BlockPos pos = approximateVillageCenter(v);
             if (pos == null) continue;
             int cx = pos.getX() >> AtlasCell.CELL_SHIFT;
             int cz = pos.getZ() >> AtlasCell.CELL_SHIFT;
             if (cx < minCX || cx > maxCX || cz < minCZ || cz > maxCZ) continue;
+            viewableVillageIds.add(v.getId());
             villages.add(new KingdomMapData.VillageMarker(
                     v.getId(),
                     villageToKingdom.get(v.getId()),
@@ -98,20 +112,15 @@ public final class KingdomMapDataBuilder {
         }
 
         // ── 4b. Settlement-charter pins (Track C1-a) ──────────────────────────
-        // An unrealized charter has no Village yet, so it has no anchor-pos
-        // marker above. Render a pin at its target-cell centre so a kingdom
-        // whose capital has not yet sited is still visible on the map (the
-        // #1 field-notes bug was such kingdoms being deleted entirely). Once
-        // a charter realizes (C1-c) the produced Village carries the marker
-        // via the loop above and we skip the charter pin to avoid a double.
-        List<Kingdom> charterKingdoms = new ArrayList<>();
-        charterKingdoms.add(focus);
-        for (KingdomMapData.ForeignKingdom fk : foreign) {
-            Kingdom.ClientKingdomCache.getById(fk.id()).ifPresent(charterKingdoms::add);
-        }
-        for (Kingdom k : charterKingdoms) {
+        // Unrealized charters have no Village yet, so they have no anchor-pos
+        // marker above. Render a pin at the target-cell centre for EVERY
+        // kingdom (not just in-range claims) whose charter target falls inside
+        // the viewport, so a chartered-but-unsited capital is visible. Once a
+        // charter realizes (C1-c) the produced Village carries the marker via
+        // the loop above and we skip the charter pin to avoid a double.
+        for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
             for (var charter : k.getSettlementCharters()) {
-                if (!charter.isUnrealized()) continue; // realized → Village marker
+                if (!charter.isUnrealized()) continue; // realized -> Village marker
                 BlockPos pos = charter.targetCellCentre();
                 int cx = pos.getX() >> AtlasCell.CELL_SHIFT;
                 int cz = pos.getZ() >> AtlasCell.CELL_SHIFT;
@@ -124,7 +133,7 @@ public final class KingdomMapDataBuilder {
             }
         }
 
-        // ── 5. Routes ────────────────────────────────────────────────────────
+        // ── 5. Routes (either endpoint in-view) ───────────────────────────────
         List<KingdomMapData.RoutePath> landRoutes = new ArrayList<>();
         List<KingdomMapData.RoutePath> seaRoutes  = new ArrayList<>();
 
@@ -154,20 +163,31 @@ public final class KingdomMapDataBuilder {
             }
         }
 
-        // Track D3.3 — province markers for the focus kingdom.
+        // ── 6. Provinces of every in-range kingdom (Track D3.3) ───────────────
         List<KingdomMapData.ProvinceMarker> provinces = new ArrayList<>();
-        for (var p : focus.getProvinces()) {
-            Set<Long> cells = new LinkedHashSet<>(p.cellKeys());
-            BlockPos centroid = computeCentroid(cells);
-            provinces.add(new KingdomMapData.ProvinceMarker(
-                    p.id(), p.name(), p.governorUuid(),
-                    cells, centroid, p.stability()));
+        for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
+            if (!inRangeKingdoms.contains(k.getId())) continue;
+            for (var p : k.getProvinces()) {
+                Set<Long> cells = new LinkedHashSet<>(p.cellKeys());
+                BlockPos centroid = computeCentroid(cells);
+                provinces.add(new KingdomMapData.ProvinceMarker(
+                        p.id(), p.name(), p.governorUuid(),
+                        cells, centroid, p.stability()));
+            }
         }
 
+        // Always render — the player-centered terrain box is never blank.
+        // focusKingdomId/Name carry the screen-identity kingdom for chrome,
+        // but the viewport no longer depends on it; "Region" name when the
+        // screen key is not a known kingdom (e.g. unaffiliated player).
+        String regionName = Kingdom.ClientKingdomCache.getById(screenKeyKingdomId)
+                .map(Kingdom::getName).orElse("Surrounding region");
+
         return Optional.of(new KingdomMapData(
-                focusKingdomId, focus.getName(),
+                screenKeyKingdomId, regionName,
                 minCX, minCZ, maxCX, maxCZ,
-                terrain, focusCells, foreign, villages, landRoutes, seaRoutes,
+                terrain, Collections.emptySet(), foreign, villages,
+                landRoutes, seaRoutes,
                 provinces,
                 // Phase 5e — travellers from the last map sync.
                 tterrag1112.life_in_the_village.Village.Travel

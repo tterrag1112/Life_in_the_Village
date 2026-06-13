@@ -1,10 +1,7 @@
 package tterrag1112.life_in_the_village.Gui.Map.Kingdom;
 
-import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
-import tterrag1112.life_in_the_village.Kingdom.Kingdom;
-import tterrag1112.life_in_the_village.Kingdom.KingdomClaim;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.*;
 import tterrag1112.life_in_the_village.Village.Travel.TravellerSnapshot;
@@ -16,12 +13,18 @@ import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 import java.util.*;
 
 /**
- * Server-side companion to {@link KingdomMapDataBuilder}. Given a
- * kingdom UUID, computes the viewport and gathers the atlas cells,
- * trade roads, and sea routes needed to render the map.
+ * Server-side companion to {@link KingdomMapDataBuilder}. PLAYER-CENTERED:
+ * given the requesting player's block position, computes a fixed-radius
+ * viewport around it and gathers the atlas cells, trade roads, and sea
+ * routes needed to render the map. No kingdom seed — the map is usable
+ * anywhere, the point being to visualise village placement around the
+ * player while testing kingdoms.
  *
- * <p>Kept as a static helper so both the sync packet handler and any
- * future command / debug tool can share identical scoping logic.
+ * <p>Supersedes the prior claim-anchored viewport (the {@code fix-blank-maps}
+ * change): that scoped the viewport to one kingdom's territorial claim
+ * and returned blank when the player was not in/near a kingdom. The
+ * viewport is now a {@link #VIEWPORT_RADIUS_BLOCKS} box around the player,
+ * pre-filled so terrain is always present.
  *
  * <p>Uses the server-authoritative {@link VillageSavedData} rather than
  * the client caches — villages and roads are the real source here.
@@ -30,11 +33,16 @@ public final class KingdomMapScope {
 
     private KingdomMapScope() {}
 
-    /** Must match {@link KingdomMapDataBuilder#BUFFER_PADDING_CELLS}. */
-    public static final int BUFFER_PADDING_CELLS = KingdomMapDataBuilder.BUFFER_PADDING_CELLS;
-
-    /** How far outside a village centre to extend kingdom influence. */
-    private static final int INFLUENCE_RADIUS_CELLS = 3;
+    /**
+     * Player-centered viewport radius in blocks for the kingdom map.
+     * Tighter than the continent map ({@code ContinentMapScope
+     * .VIEWPORT_RADIUS_BLOCKS}) so village placement around the player is
+     * legible. 2000 blocks ≈ 31 cells radius (~3900 cells), comfortably
+     * inside the 1s fill budget. Must match
+     * {@link KingdomMapDataBuilder#VIEWPORT_RADIUS_BLOCKS}.
+     */
+    public static final int VIEWPORT_RADIUS_BLOCKS =
+            KingdomMapDataBuilder.VIEWPORT_RADIUS_BLOCKS;
 
     /** Synchronous atlas pre-fill budget on map open. Matches ContinentMapScope. */
     private static final long PREFILL_NANOS = 1_000_000_000L;
@@ -47,42 +55,32 @@ public final class KingdomMapScope {
     ) {}
 
     /**
-     * Gather everything the client needs to render the kingdom map.
-     * Returns empty collections if the kingdom is unknown or has no
-     * villages.
+     * Gather everything the client needs to render the kingdom map,
+     * centred on the player block position {@code (playerX, playerZ)}.
+     * Always returns terrain cells for the player-centered viewport, so
+     * the client can render a non-blank map even when no kingdom is near.
+     * Roads/sea routes/travellers are scoped to villages whose centre
+     * falls within the viewport.
      */
-    public static Result gather(ServerLevel level, UUID kingdomId) {
+    public static Result gather(ServerLevel level, int playerX, int playerZ) {
         VillageSavedData data = VillageSavedData.get(level);
         WorldAtlas atlas = WorldAtlas.get(level);
 
-        Kingdom focus = data.getKingdomById(kingdomId).orElse(null);
-        if (focus == null) return empty();
+        // Player-centered viewport in cell coords.
+        int rCells = (VIEWPORT_RADIUS_BLOCKS >> AtlasCell.CELL_SHIFT) + 1;
+        int centreCX = playerX >> AtlasCell.CELL_SHIFT;
+        int centreCZ = playerZ >> AtlasCell.CELL_SHIFT;
+        int minCX = centreCX - rCells;
+        int minCZ = centreCZ - rCells;
+        int maxCX = centreCX + rCells;
+        int maxCZ = centreCZ + rCells;
 
-        // Compute the focus kingdom's influence cells and the viewport
-        Set<Long> focusCells = influenceCellsFor(focus, data);
-        if (focusCells.isEmpty()) return empty();
-
-        int[] bounds = boundsOf(focusCells);
-        int minCX = bounds[0] - BUFFER_PADDING_CELLS;
-        int minCZ = bounds[1] - BUFFER_PADDING_CELLS;
-        int maxCX = bounds[2] + BUFFER_PADDING_CELLS;
-        int maxCZ = bounds[3] + BUFFER_PADDING_CELLS;
-
-        // Ensure the atlas is sampled across the focus viewport before
-        // reading. The worldgen capital fill only covers a fixed radius
-        // around the capital cell; a claim can reach beyond it, and a cell
-        // never re-samples once present, so without this the client renders
-        // ocean for any claim cell the worldgen pass didn't reach. Bounded
-        // synchronous budget — this is a manually-opened inspection screen.
-        int viewportBlockRadius =
-                ((Math.max(maxCX - minCX, maxCZ - minCZ) + 2) / 2 + 1)
-                        << AtlasCell.CELL_SHIFT;
-        int centreBlockX =
-                (((minCX + maxCX) / 2) << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
-        int centreBlockZ =
-                (((minCZ + maxCZ) / 2) << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
-        atlas.ensureRegionFilled(level, centreBlockX, centreBlockZ,
-                viewportBlockRadius, PREFILL_NANOS);
+        // Pre-fill the atlas across the player-centered viewport before
+        // reading. A cell never re-samples once present, so without this
+        // the client renders ocean for any cell the worldgen pass did not
+        // reach. Bounded synchronous budget — manually-opened screen.
+        atlas.ensureRegionFilled(level, playerX, playerZ,
+                VIEWPORT_RADIUS_BLOCKS, PREFILL_NANOS);
 
         // Atlas cells in viewport (now sampled above; any still-absent cell
         // means the fill budget ran out and the client renders it as ocean)
@@ -94,13 +92,16 @@ public final class KingdomMapScope {
             }
         }
 
-        // Viewable villages: focus kingdom + any foreign kingdom overlapping the viewport
-        Set<UUID> viewable = new HashSet<>(focus.getVillageIds());
-        for (Kingdom other : data.getAllKingdoms()) {
-            if (other.getId().equals(kingdomId)) continue;
-            Set<Long> otherCells = influenceCellsFor(other, data);
-            if (intersectsViewport(otherCells, minCX, minCZ, maxCX, maxCZ)) {
-                viewable.addAll(other.getVillageIds());
+        // Viewable villages: every village whose anchor cell falls within
+        // the player-centered viewport, regardless of kingdom association.
+        Set<UUID> viewable = new HashSet<>();
+        for (Village v : data.getAllVillages()) {
+            var anchor = v.getAnchorPos();
+            if (anchor == null) continue;
+            int vcx = anchor.getX() >> AtlasCell.CELL_SHIFT;
+            int vcz = anchor.getZ() >> AtlasCell.CELL_SHIFT;
+            if (vcx >= minCX && vcx <= maxCX && vcz >= minCZ && vcz <= maxCZ) {
+                viewable.add(v.getId());
             }
         }
 
@@ -225,71 +226,4 @@ public final class KingdomMapScope {
         return sb.toString();
     }
 
-    /**
-     * Cells the kingdom "occupies" for viewport purposes. Reads the
-     * authoritative territorial {@link KingdomClaim} first — this is the
-     * SAME source the client-side {@code KingdomBoundsProvider.ClaimBasedProvider}
-     * uses to compute the rendered viewport, so the cells the server emits
-     * line up with the cells the client will draw. Crucially, the claim is
-     * non-empty by construction even before a capital sites (post-C1-a a
-     * kingdom is born with a claim + an unrealized capital charter but no
-     * Village yet), so the map is no longer blank for an unsited kingdom.
-     *
-     * <p>Falls back to the legacy village-AABB influence box only when a
-     * kingdom has no claim (older saves predating territorial claims).
-     */
-    private static Set<Long> influenceCellsFor(Kingdom kingdom, VillageSavedData data) {
-        var claim = kingdom.getTerritorialClaim().orElse(null);
-        if (claim != null && !claim.claimedCellKeys().isEmpty()) {
-            return new HashSet<>(claim.claimedCellKeys());
-        }
-
-        // Legacy fallback — village AABBs (older saves without a claim).
-        Set<Long> owned = new HashSet<>();
-        for (UUID vid : kingdom.getVillageIds()) {
-            Village v = data.getVillageById(vid).orElse(null);
-            if (v == null) continue;
-            var bounds = v.getBounds(data).orElse(null);
-            if (bounds == null) continue;
-            int minCX = blockToCell((int) Math.floor(bounds.minX)) - INFLUENCE_RADIUS_CELLS;
-            int maxCX = blockToCell((int) Math.ceil(bounds.maxX))  + INFLUENCE_RADIUS_CELLS;
-            int minCZ = blockToCell((int) Math.floor(bounds.minZ)) - INFLUENCE_RADIUS_CELLS;
-            int maxCZ = blockToCell((int) Math.ceil(bounds.maxZ))  + INFLUENCE_RADIUS_CELLS;
-            for (int cx = minCX; cx <= maxCX; cx++) {
-                for (int cz = minCZ; cz <= maxCZ; cz++) {
-                    owned.add(AtlasCell.packKey(cx, cz));
-                }
-            }
-        }
-        return owned;
-    }
-
-    private static int[] boundsOf(Set<Long> cells) {
-        int minCX = Integer.MAX_VALUE, minCZ = Integer.MAX_VALUE;
-        int maxCX = Integer.MIN_VALUE, maxCZ = Integer.MIN_VALUE;
-        for (long k : cells) {
-            int cx = AtlasCell.unpackX(k), cz = AtlasCell.unpackZ(k);
-            if (cx < minCX) minCX = cx; if (cz < minCZ) minCZ = cz;
-            if (cx > maxCX) maxCX = cx; if (cz > maxCZ) maxCZ = cz;
-        }
-        return new int[] { minCX, minCZ, maxCX, maxCZ };
-    }
-
-    private static boolean intersectsViewport(Set<Long> cells,
-                                              int minCX, int minCZ,
-                                              int maxCX, int maxCZ) {
-        for (long k : cells) {
-            int cx = AtlasCell.unpackX(k), cz = AtlasCell.unpackZ(k);
-            if (cx >= minCX && cx <= maxCX && cz >= minCZ && cz <= maxCZ) return true;
-        }
-        return false;
-    }
-
-    private static int blockToCell(int block) {
-        return block >> AtlasCell.CELL_SHIFT;
-    }
-
-    private static Result empty() {
-        return new Result(List.of(), List.of(), List.of(), List.of());
-    }
 }

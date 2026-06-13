@@ -16,13 +16,15 @@ import java.util.UUID;
 /**
  * Sent by the client when a kingdom map GUI opens (or its refresh
  * button is pressed). Server replies with a {@link KingdomMapSyncPacket}
- * scoped to the requested kingdom's viewport.
+ * scoped to a viewport CENTRED ON THE PLAYER (player-centered maps).
  *
- * <p>Using request/response rather than push because map data is bulky
- * (atlas cells can number in the hundreds) and only needed while a
- * map is actually on-screen.
+ * <p>The map renders a fixed radius around the requesting player so it
+ * is usable anywhere — including far from any kingdom — for visualising
+ * village placement. {@code kingdomId} is retained only so the sync
+ * reply can be matched to the screen/book that requested it. The
+ * viewport is derived server-side from the player position carried here.
  */
-public record RequestKingdomMapSyncPacket(UUID kingdomId)
+public record RequestKingdomMapSyncPacket(UUID kingdomId, int playerX, int playerZ)
         implements CustomPacketPayload {
 
     public static final Type<RequestKingdomMapSyncPacket> TYPE = new Type<>(
@@ -31,12 +33,28 @@ public record RequestKingdomMapSyncPacket(UUID kingdomId)
 
     public static final StreamCodec<RegistryFriendlyByteBuf,
             RequestKingdomMapSyncPacket> CODEC = StreamCodec.of(
-            (buf, pkt) -> buf.writeUUID(pkt.kingdomId()),
-            buf -> new RequestKingdomMapSyncPacket(buf.readUUID())
+            (buf, pkt) -> {
+                buf.writeUUID(pkt.kingdomId());
+                buf.writeInt(pkt.playerX());
+                buf.writeInt(pkt.playerZ());
+            },
+            buf -> new RequestKingdomMapSyncPacket(
+                    buf.readUUID(), buf.readInt(), buf.readInt())
     );
 
     @Override
     public Type<? extends CustomPacketPayload> type() { return TYPE; }
+
+    /**
+     * Client-side factory: build a request centred on the local player.
+     * Returns {@code null} if no local player exists yet (caller skips send).
+     */
+    public static RequestKingdomMapSyncPacket forLocalPlayer(UUID kingdomId) {
+        var p = net.minecraft.client.Minecraft.getInstance().player;
+        if (p == null) return null;
+        return new RequestKingdomMapSyncPacket(
+                kingdomId, (int) Math.floor(p.getX()), (int) Math.floor(p.getZ()));
+    }
 
     public static void handle(RequestKingdomMapSyncPacket pkt,
                               IPayloadContext ctx) {
@@ -45,7 +63,7 @@ public record RequestKingdomMapSyncPacket(UUID kingdomId)
             if (!(sp.level() instanceof ServerLevel level)) return;
 
             KingdomMapScope.Result result =
-                    KingdomMapScope.gather(level, pkt.kingdomId());
+                    KingdomMapScope.gather(level, pkt.playerX(), pkt.playerZ());
 
             PacketDistributor.sendToPlayer(sp, new KingdomMapSyncPacket(
                     pkt.kingdomId(),

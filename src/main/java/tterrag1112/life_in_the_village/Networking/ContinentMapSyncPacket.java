@@ -24,7 +24,7 @@ import java.util.UUID;
 
 /**
  * Continent-scale map sync. Uses raw stream codecs (no NBT) so it
- * can carry up to {@code MAX_CONTINENT_CELLS} land cells + the
+ * can carry the player-centered viewport cells + the
  * surrounding viewport without hitting per-field size limits.
  */
 public record ContinentMapSyncPacket(

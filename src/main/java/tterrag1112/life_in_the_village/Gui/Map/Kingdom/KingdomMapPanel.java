@@ -27,7 +27,6 @@ import java.util.*;
 public final class KingdomMapPanel {
 
     private final UUID kingdomId;
-    private final KingdomBoundsProvider boundsProvider;
     private final List<MapLayer> layers = new ArrayList<>();
     private final MapLayer.LayerState layerState = new MapLayer.LayerState();
 
@@ -39,12 +38,7 @@ public final class KingdomMapPanel {
 
 
     public KingdomMapPanel(UUID kingdomId) {
-        this(kingdomId, new KingdomBoundsProvider.ClaimBasedProvider());
-    }
-
-    public KingdomMapPanel(UUID kingdomId, KingdomBoundsProvider boundsProvider) {
         this.kingdomId = kingdomId;
-        this.boundsProvider = boundsProvider;
 
         // Draw order matters — first added is drawn first (bottom layer)
         layers.add(new TerrainLayer());
@@ -60,9 +54,17 @@ public final class KingdomMapPanel {
         layers.add(new TravellerLayer());
     }
 
-    /** Rebuild the snapshot from current client caches. */
+    /**
+     * Rebuild the snapshot from current client caches, centred on the
+     * local player block position (player-centered maps). Safe to call
+     * even before the player exists (no-op rebuild keeps prior data).
+     */
     public void refresh() {
-        data = KingdomMapDataBuilder.build(kingdomId, boundsProvider).orElse(null);
+        var mc = Minecraft.getInstance();
+        if (mc.player == null) return;
+        int px = (int) Math.floor(mc.player.getX());
+        int pz = (int) Math.floor(mc.player.getZ());
+        data = KingdomMapDataBuilder.build(kingdomId, px, pz).orElse(null);
         projection = null; // force reproject on next render
     }
 
@@ -86,8 +88,11 @@ public final class KingdomMapPanel {
                 BookScreenColors.OCEAN_DEEP);
 
         if (data == null) {
+            // Player-centered build returns data whenever a player exists;
+            // this path only hits before the first refresh lands. Show a
+            // transient note over the terrain backdrop rather than a blank.
             var font = Minecraft.getInstance().font;
-            String msg = "No kingdom data available.";
+            String msg = "Loading map...";
             g.drawString(font, msg,
                     panelX + (panelW - font.width(msg)) / 2,
                     panelY + panelH / 2 - 4,

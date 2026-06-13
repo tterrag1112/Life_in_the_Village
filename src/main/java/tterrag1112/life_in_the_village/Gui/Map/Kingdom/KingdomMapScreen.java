@@ -41,8 +41,8 @@ public class KingdomMapScreen extends Screen {
         // TODO: when the atlas/route sync packet lands, request it here
         // before calling refresh() so the panel sees the freshest data.
         panel.refresh();
-        ClientPacketDistributor.sendToServer(
-                new RequestKingdomMapSyncPacket(panel.getKingdomId()));
+        var mapReq = RequestKingdomMapSyncPacket.forLocalPlayer(panel.getKingdomId());
+        if (mapReq != null) ClientPacketDistributor.sendToServer(mapReq);
 
         int btnX = PAD;
         int btnY = PAD + 20;

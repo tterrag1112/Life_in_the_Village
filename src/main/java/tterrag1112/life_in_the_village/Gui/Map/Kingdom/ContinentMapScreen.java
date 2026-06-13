@@ -57,8 +57,8 @@ public class ContinentMapScreen extends Screen {
 
     private void requestSync() {
         statusLine = "Requesting continent data...";
-        ClientPacketDistributor.sendToServer(
-                new RequestContinentMapSyncPacket(seedKingdomId));
+        var req = RequestContinentMapSyncPacket.forLocalPlayer(seedKingdomId);
+        if (req != null) ClientPacketDistributor.sendToServer(req);
     }
 
     /** Called by {@link ContinentMapSyncPacket#handle} after caches populate. */
@@ -76,12 +76,18 @@ public class ContinentMapScreen extends Screen {
         projection = null;
         this.prefillComplete = prefillComplete;
         statusLine = data == null
-                ? "No continent data available."
+                ? "Loading terrain..."
                 : (prefillComplete
-                ? data.kingdoms.size() + " kingdom(s), "
-                + continentCells.size() + " land cells"
+                ? data.kingdoms.size() + " kingdom(s) in range, "
+                + continentCells.size() + " cells"
                 : "Partial: " + continentCells.size()
                 + " cells so far — refresh to fill more");
+        if (data != null && data.kingdoms.isEmpty()) {
+            // Player-centered terrain still renders; just note the absence.
+            statusLine = prefillComplete
+                    ? "No kingdoms in range — " + continentCells.size() + " cells"
+                    : statusLine;
+        }
     }
 
     @Override
@@ -114,6 +120,9 @@ public class ContinentMapScreen extends Screen {
                 BookScreenColors.OCEAN_DEEP);
 
         if (data == null) {
+            // Terrain has not arrived yet (first pass / budget). The ocean
+            // backdrop is already drawn above; show a transient note, never
+            // a permanent "no data" state.
             String msg = statusLine;
             g.drawString(font, msg,
                     mapX + (mapW - font.width(msg)) / 2,
@@ -159,28 +168,35 @@ public class ContinentMapScreen extends Screen {
     public boolean isPauseScreen() { return false; }
 
     /**
-     * Convenience opener — picks the player's current kingdom if they
-     * have one, falls back to the first kingdom in the client cache.
-     * Used by the keybind handler.
+     * Convenience opener — the map is player-centered, so it opens
+     * anywhere regardless of kingdom association. The screen-identity
+     * UUID prefers a kingdom the player rules (for the region label and
+     * sync-reply matching), else any kingdom, else a synthetic key.
      */
     public static void openForPlayer() {
         var mc = Minecraft.getInstance();
         if (mc.player == null) return;
-        UUID seedId = pickSeedKingdom(mc.player.getUUID());
-        if (seedId == null) return;
-        mc.setScreen(new ContinentMapScreen(seedId));
+        mc.setScreen(new ContinentMapScreen(pickScreenKey(mc.player.getUUID())));
     }
 
-    private static UUID pickSeedKingdom(UUID playerId) {
+    /**
+     * Screen-identity UUID used only to match the sync reply and to label
+     * the region; it does NOT scope the player-centered viewport. Falls
+     * back to a fixed sentinel when the player rules/knows no kingdom, so
+     * the map still opens for an unaffiliated player.
+     */
+    private static UUID pickScreenKey(UUID playerId) {
         var kingdoms = tterrag1112.life_in_the_village.Kingdom
                 .Kingdom.ClientKingdomCache.getKingdoms();
-        // Prefer a kingdom the player rules
         for (var k : kingdoms) {
             if (k.getRulerPlayerId().map(id -> id.equals(playerId)).orElse(false)) {
                 return k.getId();
             }
         }
-        // Otherwise the first one available
-        return kingdoms.isEmpty() ? null : kingdoms.get(0).getId();
+        return kingdoms.isEmpty() ? NO_KINGDOM_KEY : kingdoms.get(0).getId();
     }
+
+    /** Sentinel screen-key when the player is unaffiliated (no kingdom). */
+    private static final UUID NO_KINGDOM_KEY =
+            new UUID(0L, 0x10AD_C0FFEEL); // arbitrary stable non-kingdom key
 }
