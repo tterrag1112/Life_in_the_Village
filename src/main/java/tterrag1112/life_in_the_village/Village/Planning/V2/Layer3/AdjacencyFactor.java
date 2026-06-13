@@ -19,7 +19,7 @@ public enum AdjacencyFactor {
      *  civic centre concept; today the anchor IS the civic centre. */
     NEAR_CIVIC_CENTRE,
     /** Inverted perpendicular distance to the nearest spine
-     *  segment in {@code SiteContext.spinePath()}. */
+     *  segment in the routed network skeleton. */
     NEAR_MAIN_ROAD,
     /** Farther from the anchor is better. */
     FAR_FROM_ANCHOR,

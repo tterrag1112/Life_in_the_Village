@@ -11958,3 +11958,153 @@ defined constructor (2/3/4-arg); `Parcel` 5-arg ctor + `Reservation(Aabb,Aabb,
 BuildingType)` + `overlapsAnyReservation(Aabb,Aabb,...)` + `aabbToPolygon(Aabb,
 int)` signatures matched; `Building` codec now 14 fields (under the 16 cap),
 `toft` gated with `optionalFieldOf`; no exhaustive switch over `Parcel.Kind`.
+
+---
+
+## Track A — A6: Stage-3e/4 teardown (compilable pass) — 2026-06-12
+
+**Branch:** `cowork/a6-network-teardown`
+
+### Disposition map
+
+**GATEWAY nucleus (PhasedPlanner `buildNucleusPositions`):**
+- Previously read `ctx.network().nodes()` filtered by `NodeKind.GATEWAY` to
+  find gateway positions emitted by the recipe topology bodies.
+- After A6: reads `ctx.gateways()` directly — both `primary()` and
+  `secondary()` positions are already the snapped gateway positions from
+  Stage 3b; no topology recipe needed.
+- Decision: **migrate cleanly, recipe GATEWAY nodes dead.**
+
+**`designateHubs` (PhasedPlanner):**
+- Previously called `ctx.spinePath().segments().get(0/last)` to extract
+  endpoint tangents (start/end position pairs).
+- `SpineSegment` carries `.start()` and `.end()` directly. Migrated to
+  `skeleton.primarySegments()` with simple chord tangents (no derived view
+  needed).
+- Decision: **migrate cleanly, SpinePath dead.**
+
+**`NetworkSpec.primaryBindings()`:**
+- Consumed by `SiteAnalyzer` (after plan), `BlockServingRouter`, and
+  `PhasedPlanner`. These bindings associate building types to anchor
+  positions; they are NOT geometry — they survive A6.
+- `NetworkPlanner.plan()` retained as a 118-line stub: produces one ANCHOR
+  node, zero edges, and the full primaryBindings list.
+- Decision: **keep plan(), delete recipe geometry bodies only.**
+
+**`SpinePath` consumers (pre-migration):** SiteContext field, SiteAnalyzer
+derivation call, LayoutCommand Phase-2 block, SiteCommand result block,
+LayoutDumpSerializer spine block + roadsJson, HarnessDump roadsJson,
+ConnectivityAudit (segment loop), PhasedPlanner (designateHubs). All migrated
+or replaced with primarySegments() / network summary.
+
+**`CrossStreet` consumers (pre-migration):** RoadSegment sealed permits clause,
+Skeleton fields/methods (crossStreets, addCrossStreet, removeCrossStreet,
+allSegments append), PhasedPlanner markJunctions + PhaseEvent.REMOVED_CROSS_STREET
+factory, LayoutDumpSerializer roadsJson + facingRoadKind, LayoutCommand segLabel,
+ConnectivityAudit segment loop, HarnessDump segment loop + segmentKind. All
+removed or simplified; `allSegments()` now delegates to `primarySegments()`.
+
+**Sealed-type audit:** `RoadSegment permits SpineSegment, CrossStreet` →
+`permits SpineSegment`. No other sealed interfaces touched.
+
+**Exhaustive switch audit:** `PhaseEvent.Kind` — removed `REMOVED_CROSS_STREET`
+arm from `LayoutCommand`'s switch. No other exhaustive switches over touched enums.
+
+**SiteContext field count:** 14 → 13 (removed `spinePath`). Well under the 16-field
+codec ceiling.
+
+### Migration record
+
+**Deleted files:**
+- `Layer2/SpinePath.java` — record(primaryAxis, segments, start, end, totalLength)
+- `Layer4/CrossStreet.java` — record(start, end, width, spineJunction)
+
+**Rewritten:**
+- `Layer2/NetworkPlanner.java` — 1359 → 118 lines; all 6 recipe topology bodies
+  removed (recipeHaufendorf/Reihendorf/Angerdorf/Rundling/Einzelhof/Cluster),
+  plus recipeShortSpine, emitRadialsFromRing, addRingGateway, addLinearEdge,
+  deriveSpinePath, all tier-scaled helpers, all geometry helpers, Builder inner
+  class. Kept: plan() producing one ANCHOR + zero edges + primaryBindings,
+  addPrimaryBindings(), pickAnchorForBinding().
+
+**Modified:**
+- `Layer4/PhasedPlanner.java` — GATEWAY nucleus reads ctx.gateways(); designateHubs
+  reads skeleton.primarySegments(); trimUnusedSegments no-op body kept; markJunctions
+  CrossStreet loop removed; PhaseEvent.REMOVED_CROSS_STREET + factory removed.
+- `Layer4/Skeleton.java` — removed SpinePath import, crossStreets/cachedSpinePath
+  fields, spinePath()/spineStart()/spineEnd()/crossStreets()/addCrossStreet()/
+  removeCrossStreet() methods; allSegments() now returns primarySegments directly.
+- `Layer4/RoadSegment.java` — permits clause: SpineSegment only.
+- `Layer2/SiteContext.java` — removed spinePath record field; all copy-with helpers
+  updated; withNetwork(NetworkSpec, SpinePath) → withNetwork(NetworkSpec).
+- `Layer2/SiteAnalyzer.java` — removed deriveSpinePath call; withNetwork call updated;
+  log strings updated.
+- `Commands/LayoutCommand.java` — Phase 2 block replaced with routed-edges summary;
+  crossStreets block removed; segLabel CrossStreet branch removed; REMOVED_CROSS_STREET
+  switch arm removed.
+- `Commands/SiteCommand.java` — spinePath result block replaced with network summary.
+- `Debug/LayoutDumpSerializer.java` — SpinePath/CrossStreet blocks replaced with
+  recipe network / edge summaries.
+- `test/Harness/ConnectivityAudit.java` — CrossStreet branch removed from segment loops.
+- `test/Harness/HarnessDump.java` — spineStart/spineEnd replaced with first/last
+  primarySegment positions; crossStreets block removed; CrossStreet branch removed.
+- Stale Javadocs updated in: NetworkSpec.java, Junction.java, SpineSegment.java,
+  AdjacencyFactor.java, RoadPrimitive.java, Skeleton.java, PhasedPlanner.java,
+  V2VillageSpawnerAdapter.java.
+
+### Grep coverage evidence (zero live references confirmed)
+
+- `import.*SpinePath` — 0 hits
+- `import.*CrossStreet` — 0 hits
+- `new SpinePath` / `new CrossStreet` (non-comment) — 0 hits
+- `\.spinePath()` (non-comment) — 0 hits
+- `deriveSpinePath` (non-comment) — 0 hits
+- `skeleton\.spineStart\|skeleton\.spineEnd\|\.spineStart()\|\.spineEnd()` (non-comment) — 0 hits
+- `\.crossStreets()\|\.addCrossStreet\|\.removeCrossStreet` (non-comment) — 0 hits
+- `REMOVED_CROSS_STREET` — 0 hits
+- `removedCrossStreet` (non-comment) — 0 hits
+
+### Deviations from prompt
+
+- None. GATEWAY nucleus migrated to ctx.gateways(); designateHubs migrated to
+  skeleton.primarySegments(); NetworkPlanner recipe bodies deleted; SpinePath and
+  CrossStreet deleted. NetworkPlanner.plan() stub retained (primaryBindings still
+  consumed by 3 callers).
+
+### Out-of-scope but flagged
+
+- `planCrossStreetsProactively` (dead Stage 3c remnant, Stage 3d teardown item) —
+  still present in PhasedPlanner with a comment noting it is dead. Not deleted here
+  (Stage 3d scope).
+- `trimUnusedSegments` is a no-op body kept for interface compatibility — safe to
+  delete in a future cleanup sweep.
+- `PROACTIVE_CROSS_STREET`/`PROACTIVE_SKIPPED` in `PhaseEvent.Kind` are also dead
+  (cross-street pre-pass gone). Flagged for Stage 3d teardown.
+
+### Smoke test plan (user-executable)
+
+1. Build (deferred — sandbox blocks maven.neoforged.net). Static review done:
+   zero live references to SpinePath/CrossStreet confirmed by grep; sealed-interface
+   permits clause updated; exhaustive switch arm removed; SiteContext field count 13.
+2. `/litv spawn` a village with DEFENSIVE inclination → HOUSE/INN/STABLE/MARKET
+   buildings cluster near the gateway positions (GATEWAY nucleus working via
+   ctx.gateways()). No spawn abort, no NPE in log.
+3. `/litv spawn` any village topology → `designateHubs` produces two Hub entries
+   (one at road start, one at road end) visible in the layout debug dump under
+   `hubs[]`. No NPE from empty primarySegments (degenerate sites produce 0 hubs,
+   which is correct).
+4. `/litv layout dump` → `roads.skeleton` JSON has `segments[]` array (edge
+   segments), `junctions[]` array, NO `spineStart`/`spineEnd`/`spinePath`/
+   `crossStreets` keys. `ctx.network` JSON has `nodes`/`edges`/`bindings` but
+   no recipe geometry nodes.
+5. No regression on existing road rendering — BlockServingRouter builds roads
+   from the routed network, which is unchanged; the recipe geometry was already
+   dead code before A6.
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net). Static review substituted: zero live imports/usages of
+all deleted types confirmed by exhaustive grep; sealed-interface permits clause
+corrected; exhaustive switch arm (REMOVED_CROSS_STREET in LayoutCommand) removed;
+SiteContext record field count 14→13 (under 16-field cap); NetworkPlanner.plan()
+stub produces correct NetworkSpec shape (topology + ANCHOR node + bindings);
+Javadoc stale references cleaned up in 8 files.

@@ -1033,8 +1033,7 @@ public final class V2VillageSpawnerAdapter {
         // Layout Rework Stage 3d — gates come from the routed network's
         // GATEWAY nodes (the gateways-first derivation from 3b, snapped
         // to buildable cells by BlockServingRouter). On the CLUSTER routed
-        // network the legacy spine is a fiction, so spineEnd/spineStart +
-        // cross-streets are meaningless. Reading the GATEWAY node positions
+        // network there is no spine; reading the GATEWAY node positions
         // here — rather than the raw ctx.gateways() — is deliberate: it
         // guarantees GatewayPopulator creates the gateway graph nodes at
         // the EXACT positions InternalRoadCommitter.commitFromV2 matches

@@ -16,10 +16,6 @@ import java.util.List;
  * spec carries one ANCHOR node and zero edges. Building selection
  * then treats the lone node as a placement seed.
  *
- * <p>For backwards-compatibility with the SpinePath-shaped pipeline,
- * the legacy {@link SpinePath} is derived from {@link #edges()} by
- * {@link NetworkPlanner#deriveSpinePath} and stored on
- * {@link SiteContext#spinePath()}.
  *
  * @param topology         the strategy's selected village form
  * @param nodes            graph nodes (insertion order preserved)

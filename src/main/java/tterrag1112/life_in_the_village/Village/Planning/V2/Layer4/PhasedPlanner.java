@@ -22,15 +22,12 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Zone;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ZonePartition;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkNode;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NodeKind;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusAffinity;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusKind;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusRef;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NucleusRules;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ProximityPenalty;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.AdjacencyFactor;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DropReason;
@@ -71,11 +68,11 @@ import java.util.Set;
  * {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkPlanner}
  * inside {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer}
  * and arrives on the {@code SiteContext} before this orchestrator
- * is invoked. A backwards-compat {@code SpinePath} view is derived
- * from the network's edges. Phase 3 places foundation buildings
+ * is invoked. Phase 3 places foundation buildings
  * (TOWN_HALL + buildings with terrain aggregates) along the spine.
- * Phase 4 iterates the remaining selection, inserting perpendicular
- * cross streets when a cluster of K consecutive buildings fails for
+ * Phase 4 iterates the remaining selection; the block-serving router
+ * builds the whole road network after placement so that cross-street
+ * pre-planning is no longer required. Buildings fail for
  * road-frontage reasons. Phase 5 reassesses connectivity, trims
  * empty road segments, and marks junctions. Phase 6 emits.
  *
@@ -417,9 +414,8 @@ public final class PhasedPlanner {
         }
         RoadNetwork network = new RoadNetwork(state.skeleton, Map.copyOf(frontageOwners));
 
-        LOGGER.info("PhasedPlanner.run done: placed={} dropped={} crossStreets={} viable={}",
-                state.placed.size(), state.dropped.size(),
-                state.skeleton.crossStreets().size(), state.viable);
+        LOGGER.info("PhasedPlanner.run done: placed={} dropped={} viable={}",
+                state.placed.size(), state.dropped.size(), state.viable);
 
         return new Result(placement, network, List.copyOf(state.events),
                 java.util.Map.copyOf(state.nucleusContexts),
@@ -854,30 +850,37 @@ public final class PhasedPlanner {
     // Phase 5 — reassessment
     // =========================================================================
 
-    /** Designate two hubs at spine path endpoints, ranked by
+    /** Designate two hubs at the routed-network endpoints, ranked by
      *  openness (average admissibility in a forward fan). The hub
      *  with higher openness is the village's "main" hub; trade-road
-     *  graph extension (future cycle) attaches there. */
+     *  graph extension (future cycle) attaches there.
+     *
+     *  <p>A6 migration: reads {@link Skeleton#primarySegments()} directly
+     *  instead of the removed {@code SpinePath} derived view. */
     private static void designateHubs(State state) {
-        SpinePath path = state.skeleton.spinePath();
-        BlockPos startPos = path.start();
-        BlockPos endPos = path.end();
-        if (path.segments().isEmpty()) return;
+        List<SpineSegment> segs = state.skeleton.primarySegments();
+        if (segs.isEmpty()) return;
+        SpineSegment first = segs.get(0);
+        SpineSegment last  = segs.get(segs.size() - 1);
+        BlockPos startPos = first.start();
+        BlockPos endPos   = last.end();
 
-        // Local tangent at the path's "start" endpoint = direction of
-        // the FIRST segment, pointing OUTWARD (away from anchor).
-        Vec3 startDir = unsignedTangentAtStart(path.segments().get(0));
-        // Tangent at "end" endpoint = direction of the LAST segment,
-        // outward. The path's segments are ordered start → end, so the
-        // last segment's natural direction (from→to) IS outward.
-        Vec3 endDir = unsignedTangentAtEnd(
-                path.segments().get(path.segments().size() - 1));
+        // Outward tangent at the start endpoint: first segment points
+        // start→end INTO the path, so outward = (start - end) normalised.
+        Vec3 startDir = unitOf(
+                first.start().getX() - first.end().getX(),
+                first.start().getZ() - first.end().getZ());
+        // Outward tangent at the end endpoint: last segment points
+        // start→end OUTWARD, so outward = (end - start) normalised.
+        Vec3 endDir = unitOf(
+                last.end().getX() - last.start().getX(),
+                last.end().getZ() - last.start().getZ());
 
         double startOpenness = fanOpenness(state, startPos, startDir);
-        double endOpenness = fanOpenness(state, endPos, endDir);
+        double endOpenness   = fanOpenness(state, endPos,   endDir);
 
         Hub startHub = new Hub(startPos, startDir, startOpenness);
-        Hub endHub = new Hub(endPos, endDir, endOpenness);
+        Hub endHub   = new Hub(endPos,   endDir,   endOpenness);
         // Higher-openness hub first (the village's "main" hub).
         if (startOpenness >= endOpenness) {
             state.ctx.hubs().add(startHub);
@@ -888,84 +891,7 @@ public final class PhasedPlanner {
         }
     }
 
-    /** Outward tangent from a primitive at its starting endpoint
-     *  (pointing AWAY from the anchor side of the spine path).
-     *  For V2's planner output, segments[0]'s "start" IS the path's
-     *  starting endpoint, and the natural from→to direction points
-     *  INTO the path (toward anchor) — so the outward tangent is
-     *  the negative. */
-    private static Vec3 unsignedTangentAtStart(
-            tterrag1112.life_in_the_village.Village.Planning.Primitives
-                    .RoadPrimitive prim) {
-        BlockPos a, b;
-        if (prim instanceof tterrag1112.life_in_the_village.Village
-                .Planning.Primitives.RoadPrimitive.StraightRoad sr) {
-            a = sr.from(); b = sr.to();
-        } else {
-            // Arc / CurvedRoad: approximate via chord endpoints.
-            // SpineSegment's chord endpoints are stored in skeleton,
-            // but this path uses primitives directly; use a chord
-            // approximation off the primitive's metadata.
-            a = chordStart(prim); b = chordEnd(prim);
-        }
-        // segments[0] points from path.start INTO the path; outward
-        // tangent at start = (a - b) normalised.
-        return unitOf(a.getX() - b.getX(), a.getZ() - b.getZ());
-    }
 
-    /** Outward tangent from a primitive at its ending endpoint
-     *  (pointing AWAY from the anchor side). For segments[N-1],
-     *  the natural from→to direction IS outward. */
-    private static Vec3 unsignedTangentAtEnd(
-            tterrag1112.life_in_the_village.Village.Planning.Primitives
-                    .RoadPrimitive prim) {
-        BlockPos a, b;
-        if (prim instanceof tterrag1112.life_in_the_village.Village
-                .Planning.Primitives.RoadPrimitive.StraightRoad sr) {
-            a = sr.from(); b = sr.to();
-        } else {
-            a = chordStart(prim); b = chordEnd(prim);
-        }
-        return unitOf(b.getX() - a.getX(), b.getZ() - a.getZ());
-    }
-
-    private static BlockPos chordStart(
-            tterrag1112.life_in_the_village.Village.Planning.Primitives
-                    .RoadPrimitive prim) {
-        if (prim instanceof tterrag1112.life_in_the_village.Village
-                .Planning.Primitives.RoadPrimitive.CurvedRoad cr) {
-            return cr.from();
-        }
-        if (prim instanceof tterrag1112.life_in_the_village.Village
-                .Planning.Primitives.RoadPrimitive.Arc arc) {
-            int sx = arc.centre().getX()
-                    + (int) Math.round(Math.cos(arc.startAngle()) * arc.radius());
-            int sz = arc.centre().getZ()
-                    + (int) Math.round(Math.sin(arc.startAngle()) * arc.radius());
-            return new BlockPos(sx, arc.centre().getY(), sz);
-        }
-        return BlockPos.ZERO;
-    }
-
-    private static BlockPos chordEnd(
-            tterrag1112.life_in_the_village.Village.Planning.Primitives
-                    .RoadPrimitive prim) {
-        if (prim instanceof tterrag1112.life_in_the_village.Village
-                .Planning.Primitives.RoadPrimitive.CurvedRoad cr) {
-            return cr.to();
-        }
-        if (prim instanceof tterrag1112.life_in_the_village.Village
-                .Planning.Primitives.RoadPrimitive.Arc arc) {
-            int ex = arc.centre().getX()
-                    + (int) Math.round(Math.cos(arc.startAngle() + arc.arcSpan())
-                    * arc.radius());
-            int ez = arc.centre().getZ()
-                    + (int) Math.round(Math.sin(arc.startAngle() + arc.arcSpan())
-                    * arc.radius());
-            return new BlockPos(ex, arc.centre().getY(), ez);
-        }
-        return BlockPos.ZERO;
-    }
 
     private static Vec3 unitOf(double dx, double dz) {
         double len = Math.sqrt(dx * dx + dz * dz);
@@ -1081,7 +1007,6 @@ public final class PhasedPlanner {
         if (isolated.isEmpty()) return;
         for (PlacedBuilding pb : isolated) {
             // Try to rescue with a road_width-cap straight connector.
-            // A successful rescue inserts a degenerate CrossStreet.
             // (V1: this branch is rarely exercised; left as defensive.)
             state.placed.remove(pb);
             state.nucleusContexts.remove(pb);
@@ -1099,40 +1024,14 @@ public final class PhasedPlanner {
      *  selected topology + tier, and segment-level frontage span
      *  arithmetic for finer trimming is out of scope for this cycle. */
     private static void trimUnusedSegments(State state) {
-        List<CrossStreet> toRemove = new ArrayList<>();
-        for (CrossStreet cs : state.skeleton.crossStreets()) {
-            Span span = frontageSpanAlong(state.placed, cs);
-            if (span == null) {
-                toRemove.add(cs);
-                state.events.add(PhaseEvent.removedCrossStreet(cs));
-                LOGGER.info("phase 5 removed cross-street: junction=({},{}) (no frontage)",
-                        cs.spineJunction().getX(), cs.spineJunction().getZ());
-            }
-        }
-        for (CrossStreet cs : toRemove) state.skeleton.removeCrossStreet(cs);
+        // A6 teardown: CrossStreet machinery deleted; method is now a no-op.
     }
 
     private static void markJunctions(State state) {
         Skeleton sk = state.skeleton;
-        // Anchor "village centre" junction — record without enumerating
-        // segments. The anchor sits at the seam between the
-        // backward-walk and forward-walk spine pieces; any spine
-        // segment containing it is reachable via skeleton.primarySegments()
-        // (chord-decomposed network edges).
+        // Anchor "village centre" junction.
         sk.addJunction(new Junction(state.ctx.anchor(), List.of()));
-        for (CrossStreet cs : sk.crossStreets()) {
-            // Cross-street junctions list the cross-street and the
-            // first spine segment as a stand-in (the precise spine
-            // segment that the cross-street meets isn't tracked in
-            // V1 — junction membership is mostly for downstream
-            // plaza/decoration code).
-            List<RoadSegment> meeting = new ArrayList<>();
-            if (!sk.primarySegments().isEmpty()) {
-                meeting.add(sk.primarySegments().get(0));
-            }
-            meeting.add(cs);
-            sk.addJunction(new Junction(cs.spineJunction(), meeting));
-        }
+        // A6 teardown: CrossStreet junction loop removed (CrossStreet deleted).
     }
 
     private static Span frontageSpanAlong(List<PlacedBuilding> placed, RoadSegment segment) {
@@ -1459,7 +1358,7 @@ public final class PhasedPlanner {
      *  CIVIC / SACRED / RESOURCE: read from {@code rules.*Nucleus}
      *  refs against the strategy's anchors; RURAL: every placed
      *  building whose type is in {@code rules.ruralNucleusTypes};
-     *  GATEWAY: every GATEWAY {@link NetworkNode} from the network. */
+     *  GATEWAY: the two gateway positions from {@code ctx.gateways()}. */
     private static List<NucleusInstance> enumerateNuclei(NucleusKind kind,
                                                          NucleusRules rules,
                                                          State state) {
@@ -1484,11 +1383,12 @@ public final class PhasedPlanner {
                 }
             }
             case GATEWAY -> {
-                if (state.ctx.network() == null) break;
-                for (NetworkNode n : state.ctx.network().nodes()) {
-                    if (n.kind() == NodeKind.GATEWAY) {
-                        out.add(new NucleusInstance(n.pos(), n.id(), null));
-                    }
+                // A6 migration: read ctx.gateways() directly — no longer
+                // depends on recipe NetworkSpec nodes having GATEWAY kind.
+                var gw = state.ctx.gateways();
+                if (gw != null) {
+                    out.add(new NucleusInstance(gw.primary(),   "gateway:PRIMARY",   null));
+                    out.add(new NucleusInstance(gw.secondary(), "gateway:SECONDARY", null));
                 }
             }
         }
@@ -4894,7 +4794,7 @@ public final class PhasedPlanner {
                              ScoreBreakdown score) {
         public enum Kind { PLACED_FOUNDATION, PLACED_ITERATIVE,
                            CAPACITY_PLAN, PROACTIVE_CROSS_STREET, PROACTIVE_SKIPPED,
-                           ISOLATED, TRIM, REMOVED_CROSS_STREET }
+                           ISOLATED, TRIM }
 
         static PhaseEvent placed(BuildingType type, boolean foundation, ScoreBreakdown s) {
             return new PhaseEvent(
@@ -4918,11 +4818,7 @@ public final class PhasedPlanner {
                     which + " trimmed to length " + newLength, null);
         }
 
-        static PhaseEvent removedCrossStreet(CrossStreet cs) {
-            return new PhaseEvent(Kind.REMOVED_CROSS_STREET, null,
-                    "no frontage at junction "
-                            + cs.spineJunction().getX() + "," + cs.spineJunction().getZ(), null);
-        }
+        // A6 teardown: removedCrossStreet factory deleted (CrossStreet gone).
     }
 
     public record ScoreBreakdown(double terrain, double adjacency, double centrality) {

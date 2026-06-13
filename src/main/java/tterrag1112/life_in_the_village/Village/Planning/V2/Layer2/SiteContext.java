@@ -20,11 +20,6 @@ import java.util.List;
  * Vec3. Spines now run along a cardinal — diagonal layouts are not
  * produced.
  *
- * <p>{@code spinePath} carries the planned spine: an ordered list
- * of road primitives with cardinal mean direction and reactive arc
- * deflections where terrain forced bending. Populated by
- * {@link SiteAnalyzer}.
- *
  * <p>{@code hubs} is mutated by Layer 4's hub designator after the
  * skeleton is finalised. Initially empty. Records aren't strictly
  * immutable here because hubs are a Layer 4 output that needs to be
@@ -55,7 +50,6 @@ public record SiteContext(
         BlockPos anchor,
         BlockPos originalAnchor,
         CardinalAxis primaryAxis,
-        SpinePath spinePath,
         ViabilityTier tier,
         Inclination inclination,
         Culture culture,
@@ -78,35 +72,31 @@ public record SiteContext(
      *  {@link StrategySelector}; Track E1 prompt-3 network by
      *  {@link NetworkPlanner}. */
     public static SiteContext withEmptyHubs(BlockPos anchor, BlockPos originalAnchor,
-                                            CardinalAxis primaryAxis, SpinePath spinePath,
+                                            CardinalAxis primaryAxis,
                                             ViabilityTier tier, Inclination inclination,
                                             Culture culture, long seed) {
-        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+        return new SiteContext(anchor, originalAnchor, primaryAxis,
                 tier, inclination, culture, seed, new ArrayList<>(), List.of(),
                 null, null, null, null);
     }
 
     /** Track E1 — copy-with anchors. */
     public SiteContext withAnchors(List<Anchor> newAnchors) {
-        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+        return new SiteContext(anchor, originalAnchor, primaryAxis,
                 tier, inclination, culture, seed, hubs, newAnchors, strategy, network,
                 zonePartition, gateways);
     }
 
     /** Track E1B — copy-with strategy selection result. */
     public SiteContext withStrategy(StrategySelectionResult newStrategy) {
-        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+        return new SiteContext(anchor, originalAnchor, primaryAxis,
                 tier, inclination, culture, seed, hubs, anchors, newStrategy, network,
                 zonePartition, gateways);
     }
 
-    /** Track E1 prompt-3 — copy-with the planned road network and
-     *  the derived spine path. Network is the source of truth;
-     *  the spine is a derived view kept for backwards-compat
-     *  consumers (RoadPainter, debug commands). */
-    public SiteContext withNetwork(NetworkSpec newNetwork, SpinePath derivedSpine) {
+    /** A6 — copy-with the planned road network. SpinePath removed. */
+    public SiteContext withNetwork(NetworkSpec newNetwork) {
         return new SiteContext(anchor, originalAnchor, primaryAxis,
-                derivedSpine != null ? derivedSpine : spinePath,
                 tier, inclination, culture, seed, hubs, anchors, strategy, newNetwork,
                 zonePartition, gateways);
     }
@@ -114,14 +104,14 @@ public record SiteContext(
     /** Layout Rework Stage 3a — copy-with the computed land-use
      *  partition. */
     public SiteContext withZonePartition(ZonePartition newPartition) {
-        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+        return new SiteContext(anchor, originalAnchor, primaryAxis,
                 tier, inclination, culture, seed, hubs, anchors, strategy, network,
                 newPartition, gateways);
     }
 
     /** Layout Rework Stage 3b — copy-with the derived gateways. */
     public SiteContext withGateways(Gateways newGateways) {
-        return new SiteContext(anchor, originalAnchor, primaryAxis, spinePath,
+        return new SiteContext(anchor, originalAnchor, primaryAxis,
                 tier, inclination, culture, seed, hubs, anchors, strategy, network,
                 zonePartition, newGateways);
     }
@@ -132,7 +122,7 @@ public record SiteContext(
      *  either field to keep the analyzed value. */
     public SiteContext withOverrides(Inclination newInclination, ViabilityTier newTier) {
         return new SiteContext(
-                anchor, originalAnchor, primaryAxis, spinePath,
+                anchor, originalAnchor, primaryAxis,
                 newTier        != null ? newTier        : tier,
                 newInclination != null ? newInclination : inclination,
                 culture, seed, hubs, anchors, strategy, network, zonePartition, gateways);

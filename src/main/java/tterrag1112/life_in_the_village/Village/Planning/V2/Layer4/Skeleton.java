@@ -6,7 +6,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.CardinalAxis;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,34 +17,14 @@ import java.util.List;
  * adds in Phase 4a. Frozen at Phase 6 when the orchestrator wraps
  * the snapshot in {@link RoadNetwork}.
  *
- * <h3>Track E1 prompt 3 fix-up — network-first construction</h3>
+ * <h3>A6 teardown</h3>
  *
- * Prompt 3's original Skeleton was built from a derived
- * {@link SpinePath} (a sequential view of every network edge's
- * primitive). That made it look like the planner's source of
- * truth was the spine, when really the spine was a thin wrapper
- * around the network. Drop reasons and field names ("spine,"
- * "spineSegment") were dishonest.
- *
- * <p>Skeleton is now constructed from the {@link NetworkSpec}
- * directly. The chord-decomposition logic is unchanged — each
- * primitive (Ring, CurvedRoad, Arc, Spur, …) still produces the
- * same {@link SpineSegment} count — but the source of truth is
- * the network's {@link NetworkEdge edges} list. The legacy
- * {@link #spinePath()} accessor remains as a cached derived view
- * for backwards-compat consumers (debug serialization, cross-
- * street planning that assumes a linear spine).
- *
- * <p>Renamings:
- * <ul>
- *   <li>{@code spineSegments()} → {@link #primarySegments()}
- *       — these are the chord-decomposed network edges, not a
- *       "spine" subset.</li>
- *   <li>{@link #allSegments()} unchanged — primary + cross-
- *       streets, used for frontage scoring.</li>
- *   <li>{@code spinePath()} still available as a derived view
- *       (legacy).</li>
- * </ul>
+ * Skeleton is constructed from the {@link NetworkSpec} directly.
+ * The chord-decomposition logic converts each {@link NetworkEdge}
+ * into one or more {@link SpineSegment}s. {@code SpinePath} and
+ * {@code CrossStreet} have been deleted; {@link #primarySegments()}
+ * is the canonical segment list, and {@link #allSegments()} is
+ * now identical to it.
  */
 public final class Skeleton {
 
@@ -56,19 +35,12 @@ public final class Skeleton {
 
     /** Chord-decomposed view of every network edge. Recomputed
      *  here at construction; cross-streets added separately via
-     *  {@link #addCrossStreet}. */
+     *  the placer adds. */
     private final List<SpineSegment> primarySegments;
-    private final List<CrossStreet> crossStreets = new ArrayList<>();
     private final List<Junction> junctions = new ArrayList<>();
 
-    /** Cached derived spine path. Computed lazily on first
-     *  {@link #spinePath()} call so non-debug code paths never pay
-     *  the derivation cost. */
-    private SpinePath cachedSpinePath;
-
-    /** Track E1 prompt 3 fix-up — network-first constructor. The
-     *  planner runs through this path; the legacy SpinePath
-     *  constructor is gone. */
+    /** Constructs skeleton from the network spec by chord-decomposing
+     *  each {@link tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge} into {@link SpineSegment}s. */
     public Skeleton(NetworkSpec network, CardinalAxis primaryAxis,
                     BlockPos fallbackAnchor, int spineWidth) {
         this.network = network;
@@ -93,47 +65,14 @@ public final class Skeleton {
      *  they are the network. */
     public List<SpineSegment> primarySegments() { return primarySegments; }
 
-    public List<CrossStreet> crossStreets() { return crossStreets; }
     public List<Junction> junctions() { return junctions; }
 
-    /** Legacy derived view of the network as a {@link SpinePath}.
-     *  Computed lazily; backed by
-     *  {@link NetworkPlanner#deriveSpinePath}. Retained for
-     *  backwards-compat consumers (debug serialization, cross-
-     *  street planning that assumes a linear spine). Planning code
-     *  should iterate {@link #primarySegments()} or
-     *  {@link #edges()} instead. */
-    public SpinePath spinePath() {
-        if (cachedSpinePath == null) {
-            cachedSpinePath = network != null
-                    ? NetworkPlanner.deriveSpinePath(network, primaryAxis, fallbackAnchor)
-                    : new SpinePath(primaryAxis, List.of(), fallbackAnchor,
-                            fallbackAnchor, 0);
-        }
-        return cachedSpinePath;
-    }
-
-    /** Spine path's overall start. Legacy accessor; equivalent to
-     *  {@code spinePath().start()}. */
-    public BlockPos spineStart() { return spinePath().start(); }
-
-    /** Spine path's overall end. Legacy accessor; equivalent to
-     *  {@code spinePath().end()}. */
-    public BlockPos spineEnd() { return spinePath().end(); }
-
-    public void addCrossStreet(CrossStreet cs) { crossStreets.add(cs); }
-    public void removeCrossStreet(CrossStreet cs) { crossStreets.remove(cs); }
     public void addJunction(Junction j) { junctions.add(j); }
 
-    /** All road segments in order: each chord-decomposed primary
-     *  edge, then each cross street. Used for frontage scoring
-     *  in {@link PhasedPlanner#findBestCandidate}. */
+    /** All road segments — the chord-decomposed primary network edges.
+     *  Used for frontage scoring in {@link PhasedPlanner#findBestCandidate}. */
     public List<RoadSegment> allSegments() {
-        List<RoadSegment> out = new ArrayList<>(primarySegments.size()
-                + crossStreets.size());
-        out.addAll(primarySegments);
-        out.addAll(crossStreets);
-        return Collections.unmodifiableList(out);
+        return primarySegments;
     }
 
     // =========================================================================

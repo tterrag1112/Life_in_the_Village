@@ -13,7 +13,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DroppedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Junction;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
@@ -229,17 +228,20 @@ public final class HarnessDump {
         Skeleton skeleton = network.skeleton();
 
         JsonObject sk = new JsonObject();
-        sk.add("spineStart", LayoutDumpSerializer.posJson(skeleton.spineStart()));
-        sk.add("spineEnd",   LayoutDumpSerializer.posJson(skeleton.spineEnd()));
+        // A6: spineStart/spineEnd derived from first/last primary segment.
+        java.util.List<tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.SpineSegment> _segsForBounds = skeleton.primarySegments();
+        if (!_segsForBounds.isEmpty()) {
+            sk.add("spineStart", LayoutDumpSerializer.posJson(_segsForBounds.get(0).start()));
+            sk.add("spineEnd",   LayoutDumpSerializer.posJson(_segsForBounds.get(_segsForBounds.size() - 1).end()));
+        }
 
         JsonArray segs = new JsonArray();
-        int spineIdx = 0, crossIdx = 0;
+        int spineIdx = 0;
         for (RoadSegment s : skeleton.allSegments()) {
             JsonObject js = new JsonObject();
             String id;
             if (s instanceof SpineSegment) id = "S" + (spineIdx++);
-            else if (s instanceof CrossStreet) id = "X" + (crossIdx++);
-            else id = s.getClass().getSimpleName() + spineIdx + crossIdx;
+            else id = s.getClass().getSimpleName() + spineIdx;
             js.addProperty("id", id);
             js.addProperty("kind", segmentKind(s));
             js.add("start", LayoutDumpSerializer.posJson(s.start()));
@@ -249,17 +251,7 @@ public final class HarnessDump {
         }
         sk.add("segments", segs);
 
-        JsonArray cross = new JsonArray();
-        for (CrossStreet cs : skeleton.crossStreets()) {
-            JsonObject jc = new JsonObject();
-            jc.add("start", LayoutDumpSerializer.posJson(cs.start()));
-            jc.add("end",   LayoutDumpSerializer.posJson(cs.end()));
-            jc.add("spineJunction",
-                    LayoutDumpSerializer.posJson(cs.spineJunction()));
-            jc.addProperty("width", cs.width());
-            cross.add(jc);
-        }
-        sk.add("crossStreets", cross);
+        // A6: crossStreets removed.
 
         JsonArray junc = new JsonArray();
         for (Junction j : skeleton.junctions()) {
@@ -281,7 +273,6 @@ public final class HarnessDump {
 
     private static String segmentKind(RoadSegment s) {
         if (s instanceof SpineSegment) return "SPINE_SEGMENT";
-        if (s instanceof CrossStreet)  return "CROSS_STREET";
         return s.getClass().getSimpleName();
     }
 

@@ -4,7 +4,7 @@ import net.minecraft.core.BlockPos;
 
 /**
  * V2 single piece of the village spine. The full spine is a list of
- * SpineSegments held by {@link Skeleton#spinePath}; on flat terrain
+ * SpineSegments held by {@link Skeleton#primarySegments()}; on flat terrain
  * the list is typically two segments (forward + backward from the
  * anchor). On terrain that forced reactive deflection, the list
  * includes additional arc segments.

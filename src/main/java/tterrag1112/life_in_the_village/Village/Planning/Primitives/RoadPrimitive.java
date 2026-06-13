@@ -508,7 +508,7 @@ public sealed interface RoadPrimitive
          *  {@code Math.round(sqrt(distSqr))} convention). The router emits
          *  {@code SmoothedPath} for every edge, so this must be real — the
          *  throwing default would crash any consumer that reads edge length
-         *  (the auto-dump, {@code deriveSpinePath}, realiser length reads). */
+         *  (the auto-dump, realiser length reads). */
         @Override
         public int intendedLength() {
             if (waypoints.size() < 2) return 0;

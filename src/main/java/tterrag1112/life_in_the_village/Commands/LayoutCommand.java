@@ -18,7 +18,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer1.V2FeatureMap;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Hub;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.BuildingSelector;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.DependencyResolver;
@@ -29,7 +28,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResul
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.ReconciliationEngine;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Junction;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
@@ -127,14 +125,13 @@ public final class LayoutCommand {
         RoadNetwork network = phased.network();
         Skeleton skeleton = network.skeleton();
 
-        // Phase 2 — spine path (multi-segment).
-        SpinePath path = skeleton.spinePath();
-        send(src, "phase 2: spine path " + path.segments().size()
-                + " segments, totalLength=" + path.totalLength()
-                + " from " + posStr(path.start()) + " to " + posStr(path.end()));
-        for (int i = 0; i < path.segments().size(); i++) {
-            RoadPrimitive prim = path.segments().get(i);
-            send(src, "  seg-" + (i + 1) + ": " + describePrimitive(prim));
+        // Phase 2 — routed network edges (A6: SpinePath removed).
+        send(src, "phase 2: routed network "
+                + skeleton.edges().size() + " edges, "
+                + skeleton.primarySegments().size() + " chord segments");
+        for (int i = 0; i < skeleton.edges().size(); i++) {
+            var e = skeleton.edges().get(i);
+            send(src, "  edge-" + (i + 1) + ": " + describePrimitive(e.primitive()));
         }
 
         // Phase 3 + 4 events.
@@ -181,7 +178,7 @@ public final class LayoutCommand {
         send(src, "phase 5 reassess:");
         for (PhasedPlanner.PhaseEvent e : phased.events()) {
             switch (e.kind()) {
-                case TRIM, REMOVED_CROSS_STREET, ISOLATED ->
+                case TRIM, ISOLATED ->
                         send(src, "  " + e.kind().name().toLowerCase() + ": " + e.detail());
                 default -> {}
             }
@@ -195,19 +192,12 @@ public final class LayoutCommand {
             }
         }
 
-        int totalSegments = path.segments().size() + skeleton.crossStreets().size();
-        send(src, "roads (" + totalSegments + " segments + "
+        send(src, "roads (" + skeleton.primarySegments().size() + " segments + "
                 + skeleton.junctions().size() + " junctions):");
         for (int i = 0; i < skeleton.primarySegments().size(); i++) {
             SpineSegment seg = skeleton.primarySegments().get(i);
-            send(src, "  spine-" + (i + 1) + ": width=" + seg.width()
+            send(src, "  seg-" + (i + 1) + ": width=" + seg.width()
                     + " from " + posStr(seg.start()) + " to " + posStr(seg.end()));
-        }
-        for (int i = 0; i < skeleton.crossStreets().size(); i++) {
-            CrossStreet cs = skeleton.crossStreets().get(i);
-            send(src, "  cross-street-" + (i + 1) + ": width=" + cs.width()
-                    + " length=" + segLength(cs.start(), cs.end())
-                    + " junction=" + posStr(cs.spineJunction()));
         }
         for (Junction j : skeleton.junctions()) {
             send(src, "  junction at " + posStr(j.pos())
@@ -267,7 +257,6 @@ public final class LayoutCommand {
     private static String segLabel(Object segment) {
         if (segment == null) return "none";   // Stage 3c — facingRoad is nullable
         return segment instanceof SpineSegment ? "spine"
-                : segment instanceof CrossStreet ? "cross-street"
                 : segment.getClass().getSimpleName();
     }
 

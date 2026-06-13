@@ -98,9 +98,12 @@ public final class SiteCommand {
         send(src, "primary axis: " + axd.axis()
                 + " (chosen by: " + axd.reason() + ")");
 
-        // Spine path summary
-        send(src, "spine path: " + result.context().spinePath().segments().size()
-                + " segments, totalLength=" + result.context().spinePath().totalLength());
+        // Recipe network summary (A6: SpinePath removed; ctx.spinePath() gone)
+        var net = result.context().network();
+        if (net != null) {
+            send(src, "recipe network: " + net.nodes().size() + " nodes, "
+                    + net.edges().size() + " edges, topology=" + net.topology());
+        }
 
         send(src, "total time: " + (t1 - t0) + " ms");
         return 1;

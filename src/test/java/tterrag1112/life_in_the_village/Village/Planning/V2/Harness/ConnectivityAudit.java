@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Village.Planning.V2.Harness;
 import net.minecraft.core.BlockPos;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacedBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.PlacementResult;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.Skeleton;
@@ -43,9 +42,9 @@ import java.util.Map;
  */
 public final class ConnectivityAudit {
 
-    /** Length floor in blocks below which a CrossStreet in the main
+    /** Length floor in blocks below which a segment in the main
      *  component is classified as a "stub" rather than a regular
-     *  cross-street. Heuristic; documents the audit's split. */
+     *  segment. Heuristic; documents the audit's split. */
     private static final double STUB_LENGTH = 5.0;
 
     public record BuildingRow(
@@ -109,16 +108,13 @@ public final class ConnectivityAudit {
         // Assign IDs in declaration order: spine segments → S0..,
         // cross-streets → X0.. Same order MetricsComputer iterates.
         String[] segIds = new String[segs.size()];
-        int spineIdx = 0, crossIdx = 0;
+        int spineIdx = 0;
         for (int i = 0; i < segs.size(); i++) {
             RoadSegment s = segs.get(i);
             if (s instanceof SpineSegment) {
                 segIds[i] = "S" + (spineIdx++);
-            } else if (s instanceof CrossStreet) {
-                segIds[i] = "X" + (crossIdx++);
             } else {
-                segIds[i] = s.getClass().getSimpleName().substring(0, 1).toUpperCase()
-                        + i;
+                segIds[i] = s.getClass().getSimpleName().substring(0, 1).toUpperCase() + i;
             }
         }
 
@@ -177,9 +173,6 @@ public final class ConnectivityAudit {
                 role = "arm";
             } else if (segs.get(nearest) instanceof SpineSegment) {
                 role = "spine";
-            } else if (segs.get(nearest) instanceof CrossStreet) {
-                double len = segmentLength(segs.get(nearest));
-                role = len < STUB_LENGTH ? "stub" : "cross";
             } else {
                 role = "cross";
             }

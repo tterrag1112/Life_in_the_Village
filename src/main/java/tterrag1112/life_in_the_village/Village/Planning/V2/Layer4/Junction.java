@@ -6,8 +6,7 @@ import java.util.List;
 
 /**
  * V2 junction — a point where two or more {@link RoadSegment}s
- * meet. Populated in Phase 5 from each {@link CrossStreet}'s
- * {@code spineJunction}; the anchor itself is also a junction
+ * meet. Populated during Phase 5; the anchor itself is also a junction
  * (the spine's logical centre, used by Layer 5 plaza generation).
  */
 public record Junction(BlockPos pos, List<RoadSegment> segments) {

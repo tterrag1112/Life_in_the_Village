@@ -25,7 +25,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkSpec;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.PrimaryBinding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteAnalyzer;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SiteContext;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.SpinePath;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.StrategySelectionResult;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.ViabilityTier;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.Zone;
@@ -41,7 +40,6 @@ import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.Reconciliation
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.StructureAvailabilityRegistry;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer3.UnavailableBuilding;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.BlockServingRouter;
-import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.CrossStreet;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.PhasedPlanner;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadNetwork;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer4.RoadSegment;
@@ -356,22 +354,16 @@ public final class LayoutDumpSerializer {
         o.addProperty("cultureId", ctx.culture().id());
         o.addProperty("seed", ctx.seed());
 
-        SpinePath spine = ctx.spinePath();
-        if (spine != null) {
-            JsonObject sp = new JsonObject();
-            sp.addProperty("primaryAxis", spine.primaryAxis().name());
-            sp.addProperty("totalLength", spine.totalLength());
-            sp.add("start", posJson(spine.start()));
-            sp.add("end", posJson(spine.end()));
-            JsonArray segs = new JsonArray();
-            PrimitiveContext pctx = PrimitiveContext.basic(level, seed);
-            for (RoadPrimitive prim : spine.segments()) {
-                segs.add(roadPrimitiveJson(prim, pctx));
-            }
-            sp.add("segments", segs);
-            o.add("spinePath", sp);
+        // A6: SpinePath removed. Recipe network summary instead.
+        var rn = ctx.network();
+        if (rn != null) {
+            JsonObject rno = new JsonObject();
+            rno.addProperty("topology", rn.topology().name());
+            rno.addProperty("nodes", rn.nodes().size());
+            rno.addProperty("edges", rn.edges().size());
+            o.add("recipeNetwork", rno);
         } else {
-            o.add("spinePath", JsonNull.INSTANCE);
+            o.add("recipeNetwork", JsonNull.INSTANCE);
         }
 
         JsonArray hubs = new JsonArray();
@@ -840,11 +832,16 @@ public final class LayoutDumpSerializer {
     private static JsonObject roadsJson(RoadNetwork network, ServerLevel level, long seed) {
         JsonObject o = new JsonObject();
         Skeleton skeleton = network.skeleton();
-        SpinePath spine = skeleton.spinePath();
 
         JsonObject sk = new JsonObject();
-        sk.add("spineStart", posJson(skeleton.spineStart()));
-        sk.add("spineEnd",   posJson(skeleton.spineEnd()));
+        // A6: spineStart/spineEnd and spinePathPrimitives removed (SpinePath gone).
+        // Network edges with their primitives are now the primary descriptor.
+        JsonArray edgePrims = new JsonArray();
+        PrimitiveContext pctx = PrimitiveContext.basic(level, seed);
+        for (var e : skeleton.edges()) {
+            edgePrims.add(roadPrimitiveJson(e.primitive(), pctx));
+        }
+        sk.add("edgePrimitives", edgePrims);
 
         JsonArray segs = new JsonArray();
         for (RoadSegment s : skeleton.allSegments()) {
@@ -856,25 +853,7 @@ public final class LayoutDumpSerializer {
             segs.add(js);
         }
         sk.add("segments", segs);
-
-        if (spine != null) {
-            JsonArray prims = new JsonArray();
-            PrimitiveContext pctx = PrimitiveContext.basic(level, seed);
-            for (RoadPrimitive prim : spine.segments()) {
-                prims.add(roadPrimitiveJson(prim, pctx));
-            }
-            sk.add("spinePathPrimitives", prims);
-        }
-
-        JsonArray cross = new JsonArray();
-        for (CrossStreet cs : skeleton.crossStreets()) {
-            JsonObject jc = new JsonObject();
-            jc.add("start", posJson(cs.start()));
-            jc.add("end",   posJson(cs.end()));
-            jc.addProperty("width", cs.width());
-            cross.add(jc);
-        }
-        sk.add("crossStreets", cross);
+        // A6: crossStreets removed (CrossStreet type deleted).
 
         JsonArray junc = new JsonArray();
         skeleton.junctions().forEach(j -> {
@@ -941,37 +920,17 @@ public final class LayoutDumpSerializer {
     }
 
     private static JsonArray gatewaysJson(RoadNetwork roads) {
+        // A6: spineStart/spineEnd and crossStreets removed.
+        // Gateways are now read from the routed network's GATEWAY nodes.
         JsonArray a = new JsonArray();
         Skeleton sk = roads.skeleton();
-        BlockPos spineEnd   = sk.spineEnd();
-        BlockPos spineStart = sk.spineStart();
-        if (spineEnd != null) {
-            JsonObject g = new JsonObject();
-            g.addProperty("role", "PRIMARY");
-            g.add("position", posJson(spineEnd));
-            g.addProperty("source", "spineEnd");
-            a.add(g);
-        }
-        if (spineStart != null && (spineEnd == null || !spineStart.equals(spineEnd))) {
-            JsonObject g = new JsonObject();
-            g.addProperty("role", "SIDE");
-            g.add("position", posJson(spineStart));
-            g.addProperty("source", "spineStart");
-            a.add(g);
-        }
-        for (CrossStreet cs : sk.crossStreets()) {
-            if (cs.start() != null) {
+        for (var node : sk.network().nodes()) {
+            if (node.kind() == tterrag1112.life_in_the_village.Village.Planning
+                    .V2.Layer2.NodeKind.GATEWAY) {
                 JsonObject g = new JsonObject();
-                g.addProperty("role", "SIDE");
-                g.add("position", posJson(cs.start()));
-                g.addProperty("source", "crossStreet.start");
-                a.add(g);
-            }
-            if (cs.end() != null) {
-                JsonObject g = new JsonObject();
-                g.addProperty("role", "SIDE");
-                g.add("position", posJson(cs.end()));
-                g.addProperty("source", "crossStreet.end");
+                g.addProperty("role", node.id().contains("PRIMARY") ? "PRIMARY" : "SIDE");
+                g.add("position", posJson(node.pos()));
+                g.addProperty("source", node.id());
                 a.add(g);
             }
         }
@@ -1072,7 +1031,6 @@ public final class LayoutDumpSerializer {
 
     private static String facingRoadKind(RoadSegment s) {
         if (s instanceof SpineSegment) return "SPINE_SEGMENT";
-        if (s instanceof CrossStreet)  return "CROSS_STREET";
         return s.getClass().getSimpleName();
     }
 

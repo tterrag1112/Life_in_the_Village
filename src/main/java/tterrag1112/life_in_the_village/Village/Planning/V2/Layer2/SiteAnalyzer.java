@@ -178,12 +178,10 @@ public final class SiteAnalyzer {
 
         BlockPos finalAnchor = adj.adjusted != null ? adj.adjusted : anchorDec.anchor;
 
-        // Track E1 prompt-3 — build a partial context for strategy
-        // selection (anchors + strategy) before the network planner
-        // runs. SpinePath is null at this stage; it's derived from
-        // the network spec once primitives are emitted.
+        // Build a partial context for strategy selection before the
+        // network planner runs.
         SiteContext ctx = SiteContext.withEmptyHubs(
-                finalAnchor, anchorDec.anchor, axisDec.axis, /*spinePath*/ null,
+                finalAnchor, anchorDec.anchor, axisDec.axis,
                 effectiveTier, effectiveInclination, culture, seed);
         java.util.List<Anchor> anchors = AnchorDetector.detect(fmap, source);
         ctx = ctx.withAnchors(anchors);
@@ -202,14 +200,9 @@ public final class SiteAnalyzer {
         ctx = ctx.withGateways(GatewayPlanner.derive(
                 gatewayPrimaryPos, axisDec.axis, effectiveTier));
 
-        // Track E1 prompt-3 — grow the network from the selected
-        // strategy + anchors. The spine path is now a derived view of
-        // the network's edges so existing consumers (PhasedPlanner,
-        // RoadPainter, LayoutCommand, …) keep reading it unchanged.
+        // A6: SpinePath removed. Network is stored directly; no spine derivation.
         NetworkSpec network = NetworkPlanner.plan(ctx, fmap, seed);
-        SpinePath derivedSpine = NetworkPlanner.deriveSpinePath(network,
-                axisDec.axis, finalAnchor);
-        ctx = ctx.withNetwork(network, derivedSpine);
+        ctx = ctx.withNetwork(network);
 
         // Layout Rework Stage 3a — terrain-warped land-use partition.
         // Purely additive: computed onto the context (and the cells'
@@ -226,7 +219,7 @@ public final class SiteAnalyzer {
         Diagnostics diag = new Diagnostics(tier, inc, anchorDec, axisDec, adj);
 
         LOGGER.info("variation: seed={} (drives inclination sampling, network"
-                + " topology variation, cross-street count + position, building"
+                + " topology variation, building"
                 + " selection, topo-tie shuffle)", seed);
         LOGGER.info("site: tier={} inclination={} culture={} seed={}",
                 effectiveTier, effectiveInclination, culture.id(), seed);
@@ -235,8 +228,8 @@ public final class SiteAnalyzer {
                 finalAnchor.getX(), finalAnchor.getY(), finalAnchor.getZ(),
                 adj.reason);
         LOGGER.info("primary axis: {} ({})", axisDec.axis, axisDec.reason);
-        LOGGER.info("derived spine path: {} segments, totalLength={}",
-                derivedSpine.segments().size(), derivedSpine.totalLength());
+        LOGGER.info("recipe network: {} nodes, {} edges, topology={}",
+                network.nodes().size(), network.edges().size(), network.topology());
         LOGGER.info("zone partition: {} zones [{}] (terrain-warped, center-out)",
                 partition.zones().size(), zoneSummary(partition));
 
