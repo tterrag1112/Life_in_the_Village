@@ -127,9 +127,10 @@ public class VillagePlacementTest {
 
     @Test
     public void densityMatchesSpacingOverAClaimSizedArea() {
-        // A kingdom claim of ~80 cells (64-block cells) spans roughly a
-        // 640x640-block square. With SPACING_CHUNKS=10 (160 blocks/region)
-        // that is a 4x4 region grid = 16 regions. All-land => 16 candidates.
+        // The lenient gate accepts all buildable land, and V1 places exactly
+        // one candidate per region, so an all-land RxR region grid must yield
+        // R*R candidates -- regardless of the chosen SPACING_CHUNKS. This is
+        // the density invariant (one village per region on viable terrain).
         LongFunction<DigestSample> land = allLand();
         int regionsPerSide = 4;
         int count = 0;

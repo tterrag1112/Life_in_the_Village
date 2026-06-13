@@ -3837,3 +3837,240 @@ Build verification deferred (sandbox blocks maven.neoforged.net). Static review:
    All villages should appear as kingdom villages (bound to the kingdom).
 7. **Cap verification**: `trade_city` has `max_per_kingdom=1` and `sacred_grove` has
    `max_per_kingdom=1`. At most one of each should appear in a kingdom's charter list.
+
+---
+
+## V1+V2+V3 — Village-first generation: deterministic placement, claim overlay, capital promotion
+
+**Branch:** `cowork/v1-v3-village-first` (stacked: V1 commit, then V2+V3 commit).
+Implements the worldgen side of the village-first pipeline per
+`.claude/planning/16-VILLAGE-FIRST-GENERATION.md` (the 6th iteration; built to
+NOT repeat the lag of iterations 1-2 or the failures of 3-5). Build verification
+deferred (sandbox blocks maven.neoforged.net); static review + determinism
+reasoning in its place.
+
+### Disposition (verified before code)
+
+**Digest shape + sampling call (load-free, on demand).**
+`AtlasSampler.sampleCell(ServerLevel, int cellX, int cellZ)` returns a fresh
+`AtlasCell` by 5-point `getBaseHeight` + 1 `getNoiseBiome` calls on the chunk
+generator's noise — NO chunk load, NO persisted atlas fill, NO `WorldAtlas`
+SavedData touch (C0 sec.1/5; AtlasSampler javadoc: "safe to call from any
+thread… microseconds per call"). The `AtlasCell` digest exposes exactly:
+`cellX/cellZ`, `centerY`, `minY`, `maxY` (→ `slope()` = relief), `biomeKey`,
+`BiomeCategory category`, and the `flags` bitfield (`isCoast()`, `isFreshwater()`,
+`isSteep()`, etc.). This is what C1-d's PortfolioIssuer read and what V1's
+lenient gate keys on. `BiomeCategory.isUnbuildable()` = OCEAN || VOID — the
+exact "genuinely impossible" predicate.
+
+**Current state (signatures read).**
+- `Kingdom` (1738-line mutable class): claim via `getTerritorialClaim()` →
+  `KingdomClaim.claimedCellKeys()` (List<Long> of packed cell keys);
+  `issueSettlementCharter(name, cellKey, role, villageType, sizeBand, capital,
+  digest, tick)`, `updateSettlementCharter(c)`, `getSettlementCharters()`,
+  `getCapitalCharter()`, `setCapitalVillageId(id)`, `addVillage(id)`. Charters
+  ride inside the nested governance codec as `settlementCharters`
+  (optionalFieldOf) — already present, **no new codec field added**.
+- `SettlementCharter` (record, 14 fields, under the 16 cap): id, kingdomId,
+  name, stage, targetCellKey, role, villageType, sizeBand, **capital flag**,
+  digest, surveyedAnchor?, footprintScore?, realizedVillageId?, issuedTick.
+  Already carries the `capital` flag V3 needs.
+- `CapitalGenerator.generate(level, origin, name, culture, capitalType, progress)`
+  — created Kingdom → filled atlas → computed claim → issued a separate capital
+  charter (C1-a) → called PortfolioIssuer (C1-d).
+- `WorldgenKingdomSeeder` — 2 kingdoms (MIN/MAX_KINGDOMS=2), staged 1-at-a-time.
+- The C1-b survey loop is `CharterSurveyTickSystem` in `Events/TickSystems.java`
+  (interval 40, priority 55), registered in `TickSubsystemRegistry` — the
+  REMOVAL target.
+
+**Placement-grid decision + density math (sec.3).** The placement region is a
+COARSE grid, NOT the 64-block atlas cell. Named constants in `VillagePlacement`:
+`SPACING_CHUNKS = 8` (128 blocks/region) and `SEPARATION_CHUNKS = 2` (32-block
+floor) — tighter than vanilla's ~34-chunk village spacing because Garrett wants
+a dense, mostly-TOWN-and-below world. Math: a kingdom claim is ~60-120 64-block
+cells (~245k-490k block^2; per the C1-d entry's "60-120-cell claim"). At 128
+blocks/region (16,384 block^2) a claim overlaps ~15-30 placement regions; V1
+places one candidate per region and the lenient gate accepts all buildable
+land, so a kingdom owns ~15-28 villages — Garrett's 20-30 target. Density is the
+ONE knob (`SPACING_CHUNKS`); deterministic, so tuning is reproducible. Tighten
+to 7 or 6 if 20-30 is not hit in-world.
+
+### V1 — Deterministic placement primitive (PURE)
+
+`Kingdom/Settlement/VillagePlacement.java` — the Tier-0 pure function
+`evaluateRegion(regionX, regionZ, worldSeed, LongFunction<DigestSample>) ->
+Optional<VillageCandidate>`.
+- Vanilla `RandomSpreadStructurePlacement` math: a per-region `Random` seeded
+  `regionX*341873128712 + regionZ*132897987541 + worldSeed + PLACEMENT_SALT`
+  (vanilla's region multipliers + a fixed salt), two
+  `nextInt(SPACING - SEPARATION)` draws bound the candidate chunk so adjacent
+  regions can never place closer than `SEPARATION` chunks (vanilla's mechanism;
+  no explicit neighbour check). Candidate = chunk-centre block pos.
+- **Lenient digest gate:** sample the candidate cell's digest load-free; ACCEPT
+  unless `BiomeCategory.isUnbuildable()` (OCEAN/VOID) or `centerY <= 0`
+  (no-land). Steep/swamp/desert/coast/river all accepted — V2 adapts at
+  realization.
+- `VillageCandidate` carries: region coords, exact BlockPos estimate, cellKey,
+  a deterministically-derived role LABEL (coastal→harbor, river→river_market,
+  mountain/steep→mining, forest→forestry, desert→caravan, else trade/farming)
+  and a `VillageSizeTier` size band skewed small (45% HAMLET / 40% VILLAGE /
+  12% TOWN / 3% CITY). NO persistence, NO terrain scan, NO V2 call.
+- A `DigestSample` seam (record of category/relief/centerY/freshwater/coast)
+  makes the function injectable: production wraps `AtlasSampler.sampleCell`; the
+  test injects synthetic digests, so the primitive is testable with no
+  `ServerLevel`. A production `evaluateRegion(ServerLevel, rx, rz)` overload
+  wires the load-free sampler.
+
+**Test:** `…/V2/Harness/VillagePlacementTest.java` (headless, no MC bootstrap —
+the seam takes synthetic digests; BlockPos/BiomeCategory/VillageSizeTier are
+plain types). Asserts: **determinism** (same seed → identical candidate across
+repeated AND reverse-order sweeps), **density** (one candidate per all-land
+region; zero over all-ocean), **separation** (Chebyshev axis distance between
+every candidate pair ≥ SEPARATION_CHUNKS*16), **lenient gate** (plains/steep/
+swamp/desert/coast/river accepted; ocean/void/no-land rejected), seed-relocation
+(different seed reshuffles), and cellKey integrity (cellKey matches the
+candidate's block pos). Garrett runs `./gradlew test --tests "*VillagePlacement*"`.
+
+### V2 — Claim overlay + enumeration (Tier 1)
+
+`Kingdom/Worldgen/ClaimVillageEnumerator.java` — `enumerate(kingdom, level, tick,
+progress)`: collects the placement regions overlapping the claim's cells
+(`regionsOverlappingClaim`), evaluates each ONCE via V1's load-free overload,
+keeps candidates whose landing cell is in the claim, and issues one re-roled
+`SettlementCharter` per candidate (stage CHARTERED, capital=false, realizedId
+empty), skipping already-charted cells. Reuses
+`kingdom.issueSettlementCharter(...)`.
+- **Village→kingdom DERIVED, not stored (sec.5):** added
+  `VillageSavedData.getKingdomForCell(cellKey)` — the first kingdom whose claim
+  contains the cell. The charter's `kingdomId` is the issuer; the claim is
+  authoritative. Culture/religion are derived from the owning kingdom
+  (`kingdom.getCulture()`), not copied onto the charter.
+- **Survey-loop REMOVED:** deleted `CharterSurveyTickSystem` (the per-charter
+  survey tick loop) from `Events/TickSystems.java` and its registration in
+  `TickSubsystemRegistry`. There is no per-village siting attempt anymore —
+  placement is deterministic; validation defers to V2 at realization (V4). Kept
+  `CharterSurvey` (the pure anchor-pick helper) and `GeneratorTerrainSource`
+  for V4 realization reuse. Kept `CharterRealizationTickSystem` registered as
+  the V4 realization plug-in point (it realizes SURVEYED charters; none exist
+  until V4 wires the realization handoff — see flag below). Deleted
+  `PortfolioIssuer` (orphaned — the per-cell affinity walk is superseded by the
+  V1 spread).
+
+### V3 — Capital promotion
+
+`Kingdom/Worldgen/CapitalPromoter.java` — `promote(kingdom, level, capitalName,
+capitalType, tick, progress)`: picks the best-suited OWNED charter (nearest the
+claim origin, ties broken by digest score: flatter + bigger band + freshwater/
+coast bonus) and flags it capital via `SettlementCharter.withCapital(name, type)`
+— a promotion, NOT a new siting, NO new codec field (the existing `capital`
+boolean is the handle; `getCapitalCharter()` reads it; the map pins already key
+on `charter.capital()`). Sparse-claim fallback: if the kingdom owns no village,
+issue ONE capital charter at the claim origin cell — never a hard failure
+(sec.2/sec.8). This permanently removes the capital-placement-failure class.
+- `CapitalGenerator.generate` reworked: create Kingdom → fill atlas → compute
+  claim → **enumerate (V2) → promote (V3)**. Replaces the C1-a separate
+  capital-charter issuance AND the C1-d PortfolioIssuer call. The
+  `removeKingdom`-on-failure path stays gone (decoupled in C1-a).
+
+### Cost-tier compliance statement (EXPLICIT — sec.1, the load-bearing rule)
+
+Every digest read in V1-V3 is the load-free on-demand `AtlasSampler.sampleCell`
+(~100µs/cell, noise-only, no chunk load, no persisted-fill touch):
+- **V1** reads exactly ONE digest sample per region evaluation, via the injected
+  sampler. No column scan, no atlas-fill forcing, no footprint validation, no V2
+  call.
+- **V2 enumeration** reads V1 (load-free) once per overlapping region (claim-
+  sized: ~15-30 regions). The only `WorldAtlas` touch is
+  `getCellByCoord` to build the stage-0 digest — a READ of an already-present
+  cell (filled by `CapitalGenerator.ensureRegionFilled` for the capital area),
+  with a `CharterDigest.UNKNOWN` fallback if absent; it does NOT force a fill.
+- **V3 promotion** reads only persisted charter records + (fallback only) one
+  already-present atlas cell.
+No Tier-2 work (`GeneratorTerrainSource`, V2 Layers 1-4, block placement) leaked
+into placement/claim. Realization (Tier 2) is V4, NOT this dispatch.
+
+### Tie-in audit
+- **CapitalGenerator callers:** only `WorldgenKingdomSeeder.processSpawn`
+  (verified) — signature unchanged; behavior change (enumerate+promote vs
+  issue-capital+portfolio) is internal. Updated in scope.
+- **Removed CharterSurveyTickSystem:** registration removed; no live symbol
+  reference remains (grep: zero `new CharterSurveyTickSystem` / `{@link
+  CharterSurveyTickSystem}`). Prose/`{@code}` mentions in `KingdomDebugCommand`
+  and the C1-c realization javadoc are harmless. The `/litv settlement survey`
+  debug command still works (calls the surviving `CharterSurvey` helper) — it is
+  now the manual bridge to produce SURVEYED charters for V4 realization testing.
+- **SettlementCharter readers:** map builders (`ContinentMapDataBuilder`,
+  `KingdomMapDataBuilder`) read `isUnrealized()` + `pinPos()` + `capital()` —
+  unaffected; promotion sets `capital()` so the capital pin renders distinctly.
+  `CharterRealizationTickSystem` reads SURVEYED charters — unaffected (dormant
+  until V4). Added `SettlementCharter.withCapital(...)`.
+- **Kingdom codec:** REUSES the existing `settlementCharters` list — confirmed
+  NO new codec field (the nested governance codec stays at its current count;
+  no field added to Kingdom or SettlementCharter).
+- **Exhaustive switches:** no enum added (role labels are strings; size band
+  reuses `VillageSizeTier`). `deriveRole` uses an if-chain, not a switch.
+
+### Simplification sweep
+- Deleted `PortfolioIssuer` (orphaned). `CharterSurveyTickSystem` deleted.
+- `CharterSurvey` + `GeneratorTerrainSource` retained for V4 (noted). The
+  `VillageTypeData` portfolio fields (biomeAffinity/kingdomRoles/maxPerKingdom/
+  tradePriority) are now unread by worldgen placement — left in place (they
+  predate C1-d and are the future type-aware-composition seam, flagged below;
+  not deleted because that is a datagen-schema change out of scope).
+
+### Deviations from prompt
+- Prompt named the survey system `CharterSurveyTickSystem`; it lives inline in
+  `Events/TickSystems.java` (not a standalone file). Removed the class +
+  registration there.
+- Default spacing landed at `SPACING_CHUNKS=8` (not the prompt's example "8-12")
+  to hit the 20-30 target given the ~60-120-cell claim size; it is a single
+  named constant, trivially tunable.
+- The capital is promoted from an enumerated owned village (V3 design); the
+  origin cell is used only as a sparse-claim fallback. CapitalGenerator no
+  longer issues a standalone capital charter up front.
+
+### Out-of-scope but flagged
+- **V4 realization handoff:** `CharterRealizationTickSystem` only realizes
+  SURVEYED charters; with the survey loop gone, charters stay CHARTERED and
+  nothing realizes until V4 wires approach-realization to build a CHARTERED
+  village via V2 at its candidate point (sharpen position, mark realized). The
+  `/litv settlement survey` + `settlement realize` debug commands are the manual
+  bridge for testing in the meantime. **Plug-in points:** generalize
+  `CharterRealizationTickSystem` to accept CHARTERED (run V1's candidate pos
+  through V2/`VillageSpawner.spawnVillage`), reusing `CharterSurvey` /
+  `GeneratorTerrainSource` for the anchor pick if desired; set
+  `kingdom.setCapitalVillageId` for the promoted capital on realize (the
+  `charter.capital()` branch already exists in that system).
+- **V5 frontier + LOD:** global (unclaimed) placement + default culture;
+  near-player-eager / distant-lazy claim processing. V1 already places
+  everywhere; V5 enumerates frontier candidates and assigns default culture.
+- **Atlas-fill staging:** the persisted atlas fill is the real worldgen cost for
+  the sim substrate (off the placement path now); its near-player-first /
+  per-tick-budget staging is the `12-FIELD-NOTES.md` item.
+- **Type-aware composition:** role is a label; the `VillageTypeData` portfolio
+  fields are the seam when composition becomes type-aware (a separate sub-project).
+
+### Build verification
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review:
+brace balance confirmed on all touched files; the digest-field reads match
+`AtlasCell`'s actual shape; no new codec field; no dangling symbol reference to
+the removed survey system; determinism reasoning in V1's javadoc + test.
+
+### Smoke test (user, in-world)
+1. **Generate a fresh world.** Wait for `[Worldgen] Great-road generation
+   complete`, then `[WorldGenKingdomSeeder] All 2 kingdoms placed`.
+2. **Open the Kingdom/Continent map.** Each kingdom should show ~20-30 village
+   pins (claim-dependent), one flagged CAPITAL, rendered distinctly. Console:
+   `ClaimVillageEnumerator: issued N owned-village charter(s) for '<Kingdom>' …`
+   and `CapitalPromoter: promoted owned village '<name>' … to CAPITAL`.
+3. **Determinism check.** Note the pin layout + seed. Delete the world,
+   regenerate with the SAME seed → identical pins (same positions, same capital).
+4. **No worldgen lag.** Kingdom seeding should complete in ms, not a multi-second
+   hitch — placement reads load-free digests only. NO `[CharterSurveyTickSystem]`
+   log lines (the system is gone), NO survey-retry spam.
+5. **List charters.** `/litv settlement list <kingdom>` — all `[CHARTERED]`, one
+   `(capital)`. (Charters stay CHARTERED until V4 wires realization; use
+   `/litv settlement survey <kingdom>` then `settlement realize <kingdom>` to
+   manually drive a charter through to a spawned village for now.)
+6. **Density tuning (optional).** If pins are too few/many, change
+   `VillagePlacement.SPACING_CHUNKS` (smaller = denser) and regenerate.

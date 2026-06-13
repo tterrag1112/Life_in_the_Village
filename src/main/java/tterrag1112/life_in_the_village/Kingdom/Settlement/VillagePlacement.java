@@ -75,11 +75,13 @@ public final class VillagePlacement {
      * Placement-region size in <b>chunks</b>. Vanilla village spacing is ~34
      * chunks; Garrett wants a much denser world (~20-30 villages per kingdom,
      * mostly TOWN-and-below), so this is far tighter. See the density math in
-     * the PROGRESS entry: at spacing 10 (160 blocks) a typical kingdom claim
-     * yields the target spread. This is the single knob to turn for global
-     * density -- it is deterministic, so tuning is reproducible.
+     * the PROGRESS entry: at spacing 8 (128 blocks/region) a typical kingdom
+     * claim (~60-120 64-block cells, ~245k-490k block^2) overlaps ~15-30
+     * placement regions, yielding ~15-28 owned villages -- Garrett's 20-30
+     * target. This is the single knob to turn for global density -- it is
+     * deterministic, so tuning is reproducible.
      */
-    public static final int SPACING_CHUNKS = 10;
+    public static final int SPACING_CHUNKS = 8;
 
     /**
      * Minimum separation in <b>chunks</b> between candidates of adjacent
@@ -89,7 +91,7 @@ public final class VillagePlacement {
      * {@code SEPARATION} chunks -- exactly vanilla's mechanism. Must be
      * {@code < SPACING}.
      */
-    public static final int SEPARATION_CHUNKS = 3;
+    public static final int SEPARATION_CHUNKS = 2;
 
     /**
      * Fixed salt mixed into the per-region RNG seed, mirroring vanilla's
