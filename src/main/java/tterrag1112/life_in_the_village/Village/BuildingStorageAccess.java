@@ -192,16 +192,39 @@ public class BuildingStorageAccess {
 
 
 
-    public static void storeItemFromPlayer(
+    /**
+     * Stores a player-supplied stack into building storage and fires the
+     * delivery hooks. Returns {@code true} when the whole stack landed.
+     *
+     * <p>Clean-fail contract (market-stall-unification critical-bug fix):
+     * {@link #storeItem} returns {@code false} when no container has room (or
+     * none exist). This method now HONOURS that return — the portion that did
+     * not fit is handed back to the player rather than silently destroyed, and
+     * the quota/order hooks fire only for the count actually stored. The old
+     * body ignored the boolean, so depositing into a chest-less building (e.g.
+     * a market with no building chests) vanished the items.</p>
+     */
+    public static boolean storeItemFromPlayer(
             ServerLevel level,
             Building building,
             ItemStack stack,
             ServerPlayer player) {
 
+        Item itemType = stack.getItem();
+        int requested = stack.getCount();
+        // storeItem mutates the stack: whatever didn't fit remains.
         storeItem(level, building, stack);
+        int storedCount = requested - stack.getCount();
 
-        String itemId    = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-        int    count     = stack.getCount();
+        // Return the unstored remainder to the player — never destroyed.
+        if (!stack.isEmpty()) {
+            if (!player.addItem(stack.copy())) player.drop(stack.copy(), false);
+            stack.setCount(0);
+        }
+        if (storedCount <= 0) return false;
+
+        String itemId    = BuiltInRegistries.ITEM.getKey(itemType).toString();
+        int    count     = storedCount;
 
         // ── Workplace quota hook (unchanged) ──────────────────────────────────
         WorkplaceAssignmentManager.onItemDelivered(player, itemId, count, level);
@@ -213,6 +236,7 @@ public class BuildingStorageAccess {
                 .ifPresent(village ->
                         CraftingOrderInteraction.onItemsDeposited(
                                 player, village.getId(), itemId, count, level));
+        return true;
     }
 
     /**

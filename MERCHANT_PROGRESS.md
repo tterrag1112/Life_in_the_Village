@@ -3022,3 +3022,173 @@ no dangling references.
    guards still spawn; `dispatchTick` untouched.
 4. Nothing regressed vs pre-sweep (only dead code/no-ops removed).
 5. Build clean; no unused-member/import warnings for the removed members.
+
+## Phase 3c — Stalls are the only merchant inventory (item-deletion fix + unification) — 2026-06-12
+
+User ruling (firm): merchants only ever use their STALL chests. The market
+BUILDING's storage is never a merchant source or sink. The user physically
+removed all chests from the market NBT. With no building chests, every
+market deposit path (player sells, NPC producer sells, merchant restock,
+channel sells) silently dropped items into a non-existent container — the
+critical deletion bug.
+
+### What shipped
+
+**New canonical helper — `Village/Markets/Complex/MarketInventory.java`.**
+The single market-goods authority. Operates across ALL active stall chests
+of a market (`getStallsForMarket` → `getChestPos`), NEVER building bounds.
+`count/has/takeUpTo/takeItem/store`. `store` returns a clean-fail boolean
+(stack left intact, one-shot WARN naming the market) when no stall chest can
+absorb — the contract that kills the silent drop. This is the proposed
+caller-helper the prompt asked for; it is the funnel every market goods path
+now routes through.
+
+**Per-symptom mechanism (verified against current code) + what changed:**
+
+1. **CRITICAL deletion — verified, fixed.** Two distinct drop paths:
+   (a) `TradeHandler.handleTrade` player-SELL called `storeExcludingStalls(market,...)`
+   which writes ONLY building-bounds containers — with no building chest the
+   goods vanished and the player was still paid. (b) `BuildingStorageAccess.storeItemFromPlayer`
+   ignored `storeItem`'s boolean (the generic silent-drop). (c) `MarketChannel.executeSell`
+   and `AbstractProductionBehavior.executeSellForWorkshop` and
+   `MonasteryEconomy.sellSurplus` all `storeItem(market,...)` into building bounds.
+   - Player-SELL now deposits via `MarketInventory.store` FIRST; clean-fail returns
+     the item to the player with an in-HUD notice, no charge. Partial fills buy only
+     what landed.
+   - `storeItemFromPlayer` now honours the boolean: unstored remainder goes back to
+     the player (addItem/drop), hooks fire only for the stored count, returns boolean.
+   - `MarketChannel.executeSell`, producer-sell, and monastery-sell route to
+     `MarketInventory.store` and clean-fail (return goods to source / decline; revenue
+     only for the portion that landed). No path can destroy items.
+
+2. **Regression "using main inventory again" — verified mechanism, hardened.**
+   Stall claims ARE durable: `MarketStall` persists chestPos+owner+active via codec;
+   `MerchantBehavior.acquireStall` re-resolves via `getStallByOwner` (persisted,
+   isActive-filtered) on every `start()`, then `claimSlot` for a vacant one. The
+   revert is the stall-less fallback: when no vacant stall exists (seeder seeded zero
+   — see MarketStallSeeder ZERO-stall WARN — or all taken), the merchant manned the
+   building origin and `StallGoods.store(market, null,...)` dumped to the building hub.
+   - `StallGoods` (available/take/store) no longer touches building bounds at all: the
+     overflow is now the market's OTHER stall chests via `MarketInventory`, never the
+     building. So even a stall-less merchant cannot read/write building storage.
+   - `MerchantBehavior.acquireStall` failure demoted-from-DEBUG to a one-shot WARN
+     naming the stall count, so the regression is diagnosable in-world.
+
+3. **`[MarketChannel] NO STOCK bread` — verified, fixed.** `MarketChannel.quote`
+   BUY-side computed `available` from `BuildingStorageAccess.countItem(market,...)`
+   (building bounds, empty) while `MerchantStartingStock.initialStockIfNeeded` stocks
+   `stall.getChestPos()`. So the channel declined while the stall held bread. Now reads
+   `MarketInventory.countItem`. (`executeBuy` already used `StallGoods` which now reads
+   stalls-only too.)
+
+4. **`[DirectBusinessChannel] no producer found for bread` — verified: NOT a lookup
+   bug, it is a stocking/production gap (flagged).** `findProducersOf(bread)` correctly
+   returns {FARMER, BAKER, INNKEEPER} and `professionFor(BAKERY)=BAKER`. The miss
+   requires BOTH a producer NPC near the building AND `countItem(building,bread)>0`.
+   BAKERY/FARMHOUSE/INN are PRODUCTION buildings with real chests (correctly building-
+   bounds — they are not markets), so "no producer" means their storage held no bread
+   (baker hadn't produced/deposited, or it sold out) or no producer NPC was loaded.
+   Fix applied: enriched the one-shot WARN to break the cause down (eligible buildings /
+   with-stock / with-NPC) so the gap is unambiguous. No code path changed for the lookup.
+
+5. **`cooked_beef quote=38 EXCEEDS maxPrice=19` — investigated; one consistency fix,
+   broader mismatch flagged.** 38 = dynamic SELL price (buyer-pays); 19 = dynamic BUY
+   price (seller-receives). The 2:1 spread is the registry's base sell/buy values
+   (`getSellPriceOrDefault` vs `getBuyPriceOrDefault`) — economy tuning, NOT a double-
+   applied markup. The reject is a ceiling-DERIVATION mismatch: the buyer's
+   `intent.maxPrice` was set from the BUY side while channels quote the SELL side.
+   - Fixed the one clear in-scope instance: `MerchantBehavior.collect` derived its
+     restock ceiling from `getDynamicBuyPrice` (~0.6x) so every restock quote was
+     CEILING-REJECTed. Now uses `getDynamicSellPrice`, mirroring the existing
+     `AbstractProductionBehavior.getItemBuyPrice` 6.3.4.4.4 fix.
+   - Flagged (not fixed): any other buy-intent producer that sets maxPrice from the
+     buy side has the same systemic mismatch; `DirectBusinessChannel` already documents
+     it inline. Cross-consumer normalization of intent ceilings is a separate change.
+
+### Files touched
+
+- `Village/Markets/Complex/MarketInventory.java` (NEW — canonical market-goods facade)
+- `Village/Markets/Complex/StallGoods.java` (overflow → other stalls, never building; store returns boolean)
+- `Npc/Economy/Channels/impl/MarketChannel.java` (quote stock + executeSell → MarketInventory, clean-fail)
+- `Village/Economy/Currency/TradeHandler.java` (player buy+sell → MarketInventory, clean-fail; removed dead countMerchantStock/storeExcludingStalls/allStallChestPositions)
+- `Npc/Brain/Behaviors/Production/AbstractProductionBehavior.java` (producer-sell → MarketInventory, clean-fail; removed dead addToContainer + own-stall locals)
+- `Npc/Religion/MonasteryEconomy.java` (surplus-sell → MarketInventory, clean-fail return to monastery)
+- `Npc/Brain/Behaviors/EatMealBehavior.java` (market food-source count/take stall-aware; BAKERY/INN/home still building-bounds)
+- `Village/BuildingStorageAccess.java` (storeItemFromPlayer honours boolean, returns remainder, returns boolean)
+- `Npc/Economy/Channels/impl/DirectBusinessChannel.java` (no-producer WARN cause breakdown)
+- `Npc/Brain/Behaviors/Trade/MerchantBehavior.java` (restock ceiling sell-side; restock overflow → personal inv; stall-less fallback WARN)
+
+### Tie-In Audit
+
+- **`BuildingStorageAccess.storeItem` callers** (30+): every one re-checked. Only the
+  THREE market-targeting sells (TradeHandler, AbstractProductionBehavior, MonasteryEconomy)
+  rerouted. All others target their own building (farmhouse/workshop/stockpile/monastery/
+  house) — correct, unaffected. StockpileChannel/VillageSimEngine/Caravan* target
+  STOCKPILE buildings (real chests) — unaffected.
+- **`storeItemFromPlayer`**: no live caller (only the doc comment in CraftingOrderInteraction
+  references it). Hardened anyway (generic silent-drop). Signature change void→boolean is
+  source-compatible (no caller).
+- **`StallGoods` callers**: MarketChannel (executeBuy — still stall-first, hub-overflow now
+  = other stalls), MerchantBehavior (stock/restock — leftover kept in personal inv),
+  EventStallManager (market=null → stall-only, unaffected). All compile with store→boolean
+  (return ignorable).
+- **`MarketChannel.findStallWithItem` / `findMerchant`**: unchanged.
+- **Exhaustive switches**: none touched (no enum/sealed changes; SettlementParty switches
+  in NpcEconomy untouched).
+- **Treasury**: trade tax still via the live `Village.depositToTreasury` +
+  `LawTaxHooks.marketTaxMultiplier` path (NpcEconomy.applyMarketTax) — not touched; no
+  `VillageTreasury.collectMarketTax` introduced.
+
+### Simplification Sweep
+
+- Deleted as orphaned-by-this-change: `TradeHandler.countMerchantStock`,
+  `TradeHandler.storeExcludingStalls`, `TradeHandler.allStallChestPositions`,
+  `AbstractProductionBehavior.addToContainer` + the dead `ownStall`/`hasActiveStall` locals.
+  Removed now-unused imports (BuildingStorageAccess + Collectors in TradeHandler; BlockEntity
+  + MarketStall in AbstractProductionBehavior; BuildingStorageAccess in StallGoods + MarketChannel).
+- `StallGoods` vs `MarketInventory`: kept both. `StallGoods` is the single-stall-with-overflow
+  view used by the channel/merchant; `MarketInventory` is the whole-market view + the overflow
+  sink. `StallGoods` now delegates its overflow to `MarketInventory` (no building-bounds logic
+  left in it). Not merged — different shapes, both have live callers.
+
+### Deviations from prompt
+
+- Symptom 4 (producer lookup) is a stocking gap, not a bug — per the prompt's "fix if a lookup
+  bug, flag if a stocking/production gap" I flagged it and improved the diagnostic only.
+- Symptom 5: fixed the one clearly-in-scope merchant-restock ceiling instance (it directly
+  blocks merchant stalls from restocking, which is squarely the merchant work) and flagged the
+  broader cross-consumer derivation mismatch rather than fixing it everywhere.
+
+### Out-of-scope but flagged
+
+- `ProductionHelpers.depositAllToBuilding` is dead (no callers) — left in place; delete with a compiler pass.
+- Cross-consumer intent.maxPrice derivation normalization (sell-side ceilings for all buy intents).
+- MarketStallSeeder seeding ZERO stalls (the upstream cause that strands a market with no stall
+  inventory at all) — out of scope here; the WARNs (seeder + merchant fallback) make it visible.
+  With no stall seeded the market simply has no inventory and trades cleanly decline (no deletion).
+
+### Build verification
+
+Deferred — sandbox blocks `maven.neoforged.net` (offline gradle can't resolve neoform-runtime).
+Static review: all 10 touched/new files brace-balanced; deleted members re-grepped to zero
+callers; orphaned imports removed; no market building remains a `BuildingStorageAccess` target
+(grep `BuildingStorageAccess.(store|take|count|hasItem)` ∩ market = only the monastery
+leftover-return and the event-stall owner-building teardown, both correct).
+
+### Smoke-test plan (user-executable)
+
+1. In CITYTEST (market building has NO chests), as a player SELL bread at a market that HAS a
+   seeded stall → bread lands in a stall chest, you are paid, nothing vanishes. Open the stall
+   chest to confirm.
+2. Sell at a market whose stalls are full (or that seeded zero stalls) → you get
+   "no stall space" / partial, you KEEP the unsold items, you are not paid for them. Nothing
+   vanishes.
+3. Watch an NPC merchant: it mans its stall and restocks (no more universal CEILING REJECT on
+   restock); `cooked_beef` restock no longer rejects 38-vs-19.
+4. As a player BUY bread from the merchant → it comes from the stall chest (not building),
+   `[MarketChannel] NO STOCK bread` no longer fires while the stall holds bread.
+5. Trigger an NPC bread purchase (hungry NPC / BuyGoods) → if bakeries have bread in their
+   chests it sources; if the new DirectBusinessChannel WARN says "with stock=0" the gap is a
+   production/stocking gap (bake more), not a routing bug.
+6. Reload the world → merchants re-claim the SAME stall (getStallByOwner), keep selling from it;
+   no revert to building storage (there is none to revert to).

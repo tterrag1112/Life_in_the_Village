@@ -16,14 +16,12 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.ProfessionEvents;
 import tterrag1112.life_in_the_village.Profession.ProfessionPerkManager;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Reputation.ReputationManager;
 import tterrag1112.life_in_the_village.Village.Reputation.VillageReputation;
 import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class TradeHandler {
 
@@ -57,9 +55,6 @@ public class TradeHandler {
             }
         }
 
-        // Collect stall chest positions so stock counts exclude other stalls
-        Set<BlockPos> allStallChests = allStallChestPositions(data, market);
-
         Village pricingVillage = village.orElse(null);
         String villageName = pricingVillage != null ? pricingVillage.getName() : "";
 
@@ -88,9 +83,10 @@ public class TradeHandler {
             MarketStall pricingStall = findOwnedStallWithItem(
                     data, level, market.getId(), item, merchant.getUUID());
 
-            // ── BUY list: only items the NPC actually stocks ──────────────
-            int stock = countMerchantStock(
-                    level, market, item, merchant.getUUID(), data, allStallChests);
+            // ── BUY list: only items the market actually stocks (across its
+            //    stall chests — the only merchant inventory). Matches the
+            //    buy-path source so the displayed stock equals what's sellable.
+            int stock = tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.countItem(level, market, item);
             if (stock > 0) {
                 long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
                         item, level, pricingVillage, data, player, pricingStall));
@@ -334,16 +330,13 @@ public class TradeHandler {
         // =====================================================================
         if (packet.isBuying()) {
 
-            Set<BlockPos> allStallChests = allStallChestPositions(data, market);
-
-            // Prefer merchant's own stall as source, then main chest
+            // Prefer merchant's own stall as source, then the market's stalls
             MarketStall sourceStall = findOwnedStallWithItem(
                     data, level, market.getId(), item, merchant.getUUID());
 
             int stock = sourceStall != null
                     ? countInStallChest(level, sourceStall, item)
-                    : countMerchantStock(level, market, item,
-                    merchant.getUUID(), data, allStallChests);
+                    : tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.countItem(level, market, item);
 
             quantity = Math.min(quantity, stock);
             if (quantity <= 0) {
@@ -377,7 +370,7 @@ public class TradeHandler {
                 // fallback — matches the pre-1b behaviour exactly.
                 taken = takeFromStallChest(level, sourceStall, item, quantity);
             } else {
-                taken = BuildingStorageAccess.takeItem(
+                taken = tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.takeItem(
                         level, market, item, quantity);
                 if (!taken) {
                     // Player not yet charged — abort (net-identical to the
@@ -400,7 +393,7 @@ public class TradeHandler {
                 if (taken) {
                     if (sourceStall != null)
                         returnToStallChest(level, sourceStall, item, quantity);
-                    else BuildingStorageAccess.storeItem(
+                    else tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(
                             level, market, new ItemStack(item, quantity));
                 }
                 player.displayClientMessage(
@@ -464,7 +457,25 @@ public class TradeHandler {
 
             CurrencyValue totalEarned = CurrencyValue.of(pricePerItem * quantity);
 
-            // 1. Take items from player
+            // 1. Goods land in the market's stall chests (the only merchant
+            //    inventory). Try the deposit FIRST and clean-fail when no
+            //    stall chest can absorb: the player keeps the item, gets one
+            //    in-HUD notice, and is NOT charged/paid. Pre-unification this
+            //    wrote the building via storeExcludingStalls and silently
+            //    dropped the goods when the building had no chest.
+            ItemStack incoming = new ItemStack(item, quantity);
+            if (!tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(level, market, incoming)) {
+                int stored = quantity - incoming.getCount();
+                if (stored <= 0) {
+                    player.displayClientMessage(Component.literal(
+                            "This market has no stall space to buy that right now."), true);
+                    return;
+                }
+                quantity = stored; // partial: only buy what the stalls absorbed
+                totalEarned = CurrencyValue.of(pricePerItem * quantity);
+            }
+
+            // 2. Take the (accepted) items from the player.
             int remaining = quantity;
             for (int i = 0; i < player.getInventory().getContainerSize()
                     && remaining > 0; i++) {
@@ -476,10 +487,6 @@ public class TradeHandler {
                 if (s.isEmpty())
                     player.getInventory().setItem(i, ItemStack.EMPTY);
             }
-
-            // 2. Items go into main market chest (never stall chests)
-            storeExcludingStalls(level, market,
-                    new ItemStack(item, quantity), data);
 
             // 3. Settle money via the unified helper: merchant pays the
             //    player. No sell-side tax (preserves pre-1b behaviour).
@@ -682,70 +689,6 @@ public class TradeHandler {
             if (s.is(item)) count += s.getCount();
         }
         return count;
-    }
-
-    private static int countMerchantStock(ServerLevel level,
-                                          Building market,
-                                          Item item,
-                                          UUID merchantUUID,
-                                          VillageSavedData data,
-                                          Set<BlockPos> allStallChests) {
-        int count = 0;
-        for (net.minecraft.world.Container inv
-                : BuildingStorageAccess.findInventories(level, market)) {
-            if (inv instanceof BlockEntity be
-                    && allStallChests.contains(be.getBlockPos())) continue;
-            for (int i = 0; i < inv.getContainerSize(); i++) {
-                ItemStack s = inv.getItem(i);
-                if (s.is(item)) count += s.getCount();
-            }
-        }
-        // Add merchant's own stall
-        for (MarketStall stall : data.getStallsForMarket(market.getId())) {
-            if (!stall.isActive()) continue;
-            if (!stall.getOwnerUUID().equals(merchantUUID)) continue;
-            if (stall.getChestPos().equals(BlockPos.ZERO)) continue;
-            count += countInStallChest(level, stall, item);
-        }
-        return count;
-    }
-
-    private static Set<BlockPos> allStallChestPositions(VillageSavedData data,
-                                                        Building market) {
-        return data.getStallsForMarket(market.getId()).stream()
-                .filter(s -> s.isActive()
-                        && !s.getChestPos().equals(BlockPos.ZERO))
-                .map(MarketStall::getChestPos)
-                .collect(Collectors.toSet());
-    }
-
-    private static void storeExcludingStalls(ServerLevel level,
-                                             Building market,
-                                             ItemStack stack,
-                                             VillageSavedData data) {
-        Set<BlockPos> stallChests = allStallChestPositions(data, market);
-        for (net.minecraft.world.Container inv
-                : BuildingStorageAccess.findInventories(level, market)) {
-            if (stack.isEmpty()) break;
-            if (inv instanceof BlockEntity be
-                    && stallChests.contains(be.getBlockPos())) continue;
-            for (int i = 0; i < inv.getContainerSize() && !stack.isEmpty(); i++) {
-                ItemStack ex = inv.getItem(i);
-                if (ex.is(stack.getItem())
-                        && ex.getCount() < ex.getMaxStackSize()) {
-                    int add = Math.min(ex.getMaxStackSize() - ex.getCount(),
-                            stack.getCount());
-                    ex.grow(add);
-                    stack.shrink(add);
-                }
-            }
-            for (int i = 0; i < inv.getContainerSize() && !stack.isEmpty(); i++) {
-                if (inv.getItem(i).isEmpty()) {
-                    inv.setItem(i, stack.copy());
-                    stack.setCount(0);
-                }
-            }
-        }
     }
 
     // =========================================================================

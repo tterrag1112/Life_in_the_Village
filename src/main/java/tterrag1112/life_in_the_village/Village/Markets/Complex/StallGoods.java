@@ -7,7 +7,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 
 /**
@@ -29,12 +28,18 @@ public final class StallGoods {
 
     private StallGoods() {}
 
-    /** Goods available for a trade: the stall chest plus hub backstock. */
+    /**
+     * Goods available for a trade: the merchant's own stall chest plus every
+     * other active stall chest at the market. The market BUILDING's own
+     * storage is NEVER counted (market-stall-unification: stalls are the only
+     * merchant inventory).
+     */
     public static int available(ServerLevel level, Building market,
                                 MarketStall stall, Item item) {
-        int n = countIn(stallContainer(level, stall), item);
-        if (market != null) n += BuildingStorageAccess.countItem(level, market, item);
-        return n;
+        // The whole market's stall inventory already includes this stall's
+        // chest, so a separate stall count would double-count it.
+        if (market != null) return MarketInventory.countItem(level, market, item);
+        return countIn(stallContainer(level, stall), item);
     }
 
     /**
@@ -46,9 +51,10 @@ public final class StallGoods {
         int remaining = qty;
         Container sc = stallContainer(level, stall);
         if (sc != null) remaining -= takeFrom(sc, item, remaining);
-        if (remaining > 0 && market != null
-                && BuildingStorageAccess.takeItem(level, market, item, remaining)) {
-            remaining = 0;
+        // Overflow draws from the market's OTHER stall chests, never the
+        // building's own storage (market-stall-unification).
+        if (remaining > 0 && market != null) {
+            remaining -= MarketInventory.takeUpTo(level, market, item, remaining);
         }
         return qty - remaining;
     }
@@ -58,14 +64,26 @@ public final class StallGoods {
      * overflowing to the hub only when the stall is full. A {@code null}
      * stall stores straight to the hub (stall-less sale).
      */
-    public static void store(ServerLevel level, Building market, MarketStall stall,
-                             ItemStack stack) {
-        if (stack == null || stack.isEmpty()) return;
+    /**
+     * Stores {@code stack} for a trade — into the merchant's own stall chest
+     * first, overflowing to the market's OTHER stall chests when it is full.
+     * The market BUILDING's storage is NEVER a sink. A {@code null} stall
+     * stores straight across the market's stalls.
+     *
+     * @return {@code true} when the whole stack landed in a stall chest;
+     *         {@code false} (stack left with the remainder) when no stall
+     *         chest had room — the caller must keep the goods, never drop
+     *         them (market-stall-unification clean-fail contract).
+     */
+    public static boolean store(ServerLevel level, Building market, MarketStall stall,
+                                ItemStack stack) {
+        if (stack == null || stack.isEmpty()) return true;
         Container sc = stallContainer(level, stall);
         if (sc != null) storeInto(sc, stack);
         if (!stack.isEmpty() && market != null) {
-            BuildingStorageAccess.storeItem(level, market, stack);
+            return MarketInventory.store(level, market, stack);
         }
+        return stack.isEmpty();
     }
 
     // ── Internals ──────────────────────────────────────────────────────────

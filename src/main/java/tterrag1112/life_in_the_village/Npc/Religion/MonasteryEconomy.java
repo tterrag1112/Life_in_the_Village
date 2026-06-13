@@ -104,7 +104,18 @@ public final class MonasteryEconomy {
             int surplus = Math.min(stock - c.quota(), SELL_CAP_PER_GOOD);
             if (surplus <= 0) continue;
             if (!BuildingStorageAccess.takeItem(level, monastery, good, surplus)) continue;
-            BuildingStorageAccess.storeItem(level, market, new ItemStack(good, surplus));
+            // Surplus sells into the market's stall chests (the only merchant
+            // inventory), not the market BUILDING. Clean-fail: anything the
+            // stalls can't absorb returns to the monastery — never destroyed —
+            // and only the sold portion earns revenue.
+            ItemStack toMarket = new ItemStack(good, surplus);
+            tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(level, market, toMarket);
+            int sold = surplus - toMarket.getCount();
+            if (toMarket.getCount() > 0) {
+                BuildingStorageAccess.storeItem(level, monastery, toMarket);
+            }
+            if (sold <= 0) continue;
+            surplus = sold;
             long revenue = Math.max(1L, Math.round(VillageEconomy.getBasePrice(good) * 0.8)) * surplus;
             econ.depositRevenue(revenue);                // → the shared pool (not chest coins)
             VillageEconomy.postListing(level, village.getId(), agent, good, surplus, now);

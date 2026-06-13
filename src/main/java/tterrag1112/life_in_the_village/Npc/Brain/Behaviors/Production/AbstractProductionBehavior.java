@@ -20,7 +20,6 @@ import net.minecraft.world.entity.ai.memory.WalkTarget;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopRole;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopRoleAssigner;
@@ -41,7 +40,6 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
-import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
@@ -949,30 +947,34 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
         if (outputBuilding == null || market == null) return 0L;
 
         VillageSavedData data = VillageSavedData.get(level);
-        MarketStall ownStall = data.getStallByOwner(entity.getUUID()).orElse(null);
-        boolean hasActiveStall = ownStall != null && ownStall.isActive()
-                && !ownStall.getChestPos().equals(BlockPos.ZERO);
         long totalRevenue = 0;
 
         for (Map.Entry<Item, Integer> entry : toSell.entrySet()) {
             Item item = entry.getKey();
             int qty = entry.getValue();
             if (!BuildingStorageAccess.takeItem(level, outputBuilding, item, qty)) continue;
-            if (hasActiveStall) {
-                BlockEntity be = level.getBlockEntity(ownStall.getChestPos());
-                if (be instanceof Container chest) {
-                    addToContainer(chest, item, qty);
-                } else {
-                    BuildingStorageAccess.storeItem(level, market, new ItemStack(item, qty));
-                }
-            } else {
-                BuildingStorageAccess.storeItem(level, market, new ItemStack(item, qty));
+            // Goods go to the seller's own stall first, else across the
+            // market's other stall chests. The market BUILDING is never a sink
+            // (market-stall-unification). Clean-fail: if no stall chest can
+            // absorb, return the goods to the workshop and skip this item — no
+            // revenue is credited for goods that didn't actually land.
+            // MarketInventory.store deposits across the market's active stall
+            // chests (the seller's own stall included) and never the building.
+            ItemStack toMarket = new ItemStack(item, qty);
+            tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(level, market, toMarket);
+            int stored = qty - toMarket.getCount();
+            if (stored < qty) {
+                // Return the unsold remainder to the workshop — never destroyed.
+                BuildingStorageAccess.storeItem(level, outputBuilding,
+                        new ItemStack(item, qty - stored));
             }
-            totalRevenue += Math.max(1L, Math.round(VillageEconomy.getBasePrice(item) * 0.8)) * qty;
+            if (stored <= 0) continue;
+            final int soldQty = stored;
+            totalRevenue += Math.max(1L, Math.round(VillageEconomy.getBasePrice(item) * 0.8)) * soldQty;
             entity.getAssignedVillageName()
                     .flatMap(data::getVillageByName)
                     .ifPresent(v -> VillageEconomy.postListing(
-                            level, v.getId(), entity, item, qty, level.getGameTime()));
+                            level, v.getId(), entity, item, soldQty, level.getGameTime()));
         }
 
         if (totalRevenue > 0) {
@@ -985,24 +987,6 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
                     level, outputBuilding.getId(), (int) totalRevenue);
         }
         return totalRevenue;
-    }
-
-    private static void addToContainer(Container chest, Item item, int qty) {
-        ItemStack toAdd = new ItemStack(item, qty);
-        for (int i = 0; i < chest.getContainerSize() && !toAdd.isEmpty(); i++) {
-            ItemStack ex = chest.getItem(i);
-            if (ex.is(item) && ex.getCount() < ex.getMaxStackSize()) {
-                int add = Math.min(ex.getMaxStackSize() - ex.getCount(), toAdd.getCount());
-                ex.grow(add);
-                toAdd.shrink(add);
-            }
-        }
-        for (int i = 0; i < chest.getContainerSize() && !toAdd.isEmpty(); i++) {
-            if (chest.getItem(i).isEmpty()) {
-                chest.setItem(i, toAdd.copy());
-                toAdd.setCount(0);
-            }
-        }
     }
 
     // =========================================================================

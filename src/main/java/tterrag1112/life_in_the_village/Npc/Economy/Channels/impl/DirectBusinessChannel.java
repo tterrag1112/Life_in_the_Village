@@ -56,6 +56,12 @@ public final class DirectBusinessChannel implements EconomicChannel {
     private static volatile boolean LOGGED_NO_PRODUCER         = false;
     private static volatile boolean LOGGED_CEILING_REJECT      = false;
     private static volatile boolean LOGGED_QUOTE_ACCEPTED      = false;
+    // Diagnostic cause-of-miss counters from the most recent findProducer call,
+    // surfaced in the one-shot no-producer WARN so "no producer" distinguishes
+    // "empty producer storage" from "no producer NPC present".
+    private static volatile int LAST_ELIGIBLE   = 0;
+    private static volatile int LAST_WITH_STOCK = 0;
+    private static volatile int LAST_WITH_NPC   = 0;
 
     @Override public ChannelType type() { return ChannelType.DIRECT_BUSINESS; }
 
@@ -95,9 +101,17 @@ public final class DirectBusinessChannel implements EconomicChannel {
         if (match == null) {
             if (!LOGGED_NO_PRODUCER) {
                 LOGGER.warn("[DirectBusinessChannel] no producer found for item={} " +
-                        "(eligible professions={}); either no building of that " +
-                        "type, no NPC at building, or empty storage. Village={}.",
-                        intent.item(), producingProfessions, village.getName());
+                        "(eligible professions={}). Cause breakdown — eligible " +
+                        "buildings={}, of those WITH stock={}, of those with a " +
+                        "producer NPC={}. So: {}. Village={}.",
+                        intent.item(), producingProfessions,
+                        LAST_ELIGIBLE, LAST_WITH_STOCK, LAST_WITH_NPC,
+                        LAST_ELIGIBLE == 0 ? "no building of an eligible type"
+                          : LAST_WITH_STOCK == 0 ? "buildings exist but their "
+                              + "storage holds none of this item (production/"
+                              + "stocking gap, not a lookup bug)"
+                          : "stock exists but no producer NPC was loaded near it",
+                        village.getName());
                 LOGGED_NO_PRODUCER = true;
             }
             return Optional.empty();
@@ -219,21 +233,29 @@ public final class DirectBusinessChannel implements EconomicChannel {
 
         ProducerMatch best = null;
         int bestStock = 0;
+        int eligibleBuildings = 0, withStock = 0, withNpc = 0;
         for (var bid : village.getBuildingIds()) {
             Building b = data.getBuildingById(bid).orElse(null);
             if (b == null) continue;
             Profession buildingProf = Profession.professionFor(b.getType());
             if (!producingProfessions.contains(buildingProf)) continue;
+            eligibleBuildings++;
             int stock = BuildingStorageAccess.countItem(level, b, item);
             if (stock <= 0) continue;
+            withStock++;
             TownspersonMob producer = findProducerNpc(level, b, b.getType());
             if (producer == null) continue;
+            withNpc++;
             if (stock > bestStock) {
                 bestStock = stock;
                 best = new ProducerMatch(producer, b, b.getShape().getOrigin(),
                         Math.min(intent.quantity(), stock));
             }
         }
+        // Stash the cause counters for the one-shot WARN in quote().
+        LAST_ELIGIBLE = eligibleBuildings;
+        LAST_WITH_STOCK = withStock;
+        LAST_WITH_NPC = withNpc;
         return best;
     }
 

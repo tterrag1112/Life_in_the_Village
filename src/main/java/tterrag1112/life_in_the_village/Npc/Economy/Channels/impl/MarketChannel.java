@@ -15,7 +15,6 @@ import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPricing;
@@ -88,8 +87,13 @@ public final class MarketChannel implements EconomicChannel {
             policied = MarketPricing.sellPrice(
                     tterrag1112.life_in_the_village.Village.Economy.Currency.PricingContext
                             .forNpc(intent.item(), level, village, data, stall));
+            // Stock check reads the market's stall chests (the only merchant
+            // inventory), NOT the building's own storage. Pre-unification this
+            // read building bounds and declined NO STOCK while stalls held the
+            // goods (MerchantStartingStock stocks stall.getChestPos()).
             available = Math.min(intent.quantity(),
-                    BuildingStorageAccess.countItem(level, market, intent.item()));
+                    tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory
+                            .countItem(level, market, intent.item()));
         } else {
             // Seller receives the buy-side price. Stalls are sell endpoints,
             // so no stall override on this side.
@@ -210,10 +214,17 @@ public final class MarketChannel implements EconomicChannel {
     private static TradeResult executeSell(TradeIntent intent, Building market, Village village,
                                            int qty, long pricePerUnit, ServerLevel level,
                                            VillageSavedData data) {
+        // NPC selling into the market → the market's stall chests (the only
+        // merchant inventory). Clean-fail when no stall chest can absorb:
+        // nothing moves, no payment is minted, the seller keeps the goods.
+        ItemStack incoming = new ItemStack(intent.item(), qty);
+        if (!tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory
+                .store(level, market, incoming)) {
+            int stored = qty - incoming.getCount();
+            if (stored <= 0) return TradeResult.fail("market stalls full — sale declined");
+            qty = stored; // partial: only pay for what the stalls absorbed
+        }
         long total = pricePerUnit * qty;
-        // NPC selling into the market → hub backstock (no stall on this side).
-        tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods.store(
-                level, market, null, new ItemStack(intent.item(), qty));
         TownspersonMob seller = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
         if (seller != null) {
             // Money-only settle: the market pays the seller. No payer entity

@@ -97,6 +97,10 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
     // 3b transient restock state (not persisted).
     private int restockCooldown = 0;
     private Item restockItem = null;
+    /** One-shot per-merchant: log the stall-less fallback once so the
+     *  "merchant reverted to building origin" regression is diagnosable
+     *  without per-tick spam. */
+    private boolean warnedNoStall = false;
 
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
@@ -167,8 +171,18 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
                 level, market, entity.getUUID(),
                 MarketStall.OwnerType.NPC, Long.MAX_VALUE, data).orElse(null);
         if (claimed == null) {
-            LOGGER.debug("[Merchant] {} found no vacant stall at market {}; "
-                    + "manning building origin", entity.getUUID(), market.getId());
+            if (!warnedNoStall) {
+                LOGGER.warn("[Merchant] {} found no vacant stall at market {} — "
+                        + "manning the market origin WITHOUT building storage "
+                        + "(market-stall-unification: the building is never a "
+                        + "merchant inventory). Seed/claim a stall so this "
+                        + "merchant can stock and sell. Stalls at market: {}.",
+                        entity.getUUID(), market.getId(),
+                        data.getStallsForMarket(market.getId()).size());
+                warnedNoStall = true;
+            }
+        } else {
+            warnedNoStall = false; // re-armed for the next dry spell
         }
         return claimed;
     }
@@ -290,8 +304,14 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
         int want = Math.min(RESTOCK_BATCH, STALL_TARGET_PER_ITEM - have);
         if (want <= 0) { endRestock(); return; } // filled while we walked
 
-        long ceiling = MarketPriceHelper.getDynamicBuyPrice(level, village, restockItem);
-        if (ceiling <= 0) ceiling = MarketPriceHelper.getBaseBuyPrice(restockItem);
+        // The restock ceiling must be on the SELL side — the price a buyer
+        // PAYS to acquire, which is what MarketChannel/DirectBusinessChannel
+        // quote. Using getDynamicBuyPrice (the seller-receives side, ~0.6x)
+        // made the ceiling roughly half the quote, so every restock quote was
+        // CEILING-REJECTed (the cooked_beef 38-vs-19 symptom). Mirrors the
+        // 6.3.4.4.4 fix on AbstractProductionBehavior.getItemBuyPrice.
+        long ceiling = MarketPriceHelper.getDynamicSellPrice(level, village, restockItem);
+        if (ceiling <= 0) ceiling = MarketPriceHelper.getBaseSellPrice(restockItem);
 
         TradeIntent intent = TradeIntent.buy(
                 restockItem, want, entity.getUUID(),
@@ -328,8 +348,13 @@ public class MerchantBehavior extends Behavior<TownspersonMob> {
 
         TradeResult result = channel.execute(quote, intent, level);
         if (result.success() && result.quantityTraded() > 0) {
-            StallGoods.store(level, market, ownedStall,
-                    new ItemStack(restockItem, result.quantityTraded()));
+            ItemStack bought = new ItemStack(restockItem, result.quantityTraded());
+            // Deposit into the owned stall (overflow to the market's other
+            // stalls). Anything the stalls can't hold stays in the merchant's
+            // personal inventory — it was paid for, so it is never dropped.
+            if (!StallGoods.store(level, market, ownedStall, bought) && !bought.isEmpty()) {
+                entity.getPersonalInventory().addItem(bought);
+            }
             LOGGER.debug("[Merchant] {} restocked {}x{} into stall {}",
                     entity.getUUID(), result.quantityTraded(),
                     restockItem, ownedStall.getSlotIndex());

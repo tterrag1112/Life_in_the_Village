@@ -346,13 +346,13 @@ public class EatMealBehavior extends Behavior<TownspersonMob> {
             long price = entry.getValue().sellPrice();
             if (!isFood(item)) continue;
             if (price > wealth) continue;
-            if (BuildingStorageAccess.countItem(level, source, item) <= 0) continue;
+            if (foodCount(level, source, item) <= 0) continue;
             if (price < bestPrice) { bestPrice = price; bestItem = item; }
         }
         if (bestItem == null) return false;
         CurrencyValue cost = CurrencyValue.of(bestPrice);
         if (!entity.canAfford(cost)) return false;
-        if (!BuildingStorageAccess.takeItem(level, source, bestItem, 1)) return false;
+        if (!foodTake(level, source, bestItem, 1)) return false;
 
         TownspersonMob vendor = findAssignedNpc(level, source);
         if (vendor != null) {
@@ -444,9 +444,29 @@ public class EatMealBehavior extends Behavior<TownspersonMob> {
         for (var entry : priceData.getAllPrices().entrySet()) {
             if (!isFood(entry.getKey())) continue;
             if (entry.getValue().sellPrice() > wealth) continue;
-            if (BuildingStorageAccess.countItem(level, building, entry.getKey()) > 0) return true;
+            if (foodCount(level, building, entry.getKey()) > 0) return true;
         }
         return false;
+    }
+
+    /**
+     * Food-source count that respects market-stall-unification: a MARKET's
+     * tradeable goods live only in its stall chests, never the building's own
+     * storage. Production buildings (BAKERY, INN) keep building-bounds scans.
+     */
+    private static int foodCount(ServerLevel level, Building source, Item item) {
+        if (source.getType() == BuildingType.MARKET) {
+            return tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.countItem(level, source, item);
+        }
+        return BuildingStorageAccess.countItem(level, source, item);
+    }
+
+    /** Market-aware take — stall chests for a MARKET, building bounds otherwise. */
+    private static boolean foodTake(ServerLevel level, Building source, Item item, int count) {
+        if (source.getType() == BuildingType.MARKET) {
+            return tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.takeItem(level, source, item, count);
+        }
+        return BuildingStorageAccess.takeItem(level, source, item, count);
     }
 
     private static TownspersonMob findAssignedNpc(ServerLevel level, Building building) {
