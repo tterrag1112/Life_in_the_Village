@@ -12195,3 +12195,214 @@ specified; return type kept as `List<RoadSegment>` per caller analysis.
 review substituted: single error site confirmed by grep; fix is a standard
 copy-constructor upcast; no other invariant-generics mismatches found across
 all Layer4 return statements.
+
+---
+
+### 2026-06-12 — Track C1 slice 1: GeneratorTerrainSource (load-free, generator-backed TerrainSource)
+
+First build slice of the kingdom rework. The charter-gen survey stage
+(`05-CHARTER-GEN-DESIGN.md` §3) needs to read real terrain — heights, biomes,
+water — without loading chunks. The C0 spike (`08-C0-SAMPLING-SPIKE.md`) proved
+the mechanism (vanilla does it for structure placement; the mod already ships
+two generator-backed samplers, `AtlasSampler` and `DeepTerrainInspector`) and
+recommended an architecture (§8). This slice implements that architecture as a
+new `TerrainSource` leaf and validates it through the existing `V2FeatureMap`
+classifier.
+
+#### Disposition — verified TerrainSource contract (vs the C0 §8 sketch)
+
+The C0 doc's method names were approximate; the code is truth. Read all three
+existing implementors and `V2FeatureMap.classifySurface` before writing a line.
+
+`Village/Planning/V2/Layer1/TerrainSource.java` is the seam. Exact contract:
+
+- `int height(int x, int z)` — **"the Y of the highest solid block"**, i.e.
+  `getHeight(MOTION_BLOCKING_NO_LEAVES, x, z) - 1` in `LiveTerrainSource`. The
+  `-1` is performed *inside* the adapter so callers see the highest occupied Y
+  directly. (C0 §8.1 sketched `getBaseHeight(WORLD_SURFACE_WG) - 1` — same `-1`
+  convention; I align to it exactly.)
+- `BlockState blockAt(int x, int y, int z)` — block at a **world** (x, y, z).
+- `int maxY()` — world ceiling, inclusive (clamp for the tree-column scan).
+  `LiveTerrainSource` returns `level.getMaxY()`.
+- `Holder<Biome> biomeAt(BlockPos pos)` — **may be null** for sources with no
+  biome layer (`SyntheticTerrainSource` always returns null; `AnchorDetector`
+  tolerates it).
+
+What `classifySurface` actually reads (this drove the synthesis requirements):
+
+1. `surface = blockAt(x, height(x,z), z)` — STRUCTURE if planks/bricks/cobble;
+   WATER if it (or `blockAt(x, height+1, z)`) is a water fluid; FOREST if it's a
+   `LOGS`-tag block; STONE_EXPOSED if `BASE_STONE_OVERWORLD`-tag; else OPEN.
+2. FOREST also trips via `hasTreeColumn`: scans `height+1 .. min(maxY, height+30)`
+   counting `LOGS`/`LEAVES` blocks, FOREST at ≥3 (`FOREST_MIN_TREE_BLOCKS`).
+3. WATER level is read at `height+1` (water surface is one above the
+   motion-blocking top).
+
+`V2FeatureMap.scan(TerrainSource, centre, radius)` already exists and the
+harness `RunExecutor` already calls it — **zero changes** needed to consume the
+new source (tie-in audit below).
+
+#### What this slice ships
+
+`GeneratorTerrainSource implements TerrainSource`
+(`Village/Planning/V2/Layer1/`):
+
+- **`height()`** → `getBaseHeight(x, z, WORLD_SURFACE_WG, heightAccessor,
+  randomState) - 1`, matching the `-1` convention so survey plans are
+  comparable to live plans.
+- **`biomeAt()`** → `biomeSource.getNoiseBiome(x>>2, y>>2, z>>2,
+  randomState.sampler())` — quart resolution, the exact call
+  `AtlasSampler.sampleBiome` makes.
+- **`maxY()`** → `heightAccessor.getMaxY()`.
+- **`blockAt()`** → synthesized from a memoized per-column model (see §4 trap).
+- **Construction** — two constructors. Production: `new
+  GeneratorTerrainSource(ServerLevel)` pulls generator + randomState from
+  `level.getChunkSource()` exactly as `AtlasSampler`/`DeepTerrainInspector` do
+  (and the `ServerLevel` is itself the `LevelHeightAccessor`). Headless: `new
+  GeneratorTerrainSource(ChunkGenerator, RandomState, LevelHeightAccessor)` for
+  the harness, which builds a real overworld generator from
+  `VanillaRegistries.createLookup()` (no FML/server/world; C0 §2/§7).
+- **Per-survey memoization** — `ConcurrentHashMap<Long, Column>` keyed by packed
+  `(x, z)` (via `BlockPos.asLong(x, 0, z)`). Per-instance, not static: one
+  survey = one source = one cache.
+
+#### Synthesis approach (the §4 trap — pre-surface-rule states)
+
+`getBaseColumn` returns the column **before** surface rules/carvers/features:
+land is stone, plus water/air — never grass/sand/logs. Feeding that raw to
+`classifySurface` ⇒ all land STONE_EXPOSED, zero FOREST. So
+`GeneratorTerrainSource` **does not read `getBaseColumn` at all**; it samples
+three facts per column and synthesizes the block states the classifier expects
+(the same grass/sand/water/log/leaf/stone vocabulary `SyntheticTerrainSource`
+proves out):
+
+1. **Surface Y** = `getBaseHeight(WORLD_SURFACE_WG) - 1`.
+2. **Floor Y** = `getBaseHeight(OCEAN_FLOOR_WG) - 1`. **Water iff
+   `surfaceY > floorY`** — WORLD_SURFACE_WG counts water as surface, OCEAN_FLOOR_WG
+   skips it; the gap is the chunk-free water+depth detector (C0 §2). Water columns
+   get WATER from `floorY+1` up to `surfaceY` (top block WATER, air above), stone
+   below — matching `SyntheticTerrainSource`'s water convention so the classifier's
+   `isWaterFluid(surface)` trips.
+3. **Biome** (read at `max(surfaceY, floorY)+1` so oceans return their surface
+   biome, the same guard `AtlasSampler.sampleCell` uses) drives the land surface:
+   - `IS_FOREST`/`IS_TAIGA`/`IS_JUNGLE` ⇒ grass surface **plus a synthetic 6-block
+     tree column** above it (2 OAK_LOG + 4 OAK_LEAVES) so `hasTreeColumn` finds
+     ≥3 log/leaf blocks and classifies FOREST.
+   - `DESERT`/`IS_BEACH`/`IS_BADLANDS` ⇒ SAND surface (classifies OPEN — sand is
+     not `BASE_STONE_OVERWORLD`, so it's buildable, as intended).
+   - else ⇒ GRASS surface (OPEN).
+
+#### Validation method
+
+**Harness test** (`GeneratorTerrainSourceTest` in the `V2/Harness` package), not
+a `/litv` command. Justification: the C0 spike + `GeneratorSamplingBenchmarkTest`
+already prove a real vanilla overworld `NoiseBasedChunkGenerator` + `RandomState`
+is constructible headlessly via `VanillaRegistries.createLookup()` — so the live
+generator IS available in the harness; an in-game command would only add the
+installed/modded generator's cost, not new coverage.
+
+The test scans 4 disjoint large regions (radius 300 ⇒ 90k cells each) of real
+overworld terrain through `V2FeatureMap.scan(source, …)` and asserts the
+classifier output is **non-degenerate** (the §4-trap regression guard):
+`FOREST > 0`, `WATER+SHORE > 0`, `OPEN > 0`, and `STONE_EXPOSED < total` (NOT
+all-stone). Plus per-column contract spot-checks: `height()` equals
+`getBaseHeight(WORLD_SURFACE_WG)-1`, `maxY()` equals the accessor ceiling,
+`biomeAt()` non-null on the vanilla path, surface block non-air.
+
+#### Tie-in audit
+
+- **Upstream feeders.** Inputs are `ServerLevel` (production) or the headless
+  generator triple (harness). No upstream system feeds the source; it's a leaf.
+- **Downstream callers.** Only consumer is `V2FeatureMap.scan(TerrainSource,
+  BlockPos, int)`, which **already exists and already accepts `TerrainSource`**
+  (used by the harness `RunExecutor`). Confirmed zero changes needed: the
+  synthesized vocabulary (GRASS/SAND/WATER/OAK_LOG/OAK_LEAVES/STONE) is exactly
+  what `classifySurface`/`hasTreeColumn` already match. The live `scan(Level,…)`
+  callers (`SiteCommand`, `LayoutCommand`, `PlaceCommand`, `FeatureMapCommand`,
+  `LayoutDumpCommand`, `FarmDebugCommand`, `V2VillageSpawnerAdapter`,
+  `LayoutDumpSerializer`) are unaffected — they wrap `LiveTerrainSource` and don't
+  touch the new class.
+- **Sibling systems.** Shares the `ChunkGenerator`/`RandomState` sampling pattern
+  with `AtlasSampler`/`DeepTerrainInspector`; reuses, doesn't duplicate, their
+  construction. No shared mutable state.
+- **Exhaustive switches.** No enum added to any existing type. The internal
+  `Surface` enum is private to the class; its only `switch` is exhaustive in-file.
+
+#### Simplification sweep
+
+Three `TerrainSource` implementors now: `LiveTerrainSource` (production, live
+world), `SyntheticTerrainSource` (harness, deterministic shapes),
+`GeneratorTerrainSource` (charter-gen, load-free). No overlap — each backs a
+distinct read source. No orphans created; `getBaseColumn` deliberately NOT used
+(the §4 trap), so no dead generator call introduced.
+
+#### Files touched
+
+- **NEW** `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/Layer1/GeneratorTerrainSource.java`
+- **NEW** `src/test/java/tterrag1112/life_in_the_village/Village/Planning/V2/Harness/GeneratorTerrainSourceTest.java`
+
+No existing file modified (the seam took the source with zero changes).
+
+#### Deviations from prompt
+
+- **`height()` aligned to `MOTION_BLOCKING_NO_LEAVES-1` semantics, sampled via
+  `getBaseHeight(WORLD_SURFACE_WG)-1`.** The prompt/C0 §8.1 named
+  `getBaseHeight(WORLD_SURFACE_WG)-1`; `LiveTerrainSource` documents its `-1` as
+  `getHeight(MOTION_BLOCKING_NO_LEAVES)-1`. These agree on the convention ("Y of
+  highest solid block, minus-one applied inside the adapter"); `getBaseHeight` is
+  the chunk-free equivalent. No divergence in meaning — noted for precision.
+- **`getBaseColumn` is not called.** C0 §8.1 sketched "cached `getBaseColumn` per
+  column with synthesis." But since every land state from `getBaseColumn` is
+  stone (the trap) and water/air fall out of the two-heightmap comparison, reading
+  the full column buys nothing and costs ~1.5–2× a height query (C0 §3). The
+  source samples two heights + one biome per column and synthesizes the rest —
+  strictly cheaper, same classifier output. This is the honest reading of the §4
+  trap: the raw column is *unusable*, so don't pay for it.
+
+#### Out-of-scope but flagged (later C1 slices + their plug-in points)
+
+- **Charter data model + survey scheduler** — the budget/off-thread runner. Plug-in
+  point: construct one `GeneratorTerrainSource(serverLevel)` per survey, scan via
+  `V2FeatureMap.scan`, commit results on the server thread. C0 §8.3 prescribes the
+  `GraphEdgeRealizationSystem` pattern (interval 40, 1 survey in flight, prioritized
+  by player relevance). The source's `ConcurrentHashMap` cache is already
+  worker-safe for when that scheduler goes off-thread (C0 §5).
+- **Budget system / tiered sampling** — anchor-pick (r≈48 step 4) synchronous;
+  full Layer-1 (r=150) budgeted. Tuning knob, not built here.
+- **Map rendering / fog-of-war** (`05` §4) — markers exact post-survey.
+- **Kingdom decoupling** — charters issued by a territorial claim; absorption of
+  emergent villages.
+- **`/litv pregen survey <radius>`** (`05` §5) — batch surveys; and an optional
+  in-game `/litv debug samplebench` only if modded-generator cost (C0 §6/§9)
+  becomes a real question.
+- **STONE_EXPOSED at survey time** — the generator-backed source never emits
+  STONE_EXPOSED (no surface rules expose bedrock on noise cliffs; surface is always
+  grass/sand/water/forest). Cliff-face siting that depends on exposed-stone
+  classification will be coarser at survey time than at realization. Mild (C0 §9);
+  flagged for the cliff/mining charter archetypes if it matters.
+
+#### Smoke / validation test (user-runnable)
+
+1. Fetch + checkout the branch:
+   `git fetch .claude/bundles/c1-generator-terrain-source.bundle cowork/c1-generator-terrain-source:cowork/c1-generator-terrain-source && git checkout cowork/c1-generator-terrain-source`
+2. `./gradlew test --tests "*GeneratorTerrainSourceTest"`
+3. Expect: PASS, with a printed table —
+   `C1 GeneratorTerrainSource: 4 scans (r=300), ~360000 cells, <N> ms` and a
+   `WATER=… SHORE=… FOREST=… STONE=… OPEN=…` line where FOREST > 0, WATER+SHORE > 0,
+   OPEN > 0, STONE < total. A failure on the FOREST assertion means the synthetic
+   tree-column isn't tripping `hasTreeColumn`; a failure on WATER means the
+   two-heightmap water detector regressed.
+4. Optional: `./gradlew test --tests "*GeneratorSamplingBenchmarkTest" -Dharness.benchmark=true`
+   re-runs the C0 cost benchmark for the same generator path.
+
+**Build verification deferred** (sandbox blocks maven.neoforged.net). Static
+review substituted: every NeoForge symbol grep-verified against decompiled
+`neoforge-21.11.38-beta` sources — `ChunkGenerator.getBaseHeight/getBaseColumn`
+(abstract, line 624/626), `BiomeSource.getNoiseBiome` (line 165), `NoiseColumn`
+(unused here by design), `Heightmap.Types.WORLD_SURFACE_WG`/`OCEAN_FLOOR_WG`
+(line 145/147), `RandomState.sampler()` (line 141), `LevelHeightAccessor.getMaxY`,
+`BiomeTags.IS_FOREST/IS_TAIGA/IS_JUNGLE/IS_BEACH/IS_BADLANDS`, `Biomes.DESERT`,
+`Holder.is(TagKey)`/`is(ResourceKey)`, `Blocks.OAK_LOG/OAK_LEAVES/SAND/GRASS_BLOCK`,
+`BlockPos.asLong`, `MultiNoiseBiomeSource.createFromPreset(Holder)`,
+`BlockState.isAir`. Brace balance confirmed (71/71 source, 23/23 test). Construction
+mirrors the verified `GeneratorSamplingBenchmarkTest` (C0 bundle) exactly.
