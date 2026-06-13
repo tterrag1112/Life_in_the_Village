@@ -4793,7 +4793,6 @@ public final class PhasedPlanner {
     public record PhaseEvent(Kind kind, BuildingType type, String detail,
                              ScoreBreakdown score) {
         public enum Kind { PLACED_FOUNDATION, PLACED_ITERATIVE,
-                           CAPACITY_PLAN, PROACTIVE_CROSS_STREET, PROACTIVE_SKIPPED,
                            ISOLATED, TRIM }
 
         static PhaseEvent placed(BuildingType type, boolean foundation, ScoreBreakdown s) {
@@ -4801,12 +4800,6 @@ public final class PhasedPlanner {
                     foundation ? Kind.PLACED_FOUNDATION : Kind.PLACED_ITERATIVE,
                     type, null, s);
         }
-
-        // Stage 3e — capacityPlan / proactiveInsertedAt / proactiveSkippedAtParam
-        // factories removed with the dead cross-street pre-pass. The Kind
-        // values (CAPACITY_PLAN / PROACTIVE_CROSS_STREET / PROACTIVE_SKIPPED)
-        // are retained — LayoutCommand still switches over them — they simply
-        // have no producer now.
 
         static PhaseEvent isolated(BuildingType type) {
             return new PhaseEvent(Kind.ISOLATED, type,

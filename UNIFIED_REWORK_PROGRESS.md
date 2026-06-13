@@ -12406,3 +12406,66 @@ review substituted: every NeoForge symbol grep-verified against decompiled
 `BlockPos.asLong`, `MultiNoiseBiomeSource.createFromPreset(Holder)`,
 `BlockState.isAir`. Brace balance confirmed (71/71 source, 23/23 test). Construction
 mirrors the verified `GeneratorSamplingBenchmarkTest` (C0 bundle) exactly.
+
+---
+
+## Track A cleanup — MILLER NBT folder rename + PhaseEvent dead enum removal (2026-06-12)
+
+### Items shipped
+
+#### Item 1 — MILLER NBT folder rename (`mill` → `miller`)
+
+**Verification evidence:**
+- `BuildingType.MILLER` confirmed at `Village/Buildings/BuildingType.java:14`; no `MILL` value exists.
+- Scanner mapping confirmed: `CultureResolver.java:265` uses `type.name().toLowerCase()` → folder name; `BuildingVariant.defaultVariantId` (line 51) also returns `type.name().toLowerCase()`. So `MILLER` → folder `miller`, default variant `miller`, full path `default/rural/miller/miller/level_1.nbt`.
+- `VillageTypeDatagen.java:113,405` confirms the variant spec is `"miller/level_1"` — consistent.
+- Pre-fix state: `rural/mill/mill/level_1.nbt` + `rural/mill/mill/manifest.json` (variant id `"mill"`, maps to nothing — no `MILL` enum). `rural/miller/` existed but contained only a type-level `manifest.json` with no variant subfolder.
+- No Java, JSON, or manifest hardcodes the `rural/mill` path — scanner is purely folder-name-driven.
+
+**Changes:**
+- `git mv rural/mill/mill/level_1.nbt → rural/miller/miller/level_1.nbt`
+- `git mv rural/mill/mill/manifest.json → rural/miller/miller/manifest.json`
+- Updated `rural/miller/miller/manifest.json` variant id from `"mill"` → `"miller"`
+- Deleted empty `rural/mill/` directory tree (untracked after git mv)
+- `rural/miller/manifest.json` (type-level, `"id": "miller"`) was already correct — untouched
+
+#### Item 2 — Remove dead `PhaseEvent.Kind` constants (`CAPACITY_PLAN`, `PROACTIVE_CROSS_STREET`, `PROACTIVE_SKIPPED`)
+
+**Verification evidence (zero-producer check):**
+- `PROACTIVE_CROSS_STREET`: grep over all `.java` — only consumers were `LayoutCommand.java` (switch arm + `countByKind` call). No producer. Safe to delete.
+- `PROACTIVE_SKIPPED`: same — only `LayoutCommand.java` consumers. No producer. Safe to delete.
+- `CAPACITY_PLAN`: only `LayoutCommand.java` consumers (`stream().anyMatch` + switch arm). No producer. Safe to delete.
+- PhasedPlanner.java comment at line 4807 explicitly stated these had no producers post-A6 teardown.
+
+**Exhaustive-switch audit:**
+- `LayoutCommand.java` switch over `e.kind()`: used `default -> {}` — not exhaustive; removing explicit dead arms (`CAPACITY_PLAN`, `PROACTIVE_CROSS_STREET`, `PROACTIVE_SKIPPED`) plus the entire dead if-block is safe and leaves no unhandled arms.
+- `LayoutDumpSerializer.java`: uses `e.kind().name()` generically — no switch, unaffected.
+- `HarnessDump.java`: uses `e.kind().name()` generically — no switch, unaffected.
+- `V2VillageSpawnerAdapter.java`: no references to the 3 constants.
+
+**Changes:**
+- `PhasedPlanner.java` — reduced `Kind` enum from 7 values to 4 (`PLACED_FOUNDATION`, `PLACED_ITERATIVE`, `ISOLATED`, `TRIM`); removed stale "retained — LayoutCommand still switches over them" comment block.
+- `LayoutCommand.java` — deleted: `proactiveInserted` / `proactiveSkipped` / `hasCapacityPlan` local vars, the `if (hasCapacityPlan || ...)` block with its dead switch arms (22 lines total).
+
+### Files touched
+- `src/main/java/.../Village/Planning/V2/Layer4/PhasedPlanner.java`
+- `src/main/java/.../Commands/LayoutCommand.java`
+- `src/main/resources/data/life_in_the_village/structures/default/rural/miller/miller/manifest.json` (variant id fix)
+- `src/main/resources/data/life_in_the_village/structures/default/rural/mill/mill/level_1.nbt` → `…/miller/miller/level_1.nbt` (git rename)
+- `src/main/resources/data/life_in_the_village/structures/default/rural/mill/mill/manifest.json` → `…/miller/miller/manifest.json` (git rename)
+
+### Deviations from prompt
+- None. Both items matched the described symptom exactly.
+
+### Out-of-scope but flagged
+- `rural/miller/manifest.json` (type-level) already existed and was correct (`"id": "miller"`); this implies someone had started the rename previously but left it half-done (no variant subfolder, no NBT moved). No action needed beyond noting it.
+
+### Build verification
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review: enum reduction from 7 → 4 constants verified against all switch sites; brace balance on the LayoutCommand deletion confirmed by line-count diff (22 lines removed, no unclosed braces).
+
+### Smoke test (user-runnable)
+1. Fetch + checkout: `git fetch .claude/bundles/a-cleanup-miller-deadenum.bundle cowork/a-cleanup-miller-deadenum:cowork/a-cleanup-miller-deadenum && git checkout cowork/a-cleanup-miller-deadenum`
+2. Spawn a village whose roster includes MILLER (e.g. `farming_hamlet` or `riverside_town` — both include `BuildingType.MILLER` per datagen).
+3. Confirm MILLER is **absent** from the `unavailable (no NBT): [...]` log line at spawn time.
+4. Confirm the mill building actually places in the world (structure appears).
+5. Run `/litv layout debug` — confirm the command executes without error (the dead switch arms are gone; no crash from missing cases).
