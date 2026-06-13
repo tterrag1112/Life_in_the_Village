@@ -11569,3 +11569,223 @@ StallAllocator 41/41, 142/142). Symbols grep-verified:
    (merchant stock readout / NPC food-buy): the bread just sold, plus
    the `MerchantStartingStock` seed, should be visible as market stock.
    An NPC should be able to buy food from the barrel stall.
+
+## 2026-06-12 — Perf: noon meal-window spike — MarketInventory scan cache + BuyGoods retry throttle + [NoonProfile] attribution (cowork/noon-meal-perf)
+
+Server spikes to 800–1800 ms/50 ms at the in-game meal window ("noon")
+and the daily `TickSubsystem` pass is silent (`[TickSpike]` < 50 ms),
+so the cost is in entity/brain ticking and the food/market paths. The
+spike WORSENED right after the stall-container fix (60a3158) made
+`MarketInventory` discovery actually find barrels — which confirmed the
+new discovery cost was the prime mover. Verified each suspect; corrected
+two premises.
+
+### Per-suspect verdict
+
+1. **Per-tick retry of failed food intents — PARTLY REAL.**
+   - `EatMealBehavior` is NOT a per-tick retrier. `start()` runs the
+     food scan once; on failure it sets `phase=DONE`, `canStillUse`
+     returns false, and `stop()` stamps `MEAL_COOLDOWN` (4000 t). So a
+     failed meal is already throttled to once per meal window. **No
+     short failure cooldown added** — the prompt's suggested 200–600 t
+     cooldown would make NPCs retry MORE often than the existing 4000 t
+     window, worsening perf. The cost was never the retry frequency; it
+     was the cost of a single scan (suspect 2).
+   - `BuyGoodsBehavior` IS a per-tick retrier and the source of the
+     repeated channel-quote cost. Its plan check
+     (`buildShoppingPlan` → `ChannelRouter.findBestChannel`, the full
+     quote pipeline) runs in `checkExtraStartConditions`, gated only by
+     the `LAST_SHOPPING_TICK` TTL being absent. When the basket comes
+     back empty (no affordable food / no producer) the behavior returns
+     false → never starts → `stop()` (which stamps the cooldown) never
+     runs → the whole quote pipeline re-fires next executed brain tick.
+     **Fixed:** stamp `LAST_SHOPPING_TICK` (12000 t, the same TTL `stop()`
+     uses) on the empty-basket path inside `checkExtraStartConditions`,
+     so a failed shop is throttled identically to a successful one.
+   - **Channel WARN spam — premise corrected.** Every channel WARN
+     (`MarketChannel` NO STOCK / CEILING REJECT, `DirectBusinessChannel`
+     no producer / CEILING REJECT, `MarketInventory` no-sink) is ALREADY
+     one-shot per JVM (`LOGGED_*` volatile flags). They fire once per
+     session, not per attempt. No demotion needed; the repeated WARNs in
+     the prompt's log were from a pre-fix build. The cost was the quote
+     pipeline running per tick, independent of logging — addressed via
+     the BuyGoods throttle above and the scan cache below.
+
+2. **MarketInventory container-discovery cost — REAL, the prime mover.**
+   `stallChests` footprint-scanned a cube around each stall:
+   `(2*FOOTPRINT_SIZE+1)^3` = 11³ = **1331 `getBlockEntity` lookups per
+   stall, per call**. `countItem` / `takeItem` / `store` each rescanned,
+   and `EatMealBehavior.findAnyFoodSource` multiplied that by the
+   food-item count of the price registry (≈ a dozen+ `countItem` calls
+   per market candidate per NPC). At the meal window with many NPCs
+   food-seeking this dominated the tick. **Fixed:** added a per-market
+   container-POSITION cache (`POSITION_CACHE`, keyed by market UUID). A
+   query re-resolves the handful of recorded positions to live
+   containers (cheap) instead of re-scanning the cube; the full scan
+   runs only on a cache miss/expiry (TTL 200 t ≈ 10 s), an active-stall
+   count change, or a cached position failing to resolve to a
+   `Container` (broken chest / unloaded chunk). Every resolve is
+   re-validated against the live block entity, so a stale-but-valid set
+   can at worst miss a container added in the last ~10 s — it never
+   returns a wrong container. All read/take/store callers route through
+   `stallChests`, so one cache covers `EatMealBehavior`, `MarketChannel`,
+   `StallGoods`, `TradeHandler`, `MonasteryEconomy`,
+   `AbstractProductionBehavior`. `MerchantStartingStock` uses the
+   uncached single-stall `stallContainers` (stocking time, rare) and
+   only mutates contents (not positions), so no invalidation needed.
+
+3. **Noon meal synchronization — NOT REAL (already mitigated).**
+   `WorkSchedule.isMealTime` → `ScheduleResolver.isMealTime` →
+   `phaseAt`, which applies the ±300 t per-NPC `phaseJitter` (Liveliness
+   L3) exactly once. The MEAL transition already goes through the
+   jittered path; meals do not fire on an exact dayTime threshold. No
+   change — adding jitter again would reintroduce the documented
+   2×-jitter regression.
+
+4. **Whole-tick attribution backstop — ADDED.** New `NoonProfile`
+   (Events package): static `long` nanos accumulators for three buckets
+   — `brains` (the mod brain step in `TownspersonMob.customServerAiStep`),
+   `quotes` (`ChannelRouter.findBestChannel`), `marketScan`
+   (`MarketInventory.stallChests`, cache-resolve + scan). Accumulate
+   always (one `nanoTime` pair per path, no allocation), report rarely:
+   `ServerTickDispatcher` calls `maybeReport` once per server tick; it
+   emits ONE INFO line only when the buckets together exceed ~40 ms and
+   ≥ 20 ticks since the last line (max ~once/sec), then resets so a
+   printed line describes a single tick. Format:
+   `[NoonProfile] brains=Xms quotes=Yms marketScan=Zms npcs=N quotesRun=M`.
+   Zero steady-state overhead beyond the timer reads; silent under
+   threshold.
+
+### Files touched
+
+- `src/main/java/.../Village/Markets/Complex/MarketInventory.java` —
+  added the per-market container-position cache (`POSITION_CACHE`,
+  `CacheEntry`, `CACHE_TTL_TICKS`, `invalidate`/`invalidateAll`),
+  rewrote `stallChests` to be cache-first (`resolveCached` /
+  `scanAndCache`), threaded position capture through
+  `collectStallContainers`, and wrapped `stallChests` in the
+  NoonProfile market-scan timer. Public method signatures unchanged.
+- `src/main/java/.../Npc/Brain/Behaviors/BuyGoodsBehavior.java` —
+  stamp `LAST_SHOPPING_TICK` on the empty-basket branch of
+  `checkExtraStartConditions` (throttle the failed-shop retry).
+- `src/main/java/.../Events/NoonProfile.java` — NEW. Coarse
+  three-bucket whole-tick attribution, threshold-gated.
+- `src/main/java/.../Entities/custom/TownspersonMob.java` — wrapped
+  `brain.tick` in the NoonProfile brain timer.
+- `src/main/java/.../Npc/Economy/Channels/ChannelRouter.java` —
+  wrapped `findBestChannel` in the NoonProfile quote timer.
+- `src/main/java/.../Events/ServerTickDispatcher.java` — call
+  `NoonProfile.maybeReport(overworld)` once per server tick after
+  `tickAll`.
+
+### Tie-in audit
+
+- **Upstream feeders.** `MarketInventory.stallChests` is fed by
+  `VillageSavedData.getStallsForMarket` (unchanged) + `getBlockEntity`.
+  The cache reads the same inputs; structural change (active-stall
+  count) forces a rescan. NoonProfile accumulators are fed only by the
+  three wrapped paths.
+- **Downstream callers.** Every `MarketInventory` read/take/store
+  caller (`EatMealBehavior`, `MarketChannel`, `StallGoods`,
+  `TradeHandler`, `MonasteryEconomy`, `AbstractProductionBehavior`)
+  routes through `stallChests` — all benefit from the cache, none see a
+  signature change. `stallContainers` (only caller
+  `MerchantStartingStock`) is unchanged and uncached. `findBestChannel`
+  callers (BuyGoods, production/merchant behaviors, MonasteryEconomy,
+  CraftingOrderManager, EconomyDebugCommand, …) see no signature
+  change. `BuyGoodsBehavior` change is internal to one private-ish
+  override; no caller affected. `NoonProfile.maybeReport` — sole caller
+  is the dispatcher.
+- **Sibling systems.** The scan cache only changes WHEN the footprint
+  scan runs, not the result set for a current stall layout (re-validated
+  every resolve). No economy state mutated by the cache or the profiler.
+- **Exhaustive switches / enums / MemoryModuleTypes.** None added.
+  BuyGoods reuses the existing `LAST_SHOPPING_TICK` plain TTL memory
+  (no new module type — registration trap respected). The food
+  failure-throttle stays the existing `MEAL_COOLDOWN` (no new field).
+
+### Simplification sweep
+
+- `MarketInventory` is the single funnel for market goods; the cache is
+  added inside it, not as a parallel class — no new orphan. `NoonProfile`
+  is the only new class and has a concrete consumer (the dispatcher) +
+  three feeders. No overlapping pair created; no orphan introduced.
+  `[NoonProfile]` and `[TickSpike]` are complementary (entity-tick vs
+  daily-pass), not duplicative.
+
+### Deviations from prompt
+
+- **Suspect 1 food cooldown:** did NOT add a 200–600 t per-NPC food
+  failure cooldown to `EatMealBehavior`. The existing 4000 t
+  `MEAL_COOLDOWN` already throttles failed meals MORE aggressively than
+  600 t; a shorter cooldown would increase retry frequency and worsen
+  perf. The real per-tick retrier was `BuyGoodsBehavior` (fixed there).
+- **Channel WARN demotion:** not done — all channel/MarketInventory
+  WARNs are already one-shot per JVM, so the "once per NPC episode"
+  target is already exceeded (once per session). Premise corrected.
+- **Suspect 3:** no change — meal transition already routes through the
+  ±300 t `phaseJitter`.
+- **Cache invalidation on stall claim/vacate:** relies on the 200 t TTL
+  + active-stall-count signature rather than an explicit hook from the
+  stall-claim path. `invalidate(UUID)` is exposed for a future explicit
+  hook if a sub-10 s latency on a freshly claimed stall ever matters;
+  flagged below.
+
+### Out-of-scope but flagged
+
+- **Explicit cache invalidation on stall claim/vacate.** Today a newly
+  claimed/vacated stall becomes visible within ≤ 200 t (≈10 s) via the
+  TTL, or immediately if it changes the active-stall count. If a future
+  flow needs the new chest visible the same tick, call
+  `MarketInventory.invalidate(marketId)` from the stall-claim handler.
+- **`findAnyFoodSource` per-item rescan.** Even with the cache,
+  `EatMealBehavior.findAnyFoodSource` calls `countItem` once per food
+  item per market candidate. With the cache each call is now cheap
+  (resolve a few positions), but folding the per-item loop into a single
+  pass over the market's containers would cut it further. Deferred — the
+  cache removes the cube-scan multiplier, which was the dominant cost.
+- **`[NoonProfile]` next-step.** If the line shows `brains` dominating
+  with `quotes`/`marketScan` small, the remaining cost is generic brain
+  sensors/behaviors (not the food path) — attack the brain sensor set or
+  widen the cadence-LOD bands. If `marketScan` is still high, the cache
+  is missing (check TTL / stall-count churn). If `quotes` is high,
+  another behavior is quoting per tick like BuyGoods was.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net). Static
+review: brace balance confirmed on all six touched files; no public
+signature changes; no new enum/tag/MemoryModuleType; imports added for
+`Map`/`UUID`/`ConcurrentHashMap` in `MarketInventory`; cross-package
+references to `NoonProfile` use the fully-qualified name (or same-package
+in the dispatcher).
+
+### Smoke-test plan (Garrett)
+
+Run a multi-village world with at least one market that has stocked
+stalls, and watch a full in-game day through the meal window.
+
+1. **Before/after tick time.** Open the F3 server-tick graph (or your
+   tick-time readout) and note the peak ms at the meal window. Expect
+   the noon peak to drop substantially vs the 800–1800 ms baseline now
+   that the per-stall cube scan is cached and BuyGoods stops re-quoting
+   every tick.
+2. **`[NoonProfile]` lines.** If the meal window still crosses ~40 ms in
+   the three buckets, you'll see at most one
+   `[NoonProfile] brains=Xms quotes=Yms marketScan=Zms npcs=N quotesRun=M`
+   line per second in the server log. Read off which bucket dominates
+   (see "Out-of-scope but flagged" for what each verdict means). If the
+   window stays under 40 ms, no line prints — that's the success case.
+3. **Channel WARNs.** Confirm the `[MarketChannel] NO STOCK` /
+   `[DirectBusinessChannel] no producer` / `CEILING REJECT` WARNs appear
+   at most ONCE for the whole session (they are one-shot per JVM), not
+   repeating per tick. If you previously saw them repeating, that build
+   predates the one-shot flags.
+4. **Food still works.** Confirm NPCs still buy food and eat at the meal
+   window (the cache must not hide stocked stalls): watch an NPC with a
+   stocked market walk to it and eat ("Buying lunch" → "Eating"), and
+   confirm `/economy` still shows the market's stall stock. A freshly
+   claimed/stocked stall becomes visible within ~10 s (the cache TTL).
+5. **No new per-tick spam.** Confirm the server log has no new
+   per-tick lines at steady state (NoonProfile is silent under
+   threshold; the food/channel WARNs are one-shot).

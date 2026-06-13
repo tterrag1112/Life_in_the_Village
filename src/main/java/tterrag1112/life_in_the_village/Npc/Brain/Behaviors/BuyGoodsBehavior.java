@@ -88,7 +88,23 @@ public class BuyGoodsBehavior extends Behavior<TownspersonMob> {
         if (village == null) return false;
         pending.clear();
         buildShoppingPlan(level, entity, data, village);
-        return !pending.isEmpty();
+        if (pending.isEmpty()) {
+            // noon-meal-perf — the plan check (ChannelRouter quote pipeline) is
+            // the expensive part and it runs HERE, in checkExtraStartConditions,
+            // every tick the LAST_SHOPPING_TICK TTL is absent. When the basket
+            // comes back empty the behavior never starts, so stop() (which
+            // normally stamps the cooldown) never runs and we re-quote the whole
+            // pipeline next executed brain tick — a per-NPC retry storm at the
+            // meal/social window, and the source of the repeated channel quote
+            // cost. Stamp the cooldown on the empty-basket path too so a failed
+            // shop is throttled identically to a successful one. Plain TTL
+            // memory (already declared in the constructor) — no new module type.
+            entity.getBrain().setMemoryWithExpiry(
+                    NpcMemoryTypes.LAST_SHOPPING_TICK.get(),
+                    level.getGameTime(), COOLDOWN_TICKS);
+            return false;
+        }
+        return true;
     }
 
     @Override

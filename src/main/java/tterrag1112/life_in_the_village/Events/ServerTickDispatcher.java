@@ -80,6 +80,13 @@ public class ServerTickDispatcher {
         // ── Delegate ─────────────────────────────────────────────────────────
         TickSubsystemRegistry.tickAll(ctx);
 
+        // noon-meal-perf — coarse whole-tick attribution for the meal-window
+        // spike. NoonProfile accumulated brain/quote/market-scan nanos during
+        // this server tick (across all NPC ticks + economy calls); emit one
+        // threshold-gated [NoonProfile] line if the buckets crossed ~40 ms,
+        // then reset for the next tick. Silent and near-free otherwise.
+        NoonProfile.maybeReport(overworld);
+
         // ── Phase 6.3.3.g.1 — animal-husbandry roster driver ─────────────────
         // Each BuildingRoster's internal tick advances growth + breeding
         // + production. Realize/derealize on chunk-load events is wired

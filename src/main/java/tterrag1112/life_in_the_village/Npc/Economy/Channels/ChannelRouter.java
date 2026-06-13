@@ -60,10 +60,19 @@ public final class ChannelRouter {
      */
     public static Optional<ChannelQuote> findBestChannel(TradeIntent intent, Village village,
                                                          VillageSavedData data, ServerLevel level) {
-        List<ChannelQuote> quotes = collectQuotes(intent, village, data, level);
-        if (quotes.isEmpty()) return Optional.empty();
-        quotes.sort((a, b) -> Double.compare(score(b, intent), score(a, intent)));
-        return Optional.of(quotes.get(0));
+        // noon-meal-perf — coarse quote-pipeline attribution (accumulate-always,
+        // report-rarely via NoonProfile). The router quote loop is one of the
+        // three meal-window hot buckets.
+        long t0 = System.nanoTime();
+        try {
+            List<ChannelQuote> quotes = collectQuotes(intent, village, data, level);
+            if (quotes.isEmpty()) return Optional.empty();
+            quotes.sort((a, b) -> Double.compare(score(b, intent), score(a, intent)));
+            return Optional.of(quotes.get(0));
+        } finally {
+            tterrag1112.life_in_the_village.Events.NoonProfile
+                    .addQuote(System.nanoTime() - t0);
+        }
     }
 
     /**

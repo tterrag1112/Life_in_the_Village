@@ -1491,7 +1491,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules
                         .tick(this, level.getDayTime());
             }
+            // noon-meal-perf — coarse brain-step attribution. Accumulate-always
+            // (one nanoTime pair, no allocation), report-rarely: NoonProfile
+            // sums across all NPCs ticked this server tick and the dispatcher
+            // emits one threshold-gated [NoonProfile] line. Zero steady-state
+            // overhead beyond the timer reads.
+            long brainStart = System.nanoTime();
             brain.tick(level, this);
+            tterrag1112.life_in_the_village.Events.NoonProfile
+                    .addBrain(System.nanoTime() - brainStart);
         }
         // Phase 6.3.2.a — expire TIMED role assignments.
         roles.tickRoles(level.getGameTime());
