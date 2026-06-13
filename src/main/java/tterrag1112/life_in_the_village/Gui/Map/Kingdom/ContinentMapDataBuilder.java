@@ -84,6 +84,24 @@ public final class ContinentMapDataBuilder {
                     v.getName(), anchor, false));
         }
 
+        // Track C1-a — unrealized settlement-charter pins at cell centres so
+        // a chartered-but-unsited kingdom (e.g. a capital that has not yet
+        // sited) is visible on the continent view too. Realized charters
+        // carry their Village marker via the loop above.
+        for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
+            for (var charter : k.getSettlementCharters()) {
+                if (!charter.isUnrealized()) continue;
+                BlockPos pos = charter.targetCellCentre();
+                long key = AtlasCell.packKey(
+                        pos.getX() >> AtlasCell.CELL_SHIFT,
+                        pos.getZ() >> AtlasCell.CELL_SHIFT);
+                if (!continentCells.contains(key)) continue;
+                villages.add(new KingdomMapData.VillageMarker(
+                        charter.id(), k.getId(),
+                        charter.name(), pos, charter.capital()));
+            }
+        }
+
         // Routes — reuse the kingdom map's sampling logic
         Set<UUID> viewableVillages = new HashSet<>();
         for (var vm : villages) viewableVillages.add(vm.id());

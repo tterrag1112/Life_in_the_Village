@@ -14,17 +14,11 @@ import tterrag1112.life_in_the_village.Kingdom.KingdomClaim;
 import tterrag1112.life_in_the_village.Kingdom.KingdomClaimComputer;
 import tterrag1112.life_in_the_village.Kingdom.Events.KingdomEvent;
 import tterrag1112.life_in_the_village.Kingdom.Events.KingdomEventBus;
-import tterrag1112.life_in_the_village.Kingdom.Placement.ClaimVillagePlacer;
 import tterrag1112.life_in_the_village.Lore.HistoryTextGenerator;
 import tterrag1112.life_in_the_village.Lore.KingdomHistoryData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Networking.WorldRoadSavedData;
-import tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper;
-import tterrag1112.life_in_the_village.Village.Roads.Graph.WorldRoadGraph;
-import tterrag1112.life_in_the_village.Village.Village;
 import tterrag1112.life_in_the_village.World.Atlas.WorldAtlas;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Consumer;
@@ -56,8 +50,11 @@ import java.util.function.Consumer;
  * <h3>Outputs</h3>
  * Returns the new {@link Kingdom} record on success. Side effects:
  * <ul>
- *   <li>{@link VillageSavedData} gains a Kingdom + a planned Village.</li>
- *   <li>The Village's {@code kingdomId} is set to the new kingdom.</li>
+ *   <li>{@link VillageSavedData} gains a Kingdom (born regardless of
+ *       capital-siting success — Track C1-a decoupling).</li>
+ *   <li>A capital {@code SettlementCharter} is issued into the claim's
+ *       origin cell. No block-siting happens here; survey (C1-b) and
+ *       realization (C1-c) site the capital later, locally.</li>
  *   <li>{@link KingdomClaim} is computed with the culture-keyed
  *       {@code claimBudgetHint} and stamped on the kingdom.</li>
  *   <li>{@link Heraldry} is regenerated from
@@ -70,9 +67,10 @@ import java.util.function.Consumer;
  * Office staffing (founding ruler, culture-required offices) is
  * deferred to {@code KingdomOfficeBootstrapTickSystem}, which runs
  * post-realisation when capital NPCs exist. CapitalGenerator only
- * plans the village; realisation happens later via
+ * issues the capital charter; survey (C1-b) and realization (C1-c)
+ * site the capital later via the charter pipeline / the existing
  * {@code VillageRealisationSystem} when a player loads chunks near
- * the capital.
+ * the capital cell.
  */
 public final class CapitalGenerator {
 
@@ -145,66 +143,48 @@ public final class CapitalGenerator {
                 + ", budget=" + kd.claimBudgetHint()
                 + ", culture-resistance=" + kd.claimResistance() + ")");
 
-        // ── Plan capital village ────────────────────────────────────────
-        // Capital placement uses the same ClaimVillagePlacer that
-        // legacy planComposed used. Composition is a single entry —
-        // the capital itself.
-        List<BlockPos> existingVillagePositions = data.getAllVillages().stream()
-                .map(Village::getAnchorPos)
-                .filter(java.util.Objects::nonNull)
-                .toList();
-        WorldRoadGraph roadGraph =
-                WorldRoadSavedData.get(level).getGraph();
+        // ── Issue the capital settlement charter (Track C1-a) ───────────
+        // Kingdom birth is DECOUPLED from capital block-siting. We commit
+        // the capital to a CELL of the claim (not a block) and let survey
+        // (C1-b) + realization (C1-c) site it later, locally, with
+        // per-charter backoff. A claim is non-empty by construction, so a
+        // charter always issues — the kingdom can no longer die at worldgen
+        // because the capital couldn't site (the old removeKingdom path).
+        //
+        // The capital cell is the claim's origin cell: the seeder already
+        // resolved it via AtlasSiteSelector.findBest (buildable, non-ocean,
+        // spacing-clear, viable), and it is guaranteed present in the claim.
+        long capitalCellKey = territorialClaim.originCellKey();
+        int capitalCellX = tterrag1112.life_in_the_village.World.Atlas.AtlasCell
+                .unpackX(capitalCellKey);
+        int capitalCellZ = tterrag1112.life_in_the_village.World.Atlas.AtlasCell
+                .unpackZ(capitalCellKey);
+        tterrag1112.life_in_the_village.World.Atlas.AtlasCell capitalCell =
+                atlas.getCellByCoord(capitalCellX, capitalCellZ);
 
-        List<ClaimVillagePlacer.PlacementResult> placements =
-                ClaimVillagePlacer.plan(atlas, territorialClaim, origin,
-                        List.of(capitalVillageType),
-                        existingVillagePositions, roadGraph);
-
-        if (placements.isEmpty() || !placements.get(0).placed()) {
-            progress.accept("Capital placement failed — aborting '"
-                    + kingdomName + "'");
-            data.removeKingdom(kingdom.getId());
-            data.setDirty();
-            return Optional.empty();
-        }
-
-        ClaimVillagePlacer.PlacementResult capital = placements.get(0);
-        BlockPos capitalPos = capital.position();
-
-        // Don't clash with another kingdom's village placed earlier.
-        boolean clashes = data.getAllVillages().stream()
-                .anyMatch(v -> {
-                    BlockPos a = v.getAnchorPos();
-                    return a != null && a.distSqr(capitalPos) < 100L * 100L;
-                });
-        if (clashes) {
-            progress.accept("Capital site clashes with an existing village — aborting '"
-                    + kingdomName + "'");
-            data.removeKingdom(kingdom.getId());
-            data.setDirty();
-            return Optional.empty();
-        }
+        // Stage-0 size band is an estimate; realization refines to truth.
+        tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier capitalBand =
+                tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier.TOWN;
+        tterrag1112.life_in_the_village.Kingdom.Settlement.CharterDigest digest =
+                tterrag1112.life_in_the_village.Kingdom.Settlement.CharterDigest
+                        .fromCell(capitalCell, capitalBand);
 
         String capitalName = kingdomName;  // capital takes the kingdom's name
-        progress.accept("  Planning capital " + capitalName + " ("
-                + capital.villageType()
-                + (capital.relaxed() ? ", relaxed tag match" : "")
-                + ") at " + capitalPos.toShortString()
-                + " score=" + String.format("%.2f", capital.score()));
-
-        Village planned = VillagePlanHelper.planVillage(level, data,
-                capitalPos, capital.villageType(), capitalName);
-
-        // ── Wire kingdom ↔ capital relationship ─────────────────────────
-        kingdom.addVillage(planned.getId());
-        kingdom.setCapitalVillageId(planned.getId());
-        planned.setKingdomId(kingdom.getId());
+        var capitalCharter = kingdom.issueSettlementCharter(
+                capitalName, capitalCellKey,
+                tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter.ROLE_CAPITAL,
+                capitalVillageType, capitalBand, true, digest, foundingTick);
         data.setDirty();
 
-        progress.accept("Founded '" + kingdomName + "' with capital '"
-                + capitalName + "' at " + capitalPos.toShortString()
-                + ". Heraldry: " + kingdom.getHeraldry().describe());
+        progress.accept("Chartered capital '" + capitalName + "' ("
+                + capitalVillageType + ") in cell "
+                + capitalCellX + "," + capitalCellZ
+                + " (centre " + capitalCharter.targetCellCentre().toShortString()
+                + ", stage=" + capitalCharter.stage() + "). "
+                + "Survey + realization happen later when a player loads nearby.");
+
+        progress.accept("Founded '" + kingdomName + "' with chartered capital '"
+                + capitalName + "'. Heraldry: " + kingdom.getHeraldry().describe());
 
         // ── Fire the bus ────────────────────────────────────────────────
         // Office events fire later, post-realisation, from

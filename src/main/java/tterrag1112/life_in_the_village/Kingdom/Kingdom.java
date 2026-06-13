@@ -43,7 +43,12 @@ public class Kingdom {
             List<Treaty> treaties,
             List<IntrigueAttempt> intrigueHistory,
             KingdomAudienceData audience,
-            List<War> wars
+            List<War> wars,
+            // Track C1 — settlement charters issued by this kingdom
+            // (capital + future role-driven settlements). Rides in the
+            // governance bundle (mirrors the political `charters` list) to
+            // stay under the top-level Kingdom.CODEC 16-field cap.
+            List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter> settlementCharters
     ) {
         public static final Codec<KingdomGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -131,7 +136,13 @@ public class Kingdom {
                         War.CODEC.listOf()
                                 .optionalFieldOf("wars", new ArrayList<>())
                                 .forGetter(g -> g.wars() != null
-                                        ? g.wars() : new ArrayList<>())
+                                        ? g.wars() : new ArrayList<>()),
+                        // Track C1 — settlement charters (empty for pre-C1 saves).
+                        tterrag1112.life_in_the_village.Kingdom.Settlement
+                                .SettlementCharter.CODEC.listOf()
+                                .optionalFieldOf("settlementCharters", new ArrayList<>())
+                                .forGetter(g -> g.settlementCharters() != null
+                                        ? g.settlementCharters() : new ArrayList<>())
                 ).apply(i, KingdomGovernanceData::new));
     }
 
@@ -207,7 +218,8 @@ public class Kingdom {
                                                     new ArrayList<>(k.petitions),
                                                     new ArrayList<>(k.playerStandings.values()),
                                                     new ArrayList<>(k.playerNobles.values())),
-                                            new ArrayList<>(k.wars))),
+                                            new ArrayList<>(k.wars),
+                                            new ArrayList<>(k.settlementCharters))),
                             tterrag1112.life_in_the_village.Npc.Office.OfficeState.CODEC
                                     .optionalFieldOf("offices")
                                     .forGetter(k -> Optional.ofNullable(k.offices)),
@@ -316,6 +328,10 @@ public class Kingdom {
         }
         // Track D3.6.4 — restore wars (attacker side).
         if (governance.wars() != null) k.wars.addAll(governance.wars());
+        // Track C1 — restore settlement charters (empty for pre-C1 saves).
+        if (governance.settlementCharters() != null) {
+            k.settlementCharters.addAll(governance.settlementCharters());
+        }
         // Track D3.4b — restore treaties (empty for pre-D3.4b saves);
         // auto-migrate cooperative DiplomaticRelation entries into
         // ALLIANCE / TRADE_DEAL treaties when no treaty list exists.
@@ -404,6 +420,18 @@ public class Kingdom {
      * {@link #removeCharter}.
      */
     private final List<Charter> charters = new ArrayList<>();
+
+    /**
+     * Track C1 — settlement charters issued by this kingdom: the capital
+     * (first charter, {@code capital=true}) plus future role-driven
+     * settlements. A charter decouples kingdom birth from block-siting —
+     * the kingdom is born with a claim + a charter, and survey /
+     * realization happen later (C1-b / C1-c). NOT the political
+     * {@link Charter} list above. Mutated via {@link #issueSettlementCharter},
+     * {@link #updateSettlementCharter}, {@link #removeSettlementCharter}.
+     */
+    private final List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            settlementCharters = new ArrayList<>();
 
     /**
      * Track D3.4b — diplomatic treaties this kingdom is party to.
@@ -1355,6 +1383,86 @@ public class Kingdom {
      */
     public boolean removeCharter(UUID charterId) {
         return charters.removeIf(c -> c.id().equals(charterId));
+    }
+
+    // =========================================================================
+    // Track C1 — settlement charters (capital + role-driven settlements)
+    // =========================================================================
+
+    /** Unmodifiable view of this kingdom's settlement charters. */
+    public List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            getSettlementCharters() {
+        return Collections.unmodifiableList(settlementCharters);
+    }
+
+    /**
+     * Issues a fresh stage-0 settlement charter into the given atlas cell.
+     * The kingdom is born/grown without any block-siting; survey (C1-b) and
+     * realization (C1-c) happen later. Returns the created charter.
+     */
+    public tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter
+            issueSettlementCharter(String name, long targetCellKey, String role,
+                                   String villageType,
+                                   tterrag1112.life_in_the_village.Village.Decoration.VillageSizeTier sizeBand,
+                                   boolean capital,
+                                   tterrag1112.life_in_the_village.Kingdom.Settlement.CharterDigest digest,
+                                   long tick) {
+        var charter = tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter
+                .chartered(UUID.randomUUID(), this.id, name, targetCellKey, role,
+                        villageType, sizeBand, capital, digest, tick);
+        settlementCharters.add(charter);
+        return charter;
+    }
+
+    /** Looks up a settlement charter by id. */
+    public Optional<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            findSettlementCharter(UUID charterId) {
+        for (var c : settlementCharters) {
+            if (c.id().equals(charterId)) return Optional.of(c);
+        }
+        return Optional.empty();
+    }
+
+    /** The capital settlement charter, if one has been issued. */
+    public Optional<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            getCapitalCharter() {
+        for (var c : settlementCharters) {
+            if (c.capital()) return Optional.of(c);
+        }
+        return Optional.empty();
+    }
+
+    /** Settlement charters carrying the given kingdomRoles vocabulary role. */
+    public List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            settlementChartersByRole(String role) {
+        List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter> out =
+                new ArrayList<>();
+        for (var c : settlementCharters) {
+            if (c.role().equals(role)) out.add(c);
+        }
+        return out;
+    }
+
+    /**
+     * Replaces an existing settlement charter (matched by id) with a new
+     * copy-with instance — the survey (C1-b) and realization (C1-c) stage
+     * advances route through here. Returns true if a matching charter was
+     * found and replaced.
+     */
+    public boolean updateSettlementCharter(
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter updated) {
+        for (int i = 0; i < settlementCharters.size(); i++) {
+            if (settlementCharters.get(i).id().equals(updated.id())) {
+                settlementCharters.set(i, updated);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Removes a settlement charter entirely. */
+    public boolean removeSettlementCharter(UUID charterId) {
+        return settlementCharters.removeIf(c -> c.id().equals(charterId));
     }
 
     // =========================================================================

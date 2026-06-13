@@ -97,6 +97,33 @@ public final class KingdomMapDataBuilder {
             ));
         }
 
+        // ── 4b. Settlement-charter pins (Track C1-a) ──────────────────────────
+        // An unrealized charter has no Village yet, so it has no anchor-pos
+        // marker above. Render a pin at its target-cell centre so a kingdom
+        // whose capital has not yet sited is still visible on the map (the
+        // #1 field-notes bug was such kingdoms being deleted entirely). Once
+        // a charter realizes (C1-c) the produced Village carries the marker
+        // via the loop above and we skip the charter pin to avoid a double.
+        List<Kingdom> charterKingdoms = new ArrayList<>();
+        charterKingdoms.add(focus);
+        for (KingdomMapData.ForeignKingdom fk : foreign) {
+            Kingdom.ClientKingdomCache.getById(fk.id()).ifPresent(charterKingdoms::add);
+        }
+        for (Kingdom k : charterKingdoms) {
+            for (var charter : k.getSettlementCharters()) {
+                if (!charter.isUnrealized()) continue; // realized → Village marker
+                BlockPos pos = charter.targetCellCentre();
+                int cx = pos.getX() >> AtlasCell.CELL_SHIFT;
+                int cz = pos.getZ() >> AtlasCell.CELL_SHIFT;
+                if (cx < minCX || cx > maxCX || cz < minCZ || cz > maxCZ) continue;
+                villages.add(new KingdomMapData.VillageMarker(
+                        charter.id(),
+                        k.getId(),
+                        charter.name(), pos,
+                        charter.capital()));
+            }
+        }
+
         // ── 5. Routes ────────────────────────────────────────────────────────
         List<KingdomMapData.RoutePath> landRoutes = new ArrayList<>();
         List<KingdomMapData.RoutePath> seaRoutes  = new ArrayList<>();

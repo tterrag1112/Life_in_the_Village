@@ -2717,3 +2717,226 @@ D3.3 was split per the kingdom plan's "If ambiguous" guidance:
   hard-coded at 7 days; if Phase 6 rebellion mechanics churn
   manors fast, the event-invalidation hook does the heavy
   lifting and the weekly cadence becomes a safety net.
+
+---
+
+## C1-a — Charter the kingdom, don't site it (SettlementCharter model + capital-siting decouple)
+
+**Date:** 2026-06-12. Built to `.claude/planning/15-C1-CHARTER-MODEL-DESIGN.md`
+(Slice C1-a). Two locked rulings from Garrett: (1) capital is the kingdom's
+first `SettlementCharter` with a `capital` flag — NOT a separate
+`capitalCharterId` pointer; (2) the setruler/office mismatch is DEFERRED to C2
+(untouched here). Kills the #1 field-notes bug: a whole kingdom deleted when
+its capital couldn't site.
+
+### Verified disposition (divergence from doc 15)
+
+All doc-15 code claims re-read against the current tree and confirmed:
+
+- **Naming collision real.** `Kingdom/Charters/Charter.java` is the political
+  grant (TOLL_RIGHTS/TITLE_GRANT/…) with `Kingdom.grantCharter/revokeCharter`.
+  New type is `SettlementCharter` in `Kingdom/Settlement/`. No import/reference
+  ambiguity — every `SettlementCharter`/`CharterDigest` reference in
+  `Kingdom.java` is fully-qualified; the political `Charter` import is untouched.
+- **The bug is real and in `CapitalGenerator.generate`.** It called
+  `ClaimVillagePlacer.plan(...)` synchronously and did `data.removeKingdom(...)`
+  on `placed()==false` AND on a clash with an existing village — two
+  kingdom-deleting branches, both removed.
+- **`Kingdom.CODEC` field count — DIVERGENCE from doc 15's recommendation.**
+  Doc 15 §2.4 says "add one `optionalFieldOf` line to `Kingdom.CODEC`." But the
+  top-level `Kingdom.CODEC` group is ALREADY AT 16 fields (id, name, culture,
+  villageIds, rulerEntityId, rulerPlayerId, relations, activeLaws,
+  territorialClaim, **governance**, offices, stability, legitimacy, heraldry,
+  capitalVillageId, foundingTick). Adding a 17th top-level field would BREAK the
+  16-field codec cap. The political `charters` list does NOT live on the
+  top-level group — it lives inside the nested `KingdomGovernanceData` codec
+  (which had 15 fields, room for one more). So the faithful "mirror the
+  political-charters pattern" placement is: add `settlementCharters` as field 16
+  of `KingdomGovernanceData`, NOT the top-level group. Done that way. Both
+  codecs now sit at exactly 16 fields — at the cap, not over.
+- **`SyncKingdomPacket` ships `Kingdom.CODEC.listOf()` to the client** →
+  `settlementCharters` reaches `ClientKingdomCache` automatically. No map-packet
+  change needed for charter pins.
+- **Caller of `CapitalGenerator.generate`:** only `WorldgenKingdomSeeder`
+  (line ~202), which ignores the returned `Optional` — no dependency on the old
+  delete-on-failure behaviour. Safe.
+
+### SettlementCharter model as built
+
+`Kingdom/Settlement/` (3 new files):
+
+- `SettlementCharterStage` enum: `CHARTERED / SURVEYED / REALIZED`. New enum
+  justified by concrete consumers (map pin distinguishes unrealized vs realized;
+  C1-b/c key batched passes off stage).
+- `CharterDigest` record (5 fields, all `optionalFieldOf`): `estPopulation`,
+  `homeCategory` (BiomeCategory), `relief` (cell slope), `freshwater`, `coastal`.
+  `fromCell(AtlasCell, VillageSizeTier)` derives it; `UNKNOWN` default for an
+  unread cell. Thin stage-0 estimate; D2 owns the full sim-ledger digest.
+- `SettlementCharter` record — **13 fields, under the 16 cap:**
+  `id`, `kingdomId`, `name`, `stage` (identity);
+  `targetCellKey` (AtlasCell.packKey — a CELL, not a block), `role`
+  (kingdomRoles vocab string; `ROLE_CAPITAL = "capital"`), `villageType`
+  (registry id), `sizeBand` (VillageSizeTier, codec'd via STRING.xmap), `capital`
+  (boolean flag — the locked ruling), `digest` (stage 0);
+  `surveyedAnchor` (Optional<BlockPos>), `footprintScore` (Optional<Float>)
+  (stage 1, empty in C1-a); `realizedVillageId` (Optional<UUID>) (stage 2, empty
+  in C1-a); `issuedTick`. Staged fields are `optionalFieldOf` so a charter
+  persists cleanly at any stage. Copy-with mutators `surveyed(...)` /
+  `realized(...)` are the C1-b / C1-c plug-in points. Reuses existing vocab
+  (VillageSizeTier, kingdomRoles strings, AtlasCell cell-key) — no speculative
+  new primitives.
+
+### Kingdom integration + codec field count
+
+- `KingdomGovernanceData` record: **15 → 16 fields** (added
+  `List<SettlementCharter> settlementCharters` after `wars`). Its codec group is
+  now 16 forGetters = 16 record components — at the cap, verified by count.
+- `Kingdom.CODEC` (top-level): **unchanged at 16 fields** — charters ride inside
+  the governance bundle, exactly as the political `charters` list does. The
+  additive `optionalFieldOf("settlementCharters", new ArrayList<>())` defaults to
+  empty so pre-C1 saves load cleanly; restored in `fromCodec` after the wars
+  restore. The single `new KingdomGovernanceData(...)` constructor (in the
+  governance forGetter) updated with `new ArrayList<>(k.settlementCharters)`.
+- Accessors mirroring the political-charter pattern: `getSettlementCharters()`,
+  `issueSettlementCharter(...)` (mirrors `grantCharter`), `findSettlementCharter`,
+  `getCapitalCharter()`, `settlementChartersByRole(String)`,
+  `updateSettlementCharter(SettlementCharter)` (copy-with replace — the C1-b/c
+  stage-advance route), `removeSettlementCharter`.
+
+### CapitalGenerator decoupling (exactly what changed)
+
+`CapitalGenerator.generate`:
+- **DELETED** both `data.removeKingdom(...)`-on-failure branches (placement
+  failure + village clash) and the `ClaimVillagePlacer.plan(...)` call, the
+  `VillagePlanHelper.planVillage(...)` call, the `existingVillagePositions`/
+  `roadGraph`/`PlacementResult` machinery, and the `capitalVillageId`/`addVillage`
+  wiring (the capital is now a charter, not a planned Village).
+- **ADDED:** after computing the `KingdomClaim`, pick the capital cell =
+  `territorialClaim.originCellKey()` (the seeder's already-validated buildable,
+  non-ocean, spacing-clear, viable origin cell — guaranteed in the claim), read
+  its `AtlasCell` for the digest (size band defaults to `TOWN`, a stage-0
+  estimate refined at realization), and call
+  `kingdom.issueSettlementCharter(name, cellKey, ROLE_CAPITAL, capitalVillageType,
+  TOWN, capital=true, digest, foundingTick)`. The kingdom is born regardless —
+  a claim is non-empty by construction so a charter always issues.
+- Removed the now-dead imports (ClaimVillagePlacer, VillagePlanHelper,
+  WorldRoadGraph, WorldRoadSavedData, Village, java.util.List). Updated the
+  class/method javadoc Outputs + Office-staffing notes to match.
+
+### Map-pin approach
+
+The kingdom claim-cells already render (no kingdom→no-territory was the blank
+case, but a chartered kingdom HAS a claim). To make the unsited capital itself
+visible, both client-side marker builders (they run off
+`Kingdom.ClientKingdomCache`) emit a `VillageMarker` per
+**unrealized** charter at `charter.targetCellCentre()` (cell-centre block,
+Y nominal until C1-b survey), reusing the existing `VillageMarker` record +
+`VillageLayer`/`LabelLayer` rendering and the `isCapital` flag
+(= `charter.capital()`):
+- `KingdomMapDataBuilder` (kingdom map) — pins for focus + viewable foreign
+  kingdoms' unrealized charters within the viewport.
+- `ContinentMapDataBuilder` (continent map) — same, for all kingdoms within the
+  continent cell-set.
+Realized charters are skipped (their produced Village carries the marker), so no
+double-pin. NO change to `KingdomMapSyncPacket` / `VillageMarker` / any layer —
+the pin falls out of existing cell+marker rendering plus the auto-synced
+`settlementCharters`. (`KingdomMapDataBuilder` line ~88 had a "capital detection
+TODO when kingdom capitals land" comment for Village markers; left as-is — that
+TODO is about realized-Village capital detection, a C1-c/C2 concern, not the
+charter pin.)
+
+### Files touched
+
+New: `Kingdom/Settlement/SettlementCharter.java`,
+`Kingdom/Settlement/CharterDigest.java`,
+`Kingdom/Settlement/SettlementCharterStage.java`.
+Edited: `Kingdom/Kingdom.java` (governance record + codec + fromCodec + field +
+accessors), `Kingdom/Worldgen/CapitalGenerator.java` (decouple),
+`Gui/Map/Kingdom/KingdomMapDataBuilder.java` + `ContinentMapDataBuilder.java`
+(charter pins).
+
+### Deviations from prompt
+
+1. **Codec placement diverges from doc 15's literal wording.** Doc 15 §2.4 said
+   add the field to `Kingdom.CODEC`; the top-level group is already at the
+   16-cap, so the field went into the nested `KingdomGovernanceData` codec (which
+   IS where the political `charters` list lives — the pattern the prompt told me
+   to mirror). Net effect is identical (charters persist on the kingdom), and it
+   respects the cap. Flagged because the doc's phrasing implied the top-level
+   group.
+2. **Continent map pin added (not just the kingdom map).** The prompt's map-pin
+   item named the kingdom map; `ContinentMapDataBuilder` is a parallel
+   village-marker path, so I added the same pin there for consistency (small,
+   in-scope, audited). Without it the continent view would stay blank for an
+   unsited capital.
+3. **Capital size band hard-defaulted to `TOWN`.** Neither `VillageTypeData` nor
+   the culture defaults carry a capital size tier, and the realised tier is a
+   realization-time concern. `TOWN` is a stage-0 estimate; the digest/size
+   refine to truth at realization (C1-c).
+
+### Out-of-scope but flagged (plug-in points)
+
+- **C1-b (survey):** `SettlementCharter.surveyed(anchor, score)` +
+  `Kingdom.updateSettlementCharter(...)` are the seam. A budgeted 1-per-tick pass
+  (à la `GraphEdgeRealizationSystem`) scans `targetCellKey` via
+  `Village/Planning/V2/Layer1/GeneratorTerrainSource` + `V2FeatureMap`, fills
+  `surveyedAnchor`/`footprintScore`, downgrades `sizeBand` or relocates
+  `targetCellKey` within the claim on failure, advances stage to SURVEYED. Map
+  pins become exact (read `surveyedAnchor` before `targetCellCentre()`).
+- **C1-c (realization handoff):** generalize `Events/VillageRealisationSystem` to
+  realize SURVEYED charters — plan a `Village` at `surveyedAnchor` via
+  `VillagePlanHelper.planVillage`, set the Village's `kingdomId` + the kingdom's
+  `capitalVillageId`/`addVillage`, call `SettlementCharter.realized(villageId)` +
+  `updateSettlementCharter`, advance to REALIZED. Reuse the existing
+  `FailureRecord` backoff. (The `addVillage`/`capitalVillageId` wiring removed
+  from CapitalGenerator moves HERE.)
+- **C1-d (portfolio):** replace `WorldgenKingdomSeeder.buildComposition`'s
+  hard-coded list with charter issuance driven by the now-carryable role/affinity
+  — the charter already carries `role`; C3 reads
+  `VillageTypeData.kingdomRoles/biomeAffinity/maxPerKingdom/tradePriority`.
+- **C2:** Kingdom→own SavedData extraction (take `settlementCharters` with it);
+  `VillageSavedData` decomposition; reconcile the ruler-field vs OfficeState
+  mismatch (`/kingdom setruler` vs `KingdomOfficeBootstrap`) — UNTOUCHED here per
+  the locked ruling.
+- **C3:** dead-field wiring as full issuing logic; emergent-village absorption
+  (a charter can start at REALIZED pointing at an adopted Village — the hook is
+  `realizedVillageId`); frontier cells; provinces on real territory.
+- **`KingdomMapDataBuilder` "capital detection TODO"** (Village-marker path):
+  realized-Village capital detection is a C1-c/C2 concern (needs the
+  realizedVillageId→Village link), left as-is.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net). Manual static
+review in place: every touched symbol grepped (multi-line/qualifier-split for
+the Charter-vs-SettlementCharter disambiguation — confirmed all
+`SettlementCharter`/`CharterDigest` refs in `Kingdom.java` are fully-qualified,
+political `Charter` import intact); brace/paren balance verified on all 6 files;
+governance codec forGetter count (16) == record component count (16); the single
+`new KingdomGovernanceData(...)` constructor updated; `BlockPos.CODEC` /
+`BiomeCategory.CODEC` / AtlasCell methods (`slope`/`isCoast`/`isFreshwater`/
+`unpackX`/`unpackZ`/`CELL_HALF`/`CELL_SHIFT`) / VillageSizeTier fields all
+confirmed present.
+
+### Smoke test (user, in-world)
+
+1. **Worldgen produces kingdoms.** New world, let the seeder run (2 kingdoms,
+   2000–4000 blocks from origin). Confirm 2 kingdoms exist
+   (`/litv kingdom list` or the kingdom book).
+2. **Capital is chartered, not sited.** For a fresh kingdom, confirm
+   `capitalVillageId` is empty (no realized capital Village yet) but the kingdom
+   has one `settlementCharter` with `capital=true`, `stage=CHARTERED`. Console
+   shows "Chartered capital '<name>' … stage=CHARTERED" instead of "Planning
+   capital".
+3. **Force a capital-siting failure → kingdom SURVIVES.** Pick a seed/region
+   where the old code would have logged "Capital placement failed — aborting"
+   (steep/water-heavy claim). Confirm the kingdom is NOT deleted — it exists with
+   a claim and an unrealized capital charter. (Pre-fix: the kingdom would be gone.)
+4. **Capital charter shows on the map.** Open the kingdom map (and continent
+   map). Confirm a pin at the capital cell-centre for the unsited kingdom, styled
+   as a capital marker — the map is no longer blank for an unsited kingdom.
+5. **Existing saves load.** Load a pre-C1 save (or one without settlement
+   charters). Confirm it loads cleanly (empty `settlementCharters` default).
+6. **Political charters unaffected.** Grant a political charter
+   (`/kingdom charter` flow) and confirm TOLL_RIGHTS/TITLE_GRANT/etc. still work —
+   the political `charters` list is untouched.
