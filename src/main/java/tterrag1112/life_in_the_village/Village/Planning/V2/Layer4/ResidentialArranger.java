@@ -35,9 +35,13 @@ public final class ResidentialArranger {
      *  (TERRACE segment pieces, id form {@code row_house:left}); null means
      *  the planner rolls the variant normally. */
     public record HousePlacement(BlockPos centre, BlockPos faceTarget,
-                                 String forcedVariantId) {
+                                 String forcedVariantId, Polygon.AABB toft) {
         public HousePlacement(BlockPos centre, BlockPos faceTarget) {
-            this(centre, faceTarget, null);
+            this(centre, faceTarget, null, null);
+        }
+        public HousePlacement(BlockPos centre, BlockPos faceTarget,
+                              String forcedVariantId) {
+            this(centre, faceTarget, forcedVariantId, null);
         }
     }
 
@@ -75,6 +79,20 @@ public final class ResidentialArranger {
     /** Half-width (blocks) of the central lane STREET_ROW houses front. Public
      *  so the district sizer can shape the block's short axis to two rows + lane. */
     public static final int LANE_HALF = 2;
+    /** Track A2 — depth (blocks) of the rear toft (back-of-house garden strip)
+     *  STREET_ROW reserves behind each house, between the house's back wall and
+     *  the block boundary. The district sizer widens the STREET_ROW short axis
+     *  by this so the toft fits inside the seated block; if the seated block is
+     *  too tight (graceful degrade), the per-house toft is simply omitted and
+     *  the home behaves exactly as before. Public so the sizer reads it. */
+    public static final int TOFT_DEPTH = 4;
+    /** Track A2 — minimum toft depth (blocks) worth reserving; a sliver below
+     *  this is dropped rather than emitting a 1-2 block "garden" the homestead
+     *  can't meaningfully use. */
+    public static final int TOFT_MIN_DEPTH = 3;
+    /** Track A2 — inset (blocks) the toft keeps off each side so adjacent
+     *  tofts along the row don't merge into one undifferentiated strip. */
+    private static final int TOFT_SIDE_INSET = 1;
     /** Clearance (blocks) between the courtyard house ring and the perimeter
      *  border, so the fence/hedge wraps OUTSIDE the houses. Public so the
      *  district sizer can compute the same inset when shaping the rectangle. */
@@ -195,13 +213,26 @@ public final class ResidentialArranger {
 
         int rowOffset = houseDepth / 2 + LANE_HALF;       // across-distance from the lane
         int alongHalfLimit = Math.max(0, halfLong - cellPitch / 2);
+        int halfShort = (longX ? wZ : wX) / 2;            // across half-extent
 
         int perRowFront = (count + 1) / 2;                // row on +across
         int perRowBack = count / 2;                       // row on -across
 
+        // Track A2 — back-of-house toft depth that actually FITS in the seated
+        // block: the gap between each house's back wall (at rowOffset +
+        // houseDepth/2 across the lane) and the block boundary (halfShort). The
+        // sizer normally widens the short axis to host TOFT_DEPTH, but if the
+        // block was seated tight (degrade), shrink to whatever fits and, below
+        // TOFT_MIN_DEPTH, omit the toft (no regression for tight homes).
+        int backWallAcross = rowOffset + houseDepth / 2;
+        int toftDepth = Math.min(TOFT_DEPTH, halfShort - backWallAcross);
+        if (toftDepth < TOFT_MIN_DEPTH) toftDepth = 0;    // 0 → no toft (graceful)
+
         List<HousePlacement> houses = new ArrayList<>(count);
-        addRow(houses, longX, cx, cz, perRowFront, +rowOffset, cellPitch, alongHalfLimit);
-        addRow(houses, longX, cx, cz, perRowBack, -rowOffset, cellPitch, alongHalfLimit);
+        addRow(houses, longX, cx, cz, perRowFront, +rowOffset, cellPitch,
+                alongHalfLimit, houseDepth, toftDepth);
+        addRow(houses, longX, cx, cz, perRowBack, -rowOffset, cellPitch,
+                alongHalfLimit, houseDepth, toftDepth);
 
         // Central lane: the across=0 gap BETWEEN the two rows, run to the block
         // boundary at both short ends — that gap is open there (houses sit at
@@ -229,13 +260,45 @@ public final class ResidentialArranger {
      *  offset; each faces the lane (across = 0 at the same along position). */
     private static void addRow(List<HousePlacement> out, boolean longX,
                                int cx, int cz, int m, int across,
-                               int cellPitch, int alongHalfLimit) {
+                               int cellPitch, int alongHalfLimit,
+                               int houseDepth, int toftDepth) {
+        // Toft sits on the FAR side of the house from the lane (across grows
+        // away from 0): from the back wall outward by toftDepth. sign(across)
+        // points outward; +/-1 keeps the toft just clear of the wall.
+        int sign = across >= 0 ? 1 : -1;
+        int backWall = across + sign * (houseDepth / 2);  // outer face of house
         for (int i = 0; i < m; i++) {
             int along = Math.round((i - (m - 1) / 2.0f) * cellPitch);
             along = clamp(along, -alongHalfLimit, alongHalfLimit);
             BlockPos centre = fromAxes(longX, cx, cz, along, across);
             BlockPos lane = fromAxes(longX, cx, cz, along, 0);   // face the lane
-            out.add(new HousePlacement(centre, lane));
+            Polygon.AABB toft = null;
+            if (toftDepth > 0) {
+                // Across span: a strip from just past the back wall outward.
+                int aNear = backWall + sign * 1;
+                int aFar = backWall + sign * toftDepth;
+                int aMin = Math.min(aNear, aFar);
+                int aMax = Math.max(aNear, aFar);
+                // Along span: the house's own cell width, inset so neighbours'
+                // tofts stay distinct.
+                int along0 = along - cellPitch / 2 + TOFT_SIDE_INSET;
+                int along1 = along + cellPitch / 2 - TOFT_SIDE_INSET;
+                if (along1 - along0 >= 1) {
+                    // Map (along,across) → world XZ via the long-axis convention
+                    // used by fromAxes (longX: along=x, across=z; else swapped).
+                    int x0, z0, x1, z1;
+                    if (longX) {
+                        x0 = cx + along0; x1 = cx + along1;
+                        z0 = cz + aMin;   z1 = cz + aMax;
+                    } else {
+                        x0 = cx + aMin;   x1 = cx + aMax;
+                        z0 = cz + along0; z1 = cz + along1;
+                    }
+                    toft = new Polygon.AABB(Math.min(x0, x1), Math.min(z0, z1),
+                            Math.max(x0, x1), Math.max(z0, z1));
+                }
+            }
+            out.add(new HousePlacement(centre, lane, null, toft));
         }
     }
 

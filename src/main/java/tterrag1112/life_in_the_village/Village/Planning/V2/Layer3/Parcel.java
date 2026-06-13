@@ -45,7 +45,18 @@ public record Parcel(
         Polygon realizedRegion,
         Polygon buildingBounds) {
 
-    public enum Kind { FARM, MARKET }
+    /**
+     * Track A2 — {@code TOFT} joins FARM / MARKET as a typed back-of-house
+     * plot: the private rear garden/yard strip behind a STREET_ROW dwelling,
+     * reserved by the residential arranger and consumed by the HOMESTEAD
+     * system (a resident tends their own toft rather than the strip reading as
+     * undifferentiated decoration). Unlike FARM / MARKET, a TOFT parcel is
+     * attached to a plain {@code HOUSE} (not a lead building) and carries no
+     * complex realizer — its {@code budget} box IS the toft region; the spawn
+     * adapter copies it onto the persisted {@code Building} so the homestead
+     * goal can resolve it from the household's house.
+     */
+    public enum Kind { FARM, MARKET, TOFT }
 
     public Parcel {
         if (kind == null) throw new IllegalArgumentException("Parcel.kind required");

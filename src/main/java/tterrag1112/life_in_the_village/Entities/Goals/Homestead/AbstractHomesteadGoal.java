@@ -167,10 +167,18 @@ public abstract class AbstractHomesteadGoal extends Goal {
     }
 
     /** Convenience helper used by handlers — the NPC's homestead nav
-     *  target. Stage 2.5: always the parent house origin (the per-plot
-     *  navigation targets were retired with the adjunct system). */
+     *  target. Track A2: when the household's house has a typed back-of-house
+     *  TOFT plot (STREET_ROW dwellings), the resident gravitates to the toft
+     *  centre to tend their garden; otherwise the parent house origin (every
+     *  non-toft home — exactly the Stage 2.5 behaviour, no regression). This
+     *  adds no NEW Goal movement: it only retargets the existing chore walk,
+     *  so the {@code Flag.MOVE} / BrainNavGuard arbitration is unchanged. */
     public static BlockPos navTarget(HomesteadHandler.Context ctx) {
-        if (ctx.parentHouse() != null) return ctx.parentHouse().getShape().getOrigin();
+        if (ctx.parentHouse() != null) {
+            BlockPos toft = ctx.parentHouse().getToftCentre();
+            if (toft != null) return toft;
+            return ctx.parentHouse().getShape().getOrigin();
+        }
         return ctx.npc().blockPosition();
     }
 

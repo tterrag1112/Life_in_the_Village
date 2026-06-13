@@ -3423,10 +3423,15 @@ public final class PhasedPlanner {
         }
         // STREET_ROW (and reserved variants, which arrange falls back to street):
         // two rows fronting a central lane — long axis grows, short axis fixed.
+        // Track A2 — the short axis now also hosts a TOFT_DEPTH back-of-house
+        // strip BEHIND each row (toft sits between the house back wall and the
+        // block boundary). The arranger degrades gracefully if a tighter block
+        // is seated (omits the toft), so this is a target, not a hard floor.
         int perRow = (houses + 1) / 2;
         int longHalf = Math.max(MIN_PLAZA_HALF, perRow * cellPitch / 2 + margin);
         int shortHalf = Math.max(MIN_PLAZA_HALF,
-                houseDepth + ResidentialArranger.LANE_HALF + margin);
+                houseDepth + ResidentialArranger.LANE_HALF
+                        + ResidentialArranger.TOFT_DEPTH + margin);
         return new int[]{longHalf, shortHalf};
     }
 
@@ -3462,7 +3467,7 @@ public final class PhasedPlanner {
             // A1 stage 2 — terrace segments force their piece variant id
             // (row_house:left etc.); null rolls the variant normally.
             Polygon.AABB fp = materializeBuilding(state, BuildingType.HOUSE,
-                    p.centre(), p.faceTarget(), p.forcedVariantId());
+                    p.centre(), p.faceTarget(), p.forcedVariantId(), p.toft());
             if (fp != null) { placed++; footprints.add(fp); }
         }
         // Carry the variant's internal lanes to the render pass: truncate at the
@@ -3622,6 +3627,24 @@ public final class PhasedPlanner {
     private static Polygon.AABB materializeBuilding(State state, BuildingType type,
                                                    BlockPos centre0, BlockPos faceTarget,
                                                    String forcedVariantId) {
+        return materializeBuilding(state, type, centre0, faceTarget,
+                forcedVariantId, null);
+    }
+
+    /**
+     * Track A2 overload — {@code toft} is the back-of-house plot the
+     * residential arranger reserved for this house (STREET_ROW only; null for
+     * every other variant/position). When present and it overlaps no existing
+     * reservation, it is attached to the house's {@link PlacedBuilding} as a
+     * {@link Parcel.Kind#TOFT} parcel and reserved so later buildings avoid it;
+     * the spawn adapter then copies the toft region onto the persisted
+     * {@code Building} for the homestead goal. A toft that would collide is
+     * silently dropped (the house still places without one — graceful degrade).
+     */
+    private static Polygon.AABB materializeBuilding(State state, BuildingType type,
+                                                   BlockPos centre0, BlockPos faceTarget,
+                                                   String forcedVariantId,
+                                                   Polygon.AABB toft) {
         int x = centre0.getX(), z = centre0.getZ();
         if (!state.fmap.inBounds(x, z)) return null;
         Cell cell = state.fmap.cellAt(x, z);
@@ -3644,14 +3667,45 @@ public final class PhasedPlanner {
         Aabb fpAabb = footprintAabb(centre, fp, rotation);
         if (overlapsAnyReservation(fpAabb, fpAabb, state.reservations)) return null;
 
+        // Track A2 — attach the back-of-house toft as a TOFT Parcel when one
+        // was reserved and it clears existing reservations. The Parcel.budget
+        // is the toft rectangle as a 4-corner Polygon (its own bounds); anchor
+        // = house centre; growthDirection away from the lane (the back-wall
+        // direction). On collision the toft is dropped — the house still places.
+        Parcel toftParcel = null;
+        if (toft != null) {
+            Aabb toftAabb = new Aabb(toft.minX(), toft.minZ(), toft.maxX(), toft.maxZ());
+            if (!overlapsAnyReservation(toftAabb, toftAabb, state.reservations)) {
+                Polygon toftPoly = aabbToPolygon(toftAabb, centre.getY());
+                net.minecraft.core.Direction grow = toftGrowthDirection(centre, faceTarget);
+                toftParcel = new Parcel(Parcel.Kind.TOFT, toftPoly, centre, grow,
+                        aabbToPolygon(fpAabb, centre.getY()));
+                state.reservations.add(new Reservation(toftAabb, toftAabb, type));
+            }
+        }
         PlacedBuilding pb = new PlacedBuilding(type, centre, fp,
-                rotation, profile.priority(), variantId, null, null);
+                rotation, profile.priority(), variantId, null, null, toftParcel);
         state.placed.add(pb);
         state.reservations.add(new Reservation(fpAabb, fpAabb, type));
         state.events.add(PhaseEvent.placed(type, false,
                 new ScoreBreakdown(1.0, 0.0, 0.0)));
         return new Polygon.AABB(fpAabb.minX(), fpAabb.minZ(),
                 fpAabb.maxX(), fpAabb.maxZ());
+    }
+
+    /** Track A2 — the cardinal direction the toft extends, AWAY from the lane
+     *  the house faces (the back-of-house side). Picks the dominant axis of the
+     *  vector FROM the face target TO the house centre. */
+    private static net.minecraft.core.Direction toftGrowthDirection(
+            BlockPos centre, BlockPos faceTarget) {
+        int dx = centre.getX() - faceTarget.getX();
+        int dz = centre.getZ() - faceTarget.getZ();
+        if (Math.abs(dx) >= Math.abs(dz)) {
+            return dx >= 0 ? net.minecraft.core.Direction.EAST
+                           : net.minecraft.core.Direction.WEST;
+        }
+        return dz >= 0 ? net.minecraft.core.Direction.SOUTH
+                       : net.minecraft.core.Direction.NORTH;
     }
 
     // =========================================================================

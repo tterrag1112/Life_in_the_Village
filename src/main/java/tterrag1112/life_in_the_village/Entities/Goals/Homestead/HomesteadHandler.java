@@ -43,6 +43,14 @@ public interface HomesteadHandler {
             HouseholdData household,
             int tickInGoal
     ) {
+        /** Track A2 — the household house's back-of-house TOFT plot AABB, or
+         *  null when the dwelling has no toft. Exposed so richer homestead
+         *  handlers (garden tending) can bound their work to the toft region;
+         *  the generic chores handler only uses {@code navTarget}. */
+        public tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB toft() {
+            return parentHouse != null ? parentHouse.getToft() : null;
+        }
+
         /** Convenience: NPC's walk speed, scaled. */
         public double walkSpeed() {
             double base = npc.getAttribute(Attributes.MOVEMENT_SPEED) != null

@@ -11789,3 +11789,172 @@ stalls, and watch a full in-game day through the meal window.
 5. **No new per-tick spam.** Confirm the server log has no new
    per-tick lines at steady state (NoonProfile is silent under
    threshold; the food/channel WARNs are one-shot).
+
+### 2026-06-12 — Track A2: Homestead toft tie-in (typed back-of-house plots read by the HOMESTEAD system)
+
+The deferred STREET_ROW typed-toft tie-in, shipped as the **minimal seam**:
+the residential arranger now reserves a typed rear `Parcel.Kind.TOFT` plot
+behind each STREET_ROW house, the spawn adapter copies it onto the persisted
+`Building`, and the HOMESTEAD goal resolves it as the resident's garden region
+(retargeting the existing chore walk — DATA tie-in + one minimal use). Richer
+toft *behavior* (planting/tending) is flagged as follow-up.
+
+**Disposition (both systems + chosen seam):**
+- *HOMESTEAD system:* `AbstractHomesteadGoal` (Goal, holds `Flag.MOVE`+`LOOK`;
+  subclasses `Spouse`/`Child`/`Elderly` pin role+phase) resolves the NPC's
+  household → its parent `Building` (`VillageSavedData.getHouseholdForNpc` →
+  `getBuildingById`), then dispatches to the only live handler,
+  `GenericChoresHandler` (walk to `navTarget` + idle). Stage 2.5 retired the
+  per-adjunct-plot handlers; the goal currently operates on the **building
+  only** — no per-building plot is read. So the homestead's natural input is a
+  region resolvable off the resident's `Building`. The known MOVE-flag trap is
+  respected: `Spouse.roleGateAllows()` already yields to an active profession;
+  this change adds **no new movement**, it only retargets the existing chore
+  walk, so BrainNavGuard arbitration is unchanged.
+- *Residential/toft geometry:* `ResidentialArranger.streetRow` packs two house
+  rows at `±(houseDepth/2 + LANE_HALF)` fronting a central lane; each house
+  FRONTS the lane, so its BACK faces the block boundary. The short axis was
+  sized `houseDepth + LANE_HALF + margin` — i.e. houses packed near the
+  boundary with only `HOUSE_GAP` slack and **no rear plot**. Reserving a toft
+  therefore required widening the STREET_ROW short axis (the "bigger half").
+  House lots are `HousePlacement(centre, faceTarget, forcedVariantId)` records;
+  they become `PlacedBuilding`s in `materializeBuilding` (added to
+  `state.placed`), then runtime `Building`s in the adapter's placement loop.
+- *Plot-typing vocabulary:* `PlacedBuilding` already carries a nullable
+  `Parcel parcel` (Stage 2a), and `Parcel.Kind` = {FARM, MARKET} with a
+  documented "more domains later". The agriculture ring commits a FARM Parcel
+  via `materializeFarmstead`; the adapter pairs `PlacedBuilding` ↔ persisted
+  `Building` by position in its placement loop. `Parcel` is the **exact**
+  existing typed-plot mechanism to reuse — the HOMESTEAD consumer is the
+  concrete need that justifies a new `TOFT` kind (per the no-speculative-enum
+  rule). Confirmed: **no exhaustive `switch` over `Parcel.Kind` anywhere** —
+  only `== FARM` / `== MARKET` equality checks, so `TOFT` adds zero switch
+  arms.
+- *Chosen seam:* (a) STREET_ROW `districtDims` widens the short axis by
+  `TOFT_DEPTH`; `streetRow`/`addRow` compute a per-house rear toft AABB that
+  FITS the seated block (degrade: omit below `TOFT_MIN_DEPTH`). (b)
+  `materializeBuilding` attaches a `Parcel(Kind.TOFT, budget=toft, anchor=house
+  centre, growth=away-from-lane)` to the house's `PlacedBuilding` and reserves
+  it (collision → toft dropped, house still places). (c) The adapter copies the
+  TOFT parcel's bounds onto `Building.setToft(...)`. (d) `Building` gains a
+  nullable `Polygon.AABB toft` (14th codec field, `optionalFieldOf`). (e)
+  `AbstractHomesteadGoal.navTarget` prefers `house.getToftCentre()` when
+  present, else the house origin (today's behaviour for every non-toft home).
+
+**What shipped (DATA tie-in + minimal use):**
+- `Parcel.Kind.TOFT` added (FARM, MARKET, TOFT).
+- `ResidentialArranger`: `HousePlacement` gains a nullable `Polygon.AABB toft`;
+  STREET_ROW reserves a rear toft per house; `TOFT_DEPTH`/`TOFT_MIN_DEPTH`/
+  `TOFT_SIDE_INSET` constants.
+- `PhasedPlanner`: STREET_ROW short axis widened by `TOFT_DEPTH` in
+  `districtDims`; `materializeBuilding` 6-arg overload attaches+reserves the
+  TOFT parcel; `toftGrowthDirection` helper.
+- `Building`: nullable `toft` AABB + `TOFT_AABB_CODEC` + 14th optional codec
+  field + `getToft`/`setToft`/`getToftCentre`.
+- `V2VillageSpawnerAdapter`: HOUSE placement loop copies the TOFT parcel bounds
+  onto the persisted Building.
+- `AbstractHomesteadGoal.navTarget`: toft-aware (resident gravitates to the
+  back garden during chores when one exists).
+- `HomesteadHandler.Context.toft()`: exposes the region for future richer
+  handlers (the data tie-in for the deferred tending behaviour).
+
+**What's DEFERRED (flagged follow-up):**
+- Rich homestead *behaviour* bound to the toft (planting/harvesting/tending
+  crops, fences/garden render in the toft region). This round ships the DATA
+  tie-in (homestead finds + walks to its toft) + the one minimal use; the
+  richer behaviour reads `Context.toft()` when it lands.
+- Tofts on non-STREET_ROW variants. COURTYARD/GREEN already host a central
+  shared yard/green (not private rear plots); TERRACE could carry rear tofts
+  (its segments front a lane like STREET_ROW) — NOT expanded this round (would
+  need terrace-row back-plot geometry; out of scope). CLUSTER/GRID have no
+  consistent "back" to a lane. STREET_ROW (the roadmap's `STREET_ROW (+tofts)`)
+  is the scoped target.
+
+**Files touched:** see the 7-file diff above (Parcel, ResidentialArranger,
+PhasedPlanner, Building, V2VillageSpawnerAdapter, AbstractHomesteadGoal,
+HomesteadHandler).
+
+**Tie-In Audit:**
+- *Upstream feeders:* `districtDims` (block sizing) → `streetRow` (toft
+  geometry) → `materializeBuilding` (parcel attach). The widened short axis is
+  a TARGET, not a floor — `seatGrown` may seat a tighter block, and `streetRow`
+  degrades (omits the toft) when the seated `halfShort` can't host
+  `TOFT_MIN_DEPTH`. No seating regression: the long axis is unchanged and the
+  short axis only grows by `TOFT_DEPTH` (4), well within the band depth
+  (`RESIDENTIAL_MIN_BAND_DEPTH` = 24).
+- *Downstream callers of `PlacedBuilding.parcel()`:* (1) adapter farmClaims
+  loop checks `== FARM` — unaffected (TOFT ignored). (2) adapter HOUSE loop —
+  NEW `== TOFT` arm (the seam). (3) `LayoutDumpSerializer` — generic
+  `kind().name()` dump; TOFT serializes cleanly (bonus: `/litv` dumps now show
+  TOFT boxes). (4) `OverlapAuditor.parcelAabb` audits EVERY non-null parcel ×
+  other footprints — a TOFT now feeds it, BUT the parcel×footprint conflict is
+  **diagnostic-only, never fatal** (only `"building footprints intersect"` is
+  fatal), and `materializeBuilding` already drops a colliding toft, so no
+  spurious aborts. (5) `FarmComplexPlanner`/`MarketComplexPlanner` read
+  `fh.placed().parcel()`/`mk.placed().parcel()` only for captured FARMHOUSE/
+  MARKET pairs — never HOUSEs — unaffected.
+- *Consumers of the homestead input (`Building`):* `getToft` is purely
+  additive; `navTarget` falls back to the house origin when toft is null, so
+  every non-STREET_ROW home behaves exactly as before. No new
+  `MemoryModuleType` (the toft rides on `Building`, a plain field — honours the
+  brainMemories() registration rule by NOT needing it).
+- *Exhaustive switches over `Parcel.Kind`:* NONE exist (verified by grep —
+  only `==` equality checks). `TOFT` adds zero switch arms. The
+  `ResidentialArranger.arrange` switch is over `ResidentialVariant`, unchanged
+  (still 7 arms).
+
+**Simplification Sweep** (touches `Village/Planning/` + homestead):
+- Reused the existing `Parcel` mechanism rather than inventing a parallel
+  plot type — one typed-plot vocabulary (FARM/MARKET/TOFT). Reused
+  `aabbToPolygon`/`overlapsAnyReservation`/`Reservation` rather than new
+  geometry. `materializeBuilding` gained one overload (4→5→6 arg chain, all
+  delegating; no copy). Removed the unused `HousePlacement.withToft` helper
+  before commit (toft attached inline in `addRow`). No orphans, no parallel
+  paths.
+
+**Deviations from prompt:**
+- The prompt's "A2 = Culture unification" is the UNIFIED_REWORK_PLAN's A2;
+  the prompt body unambiguously specifies the **homestead-toft tie-in**, which
+  the PROGRESS log repeatedly flagged as the deferred "STREET_ROW typed
+  ResidentialPlot/Kind tofts (+ homestead wiring)" follow-up. Implemented the
+  toft tie-in as described. (The PROGRESS notes also referenced a possible
+  `ResidentialPlot`/`Kind` type — but `Parcel` already IS the committed typed-
+  plot mechanism with a Kind enum, so reusing it is the correct, non-parallel
+  choice over a new `ResidentialPlot` type.)
+- Shipped the DATA tie-in + ONE minimal homestead use (toft-aware navTarget),
+  not full garden behaviour — per the prompt's explicit allowance.
+
+**Out-of-scope but flagged:**
+- Rich toft tending behaviour (a richer `HomesteadHandler` that plants/tends
+  within `Context.toft()`); garden/fence render in the toft region.
+- TERRACE rear tofts (plausible next; needs terrace-row back-plot geometry).
+- Toft render decoration (the toft is reserved + typed + navigable now, but
+  not yet visually dressed as a garden — that pairs with the tending behaviour).
+
+**Smoke test plan (user-executable):**
+1. Build (deferred — sandbox 403). Static review done (brace balance preserved;
+   paren delta +N/+N matched per file; no new exhaustive-switch arms).
+2. `/litv district residential 6 street_row` → two house rows fronting the
+   central lane, with a **rear toft strip reserved behind each row** (between
+   the back walls and the block boundary). Run `/litv` layout dump and confirm
+   per-HOUSE `parcel { kind: TOFT, ... }` boxes appear behind the houses.
+3. `/litv spawn` a CITY/TOWN that auto-selects STREET_ROW for a residential
+   precinct → the same rear tofts appear behind the row houses; no spawn abort,
+   no `building footprints intersect` fatal in the log (a non-fatal
+   `complex parcel overlaps building footprint` diagnostic, if any, is benign).
+4. Stand a resident of a STREET_ROW house through a WORK/SOCIAL phase → during
+   homestead chores the resident walks to the **toft centre** (back garden),
+   not the house origin. Confirm the Spouse still yields to profession work
+   (no MOVE-flag starvation regression).
+5. `/litv district residential 6 courtyard` (or any non-STREET_ROW) → **no
+   tofts**; residents of those homes walk to the house origin exactly as before
+   (no regression for non-STREET_ROW homes).
+
+**Build verification:** Build verification deferred (sandbox blocks
+maven.neoforged.net). Static review substituted: brace counts balanced in all
+7 files; paren deltas match insertions per file; `materializeBuilding` overload
+chain (4→5→6) verified non-recursive; `HousePlacement` ctor callers all match a
+defined constructor (2/3/4-arg); `Parcel` 5-arg ctor + `Reservation(Aabb,Aabb,
+BuildingType)` + `overlapsAnyReservation(Aabb,Aabb,...)` + `aabbToPolygon(Aabb,
+int)` signatures matched; `Building` codec now 14 fields (under the 16 cap),
+`toft` gated with `optionalFieldOf`; no exhaustive switch over `Parcel.Kind`.

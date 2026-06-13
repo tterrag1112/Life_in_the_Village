@@ -568,6 +568,18 @@ public final class V2VillageSpawnerAdapter {
                 }
 
                 Building placedBuilding = placedOpt.get();
+                // Track A2 — copy the planner's TOFT parcel onto the persisted
+                // Building so the HOMESTEAD system can resolve the resident's
+                // back-of-house garden from the household's house. Only HOUSEs
+                // carry a TOFT parcel (STREET_ROW); every other building's
+                // parcel is FARM/MARKET (or null) and leaves toft null.
+                if (b.parcel() != null
+                        && b.parcel().kind() == tterrag1112.life_in_the_village
+                                .Village.Planning.V2.Layer3.Parcel.Kind.TOFT) {
+                    var tb = tterrag1112.life_in_the_village.Utilities.Geometry
+                            .Polygon.boundingBox(b.parcel().budget());
+                    placedBuilding.setToft(tb);
+                }
                 village.addBuilding(placedBuilding);
                 placedBuildings.putIfAbsent(b.type(), placedBuilding);
                 placedBuildingsAll.computeIfAbsent(b.type(),

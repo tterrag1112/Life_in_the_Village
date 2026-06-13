@@ -19,6 +19,7 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingCondition;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Decoration.Variants.BuildingVariant;
+import tterrag1112.life_in_the_village.Utilities.Geometry.Polygon;
 
 import java.util.*;
 
@@ -72,9 +73,28 @@ public class Building {
      */
     @Nullable private String patronFaith = null;
 
+    /** Track A2 — the back-of-house TOFT plot (rear garden/yard strip) the
+     *  residential arranger reserved behind this dwelling, as an XZ AABB
+     *  {@code [minX, minZ, maxX, maxZ]}. Null for every building without a
+     *  toft (non-STREET_ROW homes, civic/market/farm buildings, and any home
+     *  whose toft was dropped on a tight block). The HOMESTEAD system reads
+     *  this to give a resident a private garden region to tend. */
+    @Nullable private Polygon.AABB toft = null;
+
     // =========================================================================
     // UUID codec helper
     // =========================================================================
+
+    /** Track A2 — codec for the toft plot AABB: a 4-int XZ rectangle. */
+    public static final Codec<Polygon.AABB> TOFT_AABB_CODEC =
+            Codec.INT.listOf().comapFlatMap(
+                    list -> list.size() == 4
+                            ? com.mojang.serialization.DataResult.success(
+                                    new Polygon.AABB(list.get(0), list.get(1),
+                                            list.get(2), list.get(3)))
+                            : com.mojang.serialization.DataResult.error(
+                                    () -> "toft AABB needs 4 ints"),
+                    a -> List.of(a.minX(), a.minZ(), a.maxX(), a.maxZ()));
 
     public static final Codec<UUID> UUID_CODEC = Codec.STRING.xmap(
             UUID::fromString, UUID::toString
@@ -136,7 +156,12 @@ public class Building {
                     // saves and every non-religious building). 13th field — well
                     // under the 16-field RecordCodecBuilder cap.
                     Codec.STRING.optionalFieldOf("patronFaith")
-                            .forGetter(b -> Optional.ofNullable(b.patronFaith))
+                            .forGetter(b -> Optional.ofNullable(b.patronFaith)),
+                    // Track A2 — back-of-house toft plot (optional; absent on
+                    // every building without one). 14th field — under the
+                    // 16-field RecordCodecBuilder cap.
+                    TOFT_AABB_CODEC.optionalFieldOf("toft")
+                            .forGetter(b -> Optional.ofNullable(b.toft))
             ).apply(instance, Building::fromCodec)
     );
 
@@ -149,7 +174,8 @@ public class Building {
                                       Optional<DyeColor> primaryColor,
                                       Optional<DyeColor> accentColor,
                                       Optional<DyeColor> roofColor,
-                                      Optional<String> patronFaith) {
+                                      Optional<String> patronFaith,
+                                      Optional<Polygon.AABB> toft) {
         Building b = new Building(id, name, type, shape, structureId, buildingLevel, rotation);
         b.condition = condition;
         b.variantId = variantId.orElse(BuildingVariant.defaultVariantId(type));
@@ -157,6 +183,7 @@ public class Building {
         b.accentColor  = accentColor.orElse(null);
         b.roofColor    = roofColor.orElse(null);
         b.patronFaith  = patronFaith.orElse(null);
+        b.toft         = toft.orElse(null);
         return b;
     }
 
@@ -275,6 +302,19 @@ public class Building {
      *  (it derives the village dominant for an unset temple/chapel). */
     @Nullable public String getPatronFaith()      { return patronFaith; }
     public void setPatronFaith(@Nullable String religionId) { this.patronFaith = religionId; }
+
+    /** Track A2 — the back-of-house toft plot AABB, or null if this building
+     *  has none. The HOMESTEAD system reads this for the resident's garden. */
+    @Nullable public Polygon.AABB getToft() { return toft; }
+    public void setToft(@Nullable Polygon.AABB toft) { this.toft = toft; }
+    /** Centre of the toft plot (floor-Y carried from the building origin), or
+     *  null when there is no toft — the homestead nav target for tending. */
+    @Nullable public BlockPos getToftCentre() {
+        if (toft == null) return null;
+        return new BlockPos((toft.minX() + toft.maxX()) / 2,
+                buildingShape.getOrigin().getY(),
+                (toft.minZ() + toft.maxZ()) / 2);
+    }
 
     @Nullable public DyeColor getPrimaryColor() { return primaryColor; }
     @Nullable public DyeColor getAccentColor()  { return accentColor; }
