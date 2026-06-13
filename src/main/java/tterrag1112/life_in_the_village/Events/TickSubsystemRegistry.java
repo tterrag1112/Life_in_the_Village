@@ -115,15 +115,15 @@ public final class TickSubsystemRegistry {
         register(new WanderingTraderTickSystem());
 
         register(new AtlasFillSystem());
-        // Track V2 -- the per-charter SURVEY tick loop (old CharterSurveyTickSystem)
-        // is REMOVED. Placement is now the deterministic V1 VillagePlacement
-        // spread (doc 16); there is no per-village siting attempt, so there is
-        // nothing to re-survey every pass. Validation defers to V2 at
-        // realization (V4). CharterRealizationTickSystem stays registered as the
-        // realization plug-in point V4 generalizes (it realizes SURVEYED
-        // charters; none exist until V4 wires the realization handoff).
-        register(new VillageRealisationSystem());
-        register(new CharterRealizationTickSystem()); // realization plug-in point (V4)
+        // Doc 16 V4 -- the per-charter SURVEY tick loop (old CharterSurveyTickSystem)
+        // was removed in V2; placement is the deterministic V1 VillagePlacement
+        // spread, so there is no per-village siting attempt to re-survey.
+        // V4 UNIFIED the two former approach-scanners into one realization pass:
+        // CharterRealizationTickSystem now realizes BOTH unrealized charters
+        // (at their candidate point) AND legacy planned villages, picking the
+        // single nearest per pass. The old VillageRealisationSystem is retired
+        // (deleted) so we never run two competing realizers.
+        register(new CharterRealizationTickSystem()); // V4 unified realization pass
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());
         register(new PilgrimageTickSystem());

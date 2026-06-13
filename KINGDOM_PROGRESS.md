@@ -4074,3 +4074,195 @@ the removed survey system; determinism reasoning in V1's javadoc + test.
    manually drive a charter through to a spawned village for now.)
 6. **Density tuning (optional).** If pins are too few/many, change
    `VillagePlacement.SPACING_CHUNKS` (smaller = denser) and regenerate.
+
+## V4 + map-charter-pin fix — realization handoff & client map render
+
+**Branch:** `cowork/v4-realization-mapfix` (Task A isolated commit, then Task B).
+Two slices on one branch per `.claude/planning/16-VILLAGE-FIRST-GENERATION.md`
+(§9 V4 + §1 Tier-2). Build verification deferred (sandbox blocks
+maven.neoforged.net); static review in its place.
+
+### Task A — map charter pins did not render (traced hop + fix)
+
+**Symptom.** `/litv settlement list <kingdom>` (server-side, live) shows a
+kingdom's charters, but neither the continent nor the kingdom map drew any
+village/kingdom pins.
+
+**Trace (the three candidate hops).**
+1. *Codec — does the wire carry charters?* YES. `SyncKingdomPacket` ships the
+   full `Kingdom` via `Kingdom.CODEC`; `KingdomGovernanceData.CODEC` serializes
+   `settlementCharters` (optionalFieldOf "settlementCharters"), fed into the
+   nested governance group. Not the failing hop.
+2. *Viewport gate — does `continentCells` cover the charter cells?* SOUND. A
+   CHARTERED charter's `pinPos()` = `targetCellCentre()` =
+   `(cx<<SHIFT)+HALF`; the client re-derives the key via `pos.getX()>>SHIFT`,
+   round-tripping exactly to `cx` (arithmetic shift, negatives consistent). The
+   gather (`ContinentMapScope` / `KingdomMapScope`) includes any in-viewport
+   cell. Not the failing hop.
+3. **Client kingdom cache — is it fresh when the builder runs? NO. THE FAILING
+   HOP.** Both `ContinentMapDataBuilder` and `KingdomMapDataBuilder` read
+   charters AND village→kingdom from `Kingdom.ClientKingdomCache.getKingdoms()`.
+   That cache is populated ONLY on player join and book-open (`SyncKingdomPacket`
+   senders). The map sync replies (`ContinentMapSyncPacket` /
+   `KingdomMapSyncPacket`) refresh `ClientAtlasCache` + the route caches but
+   NEVER `ClientKingdomCache`. Charters are created at claim time (V1-V3
+   enumeration), which runs after/independently of join — so the client's
+   kingdom snapshot is stale (no charters, or no kingdoms at all if the player
+   joined before kingdom seeding). Territory shading uses the fresh
+   `ForeignClaimSnapshot` gather (so it could draw), but village + charter pins
+   read the stale cache → nothing.
+
+**Fix (surgical, isolated commit).** Both map request handlers
+(`RequestKingdomMapSyncPacket.handle`, `RequestContinentMapSyncPacket.handle`)
+now send a fresh `SyncKingdomPacket(data.getAllKingdoms())` to the requesting
+player immediately BEFORE the map sync reply. Both payloads enqueue on the
+client main thread in send order, so `ClientKingdomCache` is fresh when the map
+data builder runs on the reply. No new packet — `SyncKingdomPacket` is already
+registered (`ModModEvents`) and handled; registered⇔sent⇔handled symmetry
+preserved. Charter pins (and the village→kingdom tints) now appear for CHARTERED
+charters at cell centres.
+
+### Task B — V4 realization handoff (Tier 2)
+
+**Disposition.** With the survey loop gone (V2), charters stay CHARTERED and
+nothing builds. There were TWO approach-scanners on `main`:
+`VillageRealisationSystem` (Events/, scanned planned `Village`s via
+`VillagePlanHelper.isPlanned`) and `CharterRealizationTickSystem` (TickSystems.java,
+C1-c, scanned SURVEYED charters at `surveyedAnchor`). The C1-c system already had
+the right shape (approach scan, one-per-pass, FailureRecord backoff, link, stage
+advance, capital handling, no-double-pin) but gated on `stage()==SURVEYED` —
+which V2 never produces — so it never fired. `VillageRealisationSystem` still
+fires for naturally-planned villages (`NaturalVillageSpawnEvent` is
+`@SubscribeEvent`-active and calls `VillagePlanHelper.planVillage` on a chunk
+grid), so it could not simply be deleted without stranding those.
+
+**Unification as built (one pass, never two).** Generalized
+`CharterRealizationTickSystem` into the single V4 realization pass
+(`name()`→`"village_realization"`, priority 58, 1 Hz). Each pass it gathers BOTH
+kinds of realization target — every unrealized charter (gate switched from
+`stage()==SURVEYED` to `isUnrealized()`) at its candidate point, and every legacy
+planned `Village` at its planned origin — picks the SINGLE nearest across both,
+and realizes exactly ONE per pass (dense-region queue = accepted LOD, §8). The
+old `VillageRealisationSystem` is RETIRED: registration removed and the file
+deleted; its planned-Village realize/restore logic folded in as `realizePlanned`.
+The replan/relocate-to-best-cell logic from `VillageRealisationSystem` was NOT
+carried over (it depended on the V1 scorer/`VillageTypeMatcher` siting path the
+village-first model removed; relocation-on-failure stays a deferred slice).
+
+**Realize at the candidate point.** A CHARTERED charter has no surveyed anchor,
+so its realization point is the deterministic V1 candidate recomputed load-free
+from `targetCellKey`: cell→region (`VillagePlacement.regionForBlockX/Z`) →
+`VillagePlacement.evaluateRegion(level, rx, rz)` (Tier-0, digest-only, NO chunk
+load) → `candidate.pos()`; falls back to the cell centre (`pinPos()`) if the
+recompute returns empty. The spawn calls the canonical
+`VillageSpawner.spawnVillage(level, point, type, name)` (the only spawner path;
+V2 adapts to real terrain — the lenient-gate payoff, never rejected).
+
+**Sharpen + advance + link.** On charter success: the produced `Village`'s actual
+position is truth (the spawner set it); `spawned.setKingdomId(kingdom.getId())`
+(derived from the cell-claim issuer, set only because membership/spawner needs
+it — not a stored duplicate), `kingdom.addVillage(id)`,
+`kingdom.updateSettlementCharter(charter.realized(id))` (fills the EXISTING
+`realizedVillageId` optional — no new field; Kingdom nested codec stays 16/16),
+and for the capital `kingdom.setCapitalVillageId(id)`. The charter-pin loops
+already gate on `isUnrealized()`, so a REALIZED charter drops its pin and the
+realized Village shows via the village loop — no double-pin; the map reads the
+sharpened position.
+
+**Failure (decoupled).** Charter spawn failure: per-charter `FailureRecord`
+backoff (`{100,400,1200,3600,12000}` ticks), charter left CHARTERED for retry,
+parked after 5 attempts but never deleted, kingdom never failed. Planned-Village
+failure: placeholder restored + per-planned `FailureRecord` backoff. Genuine
+failures should be rare (lenient placement + V2 adaptation).
+
+**Capital.** Realizes through the same path as a normal village (it is a promoted
+charter, V3). C4 hook noted in code: branch on `charter.capital()` before the
+spawn to pick a grander capital type/size once C4/A9 lands.
+
+### Cost-tier compliance (the load-bearing rule, §1)
+
+The ONLY Tier-2 work added is `VillageSpawner.spawnVillage` inside realization —
+which is exactly where V2/`GeneratorTerrainSource`/block placement belong. The
+candidate-point recompute reads ONLY the load-free digest
+(`VillagePlacement.evaluateRegion` javadoc: "does NOT touch the persisted atlas
+fill or the WorldAtlas SavedData"). Placement/claim (V1-V3:
+`ClaimVillageEnumerator`, `VillagePlacement`, `CapitalPromoter`) were NOT touched
+— confirmed by `git diff --stat`: Task B changes are confined to the realization
+tick system, its registry, and two javadoc/comment fix-ups. No Tier-2 leak into
+placement/claim.
+
+### Tie-in audit
+
+- **Task A — kingdom sync both ends.** Sender: added a `SyncKingdomPacket` send
+  in both map request handlers (server-side). Receiver: `SyncKingdomPacket.handle`
+  unchanged — already writes `ClientKingdomCache.setKingdoms(...)` on the client
+  main thread. `ClientKingdomCache` writers: join, book-open, price-board,
+  kingdom-action, and now map-open — all funnel through `setKingdoms`. No
+  builder change needed; the builders already read charters via `isUnrealized()`.
+- **Task B — both scanners.** `VillageRealisationSystem` retired (deleted +
+  unregistered); `CharterRealizationTickSystem` is now the sole realizer.
+  Remaining textual references to the old class are `{@code}` (plain text) +
+  one comment in `CapitalGenerator`; the one `{@link …VillageRealisationSystem}`
+  in `VillagePlanHelper` was repointed to the unified system so javadoc resolves.
+- **`VillageSpawner.spawnVillage` callers.** Unchanged signature; the unified
+  system calls it exactly as the two old scanners did.
+- **Map position source post-realization.** Charter-pin loops gate on
+  `isUnrealized()`; once `realizedVillageId` is set the pin is dropped and the
+  realized Village (sharpened position) renders via the village loop. Verified.
+- **`SettlementCharter` codec.** Used the existing `realized(UUID)` mutator
+  filling the existing `realizedVillageId` optional — NO new field; codec
+  unchanged (13 fields; Kingdom nested governance group stays 16/16).
+- **Exhaustive switches.** No enum added; `SettlementCharterStage` unchanged. No
+  exhaustive switch over it touched (the realizer gates on `isUnrealized()`).
+
+### Deviations from prompt
+
+- The prompt framed unification as merging two charter/planned scanners and
+  retiring "the redundant scanner." Because `NaturalVillageSpawnEvent` still
+  produces planned `Village`s, I did NOT drop planned-Village realization — I
+  folded it into the surviving unified pass (so one pass handles both) rather
+  than deleting the capability. Net effect matches the spec's "ONE approach pass,
+  don't run two."
+- The relocate-to-best-cell replan from the old `VillageRealisationSystem` was
+  intentionally not carried forward (it relied on the removed V1 siting/scorer
+  path); failure handling is retry-with-backoff + park, per the C1-c pattern.
+
+### Out-of-scope but flagged
+
+- **V5 — frontier + LOD:** global (unclaimed) placement + default culture;
+  near-player-eager / distant-lazy claim processing. Hook noted in the unified
+  system's javadoc.
+- **C4 — grander capitals:** capital realizes as a normal village; the
+  `charter.capital()` branch point for a grander type/size is marked in code.
+- **Atlas-fill staging; type-aware composition; map-system decision** — unchanged
+  from the V1-V3 entry; not touched here.
+
+### Build verification
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review:
+brace balance confirmed on every touched file (TickSystems 372/372); packet
+registered⇔sent⇔handled symmetry confirmed for Task A (no new packet);
+`VillageSpawner.spawnVillage` signature match + tick-system ordering (priority 58,
+unchanged) confirmed for Task B; all referenced helper signatures
+(`getKingdomForVillage`, `updateSettlementCharter`, `setCapitalVillageId`,
+`setKingdomId`, `PlacementFailureRecorder.record/begin/endAttempt`,
+`VillagePlacement.regionForBlockX/Z` + `evaluateRegion`) verified against source;
+no dangling `{@link}` to the deleted class.
+
+### Smoke test (user, in-world)
+1. **Generate a fresh world**; wait for kingdom seeding to complete.
+2. **Open the Kingdom and Continent maps (Task A).** Each kingdom now shows its
+   charter pins at cell centres (one flagged CAPITAL) AND its territory shading —
+   previously the maps were blank of pins. Re-open/refresh if the first open was
+   pre-seeding.
+3. **Walk toward a charter pin (Task B).** Within ~256 blocks the village builds
+   at the candidate point. Console: `VillageRealization: realizing charter '…'`
+   then `[VillageRealization] Realized charter '…' -> village … -> REALIZED`.
+4. **Re-open the map.** The charter pin is gone and a normal village marker shows
+   at the realized village's actual position — NO double-pin.
+5. **List charters.** `/litv settlement list <kingdom>` — the approached one is
+   now `[REALIZED]`; the kingdom did not fail; other charters still `[CHARTERED]`.
+6. **Capital.** Walking up to the capital charter builds a (normal-for-now)
+   capital village; `kingdom.capitalVillageId` is set (the grander-capital
+   morphology is C4, not here).
+7. **No steady-state log spam.** With no charter/planned village in range there
+   are no per-tick realization logs.

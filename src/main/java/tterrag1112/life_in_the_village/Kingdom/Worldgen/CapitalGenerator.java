@@ -69,7 +69,7 @@ import java.util.function.Consumer;
  * post-realisation when capital NPCs exist. CapitalGenerator only
  * issues the capital charter; survey (C1-b) and realization (C1-c)
  * site the capital later via the charter pipeline / the existing
- * {@code VillageRealisationSystem} when a player loads chunks near
+ * {@code CharterRealizationTickSystem} (the V4 unified realization pass) when a player loads chunks near
  * the capital cell.
  */
 public final class CapitalGenerator {

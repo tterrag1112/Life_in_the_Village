@@ -741,62 +741,73 @@ class ParallelismCleanupSystem implements TickSubsystem {
 }
 
 // =============================================================================
-// CHARTER REALIZATION (Track C1-c) — interval = 20, priority = 58
+// VILLAGE REALIZATION (Tracks C1-c + V4) — interval = 20, priority = 58
 // =============================================================================
 
 /**
- * Track C1-c — advances SURVEYED settlement charters to REALIZED, closing
- * the charter -> survey -> realization arc.
+ * Doc 16 V4 — the unified player-approach realization pass. Realizes
+ * CHARTERED settlement charters (the deterministic village-first model) into
+ * real {@link Village}s via the canonical V2 spawner, and — in the SAME pass —
+ * realizes any legacy planned {@link Village} (the natural-spawn /
+ * {@code VillagePlanHelper} path). V4 unified the two former approach-scanners
+ * ({@code VillageRealisationSystem} for planned villages and this one for
+ * charters) into this single pass so we never run two competing realizers;
+ * {@code VillageRealisationSystem} is retired.
  *
- * <p>This is the charter-side sibling of {@code VillageRealisationSystem}:
- * where that system realizes planned {@link Village} objects (realised=false
- * + plannedOrigin), this one realizes SURVEYED charters at their exact
- * {@code surveyedAnchor}. C1-a removed the capital's planned-{@code Village}
- * wiring, so a charter is the record of intent and there is no intermediate
- * planned {@code Village} to feed the existing loop. Rather than materialize
- * a throwaway planned {@code Village}, this sibling pass reuses the SAME
- * canonical spawn path ({@link tterrag1112.life_in_the_village.Village.VillageSpawner#spawnVillage}) directly from
- * the charter's anchor — the spawn machinery is reused, not duplicated.
+ * <h3>Cost tier</h3>
+ * Realization is Tier 2 (doc 16 §1): this is the ONE place the expensive V2 /
+ * {@code GeneratorTerrainSource} terrain adaptation belongs. Placement and
+ * claim (V1–V3) stay digest-only; nothing here leaks back into those tiers.
  *
  * <h3>Trigger</h3>
- * GraphEdgeRealizationSystem / CharterSurveyTickSystem shape: each pass it
- * collects every SURVEYED charter whose surveyed anchor is within
- * {@link #REALISE_RADIUS} blocks of any player, picks the nearest, and
- * realizes exactly ONE per pass (spawning is heavy — see
- * {@code VillageRealisationSystem}'s same 1-per-pass discipline). Runs at
- * priority 58 — after charter_survey (55) so a charter surveyed this tick
- * can be realized the same cadence, and before village_realisation (60).
+ * Each pass it collects every realization target — unrealized charter (at its
+ * candidate point) and planned village (at its planned origin) — within
+ * {@link #REALISE_RADIUS} blocks of any player, picks the single nearest, and
+ * realizes exactly ONE per pass (spawning is heavy; the dense-region queue is
+ * acceptable LOD per doc 16 §8). Priority 58, 1 Hz.
  *
- * <h3>Link + stage advance</h3>
- * On a successful spawn the produced {@link Village} (realised=true) is
+ * <h3>Charter candidate point (CHARTERED)</h3>
+ * A CHARTERED charter has no surveyed anchor (the per-charter SURVEY loop was
+ * removed in V2). Its realization point is the deterministic candidate point
+ * recomputed load-free from {@code targetCellKey} via
+ * {@link tterrag1112.life_in_the_village.Kingdom.Settlement.VillagePlacement#evaluateRegion}
+ * (Tier-0, no chunk load) — the same point V1 placement chose — falling back
+ * to the cell centre if the recompute returns empty. V2 ADAPTS to the real
+ * terrain at this point (the lenient-gate payoff: the village bends to the
+ * ground, never rejected). The realized position becomes truth (doc 16 §5).
+ *
+ * <h3>Link + sharpen + stage advance</h3>
+ * On a successful charter spawn the produced {@link Village} (realised=true) is
  * bound to the issuing kingdom — {@code village.setKingdomId(kingdomId)} +
- * {@code kingdom.addVillage(id)} (reusing the existing village<->kingdom
- * association) — the charter is advanced via {@code charter.realized(id)} +
- * {@code kingdom.updateSettlementCharter(...)}, and (for the capital) the
- * kingdom's {@code capitalVillageId} is set. The map builders already drop
- * the charter pin once {@code isUnrealized()} is false and render the
- * produced Village as a normal village marker — no double-pin.
+ * {@code kingdom.addVillage(id)} — the charter advances via
+ * {@code charter.realized(id)} + {@code kingdom.updateSettlementCharter(...)},
+ * so the map reads the realized village's actual position afterward (the stale
+ * candidate pin is dropped once {@code isUnrealized()} is false; no double-pin).
+ * The kingdomId is DERIVED from the cell-claim (the charter's issuing kingdom);
+ * it is set on the Village only because the spawner/membership needs it, not
+ * stored as a desync-prone duplicate. For the capital the kingdom's
+ * {@code capitalVillageId} is set.
  *
  * <h3>Failure handling (decoupled)</h3>
- * If the spawn fails (terrain worse than survey predicted, overlap, …) the
- * kingdom is NOT failed and the charter is NOT lost: a per-charter
- * {@link FailureRecord} backoff (mirroring {@code VillageRealisationSystem})
- * leaves the charter SURVEYED for retry. Relocation-within-cell (doc 15) is
- * flagged for a later slice; minimal here is retry-with-backoff, and after
- * {@code MAX_RETRY_ATTEMPTS} the charter is parked (no further retries) but
- * left intact so a future slice can relocate it.
+ * If a charter spawn fails (overlap, etc.) the kingdom is NOT failed and the
+ * charter is NOT lost: a per-charter {@link FailureRecord} backoff leaves it
+ * CHARTERED for retry, and after {@code MAX_RETRY_ATTEMPTS} it is parked (no
+ * further retries) but kept intact. Since placement was lenient and V2 adapts,
+ * genuine failures should be rare.
  *
  * <h3>Capital</h3>
- * The capital is just a SURVEYED charter (C1-a) and realizes through this
- * same path; on success the kingdom gets a real capital village.
- * Grander-capital morphology is C4/A9 — out of scope here; the capital
- * realizes as a normal village for now (C4 hook: branch on
- * {@code charter.capital()} before the spawn to pick a grander type/size).
+ * The capital is just a promoted charter (V3) and realizes through this same
+ * path; grander-capital morphology is C4/A9 — out of scope here (C4 hook:
+ * branch on {@code charter.capital()} before the spawn to pick a grander
+ * type/size). The capital realizes as a normal village for now.
+ *
+ * <h3>Frontier / LOD (V5 hook)</h3>
+ * V4 realizes CHARTERED→REALIZED on approach only. Global (unclaimed) frontier
+ * placement and near-eager / distant-lazy LOD are V5 — not built here.
  */
 class CharterRealizationTickSystem implements TickSubsystem {
 
-    /** Player must be within this many blocks of the surveyed anchor.
-     *  Matches {@code VillageRealisationSystem.REALISE_RADIUS}. */
+    /** Player must be within this many blocks of the realization point. */
     private static final int REALISE_RADIUS = 256;
     private static final double REALISE_RADIUS_SQ =
             (double) REALISE_RADIUS * REALISE_RADIUS;
@@ -805,15 +816,18 @@ class CharterRealizationTickSystem implements TickSubsystem {
     private static final long[] BACKOFF_TICKS = {100L, 400L, 1200L, 3600L, 12000L};
 
     /** Per-charter failure backoff, keyed by charter id (stable across the
-     *  copy-with mutations, unlike the planned-village UUID churn). */
+     *  copy-with mutations). */
     private final java.util.Map<java.util.UUID, FailureRecord> failureHistory =
+            new java.util.HashMap<>();
+    /** Per-planned-village failure backoff, keyed by planned village id. */
+    private final java.util.Map<java.util.UUID, FailureRecord> plannedFailureHistory =
             new java.util.HashMap<>();
 
     private record FailureRecord(int attempts, long nextAttemptTick) {}
 
-    @Override public String name()     { return "charter_realization"; }
-    @Override public int    interval() { return 20; } // 1 Hz, like village_realisation
-    @Override public int    priority() { return 58; } // after survey (55), before realisation (60)
+    @Override public String name()     { return "village_realization"; }
+    @Override public int    interval() { return 20; } // 1 Hz
+    @Override public int    priority() { return 58; }
 
     @Override
     public void tick(TickContext ctx) {
@@ -826,97 +840,160 @@ class CharterRealizationTickSystem implements TickSubsystem {
         VillageSavedData data = ctx.villageData();
         long currentTick = level.getGameTime();
 
-        record Candidate(Kingdom kingdom,
-                         tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter charter,
-                         BlockPos anchor,
-                         double distSq) {}
-
-        Candidate target = null;
+        // A realization target is either a charter (at its candidate point) or
+        // a legacy planned Village (at its planned origin). We pick the single
+        // nearest across BOTH kinds and realize exactly one per pass.
+        Kingdom bestKingdom = null;
+        tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter bestCharter = null;
+        BlockPos bestCharterPoint = null;
+        Village bestPlanned = null;
+        BlockPos bestPlannedOrigin = null;
         double bestDistSq = REALISE_RADIUS_SQ;
 
+        // ── Charters ────────────────────────────────────────────────────────
         for (Kingdom k : data.getAllKingdoms()) {
             for (var charter : k.getSettlementCharters()) {
-                if (charter.stage() != tterrag1112.life_in_the_village.Kingdom
-                        .Settlement.SettlementCharterStage.SURVEYED) continue;
+                if (!charter.isUnrealized()) continue; // REALIZED -> Village marker
 
-                // Skip charters in failure cooldown.
                 FailureRecord fs = failureHistory.get(charter.id());
                 if (fs != null) {
                     if (fs.attempts() >= MAX_RETRY_ATTEMPTS) continue;
                     if (currentTick < fs.nextAttemptTick()) continue;
                 }
 
-                BlockPos anchor = charter.surveyedAnchor().orElse(null);
-                if (anchor == null) continue; // SURVEYED but no anchor — shouldn't happen
+                BlockPos point = charterRealizationPoint(level, charter);
+                if (point == null) continue;
 
                 for (ServerPlayer p : players) {
-                    double dx = p.getX() - anchor.getX();
-                    double dz = p.getZ() - anchor.getZ();
+                    double dx = p.getX() - point.getX();
+                    double dz = p.getZ() - point.getZ();
                     double d = dx * dx + dz * dz;
                     if (d < bestDistSq) {
                         bestDistSq = d;
-                        target = new Candidate(k, charter, anchor, d);
+                        bestKingdom = k; bestCharter = charter; bestCharterPoint = point;
+                        bestPlanned = null; bestPlannedOrigin = null;
                     }
                 }
             }
         }
 
-        if (target == null) return;
+        // ── Legacy planned villages (natural-spawn path) ──────────────────────
+        for (Village v : data.getAllVillages()) {
+            if (!tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper.isPlanned(v))
+                continue;
 
-        Kingdom kingdom = target.kingdom();
-        var charter      = target.charter();
-        BlockPos anchor  = target.anchor();
-        String type      = charter.villageType();
-        String name      = charter.name();
+            FailureRecord fs = plannedFailureHistory.get(v.getId());
+            if (fs != null) {
+                if (fs.attempts() >= MAX_RETRY_ATTEMPTS) continue;
+                if (currentTick < fs.nextAttemptTick()) continue;
+            }
 
-        System.out.println("CharterRealizationTickSystem: realizing charter '" + name
-                + "' (" + type + ") at " + anchor.toShortString());
+            BlockPos origin = v.getPlannedOrigin();
+            if (origin == null) continue;
 
-        // ── Spawn via the canonical V2 path (same as VillageRealisationSystem). ──
+            for (ServerPlayer p : players) {
+                double dx = p.getX() - origin.getX();
+                double dz = p.getZ() - origin.getZ();
+                double d = dx * dx + dz * dz;
+                if (d < bestDistSq) {
+                    bestDistSq = d;
+                    bestPlanned = v; bestPlannedOrigin = origin;
+                    bestKingdom = null; bestCharter = null; bestCharterPoint = null;
+                }
+            }
+        }
+
+        if (bestCharter != null) {
+            realizeCharter(level, data, bestKingdom, bestCharter, bestCharterPoint, currentTick);
+        } else if (bestPlanned != null) {
+            realizePlanned(level, data, bestPlanned, bestPlannedOrigin, currentTick);
+        }
+    }
+
+    /**
+     * The deterministic realization point for an unrealized charter: the
+     * exact surveyed anchor if one was ever set (legacy SURVEYED charters),
+     * else the V1 candidate point recomputed load-free from the charter's
+     * target cell (Tier-0; no chunk load), else the cell centre.
+     */
+    private static BlockPos charterRealizationPoint(
+            ServerLevel level,
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter charter) {
+        if (charter.surveyedAnchor().isPresent()) return charter.surveyedAnchor().get();
+
+        long cellKey = charter.targetCellKey();
+        int blockX = (tterrag1112.life_in_the_village.World.Atlas.AtlasCell.unpackX(cellKey)
+                << tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_SHIFT)
+                + tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_HALF;
+        int blockZ = (tterrag1112.life_in_the_village.World.Atlas.AtlasCell.unpackZ(cellKey)
+                << tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_SHIFT)
+                + tterrag1112.life_in_the_village.World.Atlas.AtlasCell.CELL_HALF;
+        int rx = tterrag1112.life_in_the_village.Kingdom.Settlement.VillagePlacement
+                .regionForBlockX(blockX);
+        int rz = tterrag1112.life_in_the_village.Kingdom.Settlement.VillagePlacement
+                .regionForBlockZ(blockZ);
+        var cand = tterrag1112.life_in_the_village.Kingdom.Settlement.VillagePlacement
+                .evaluateRegion(level, rx, rz).orElse(null);
+        if (cand != null) return cand.pos();
+        return charter.pinPos(); // fallback: cell centre
+    }
+
+    /** Realize one unrealized charter at its candidate point via the V2 spawner. */
+    private void realizeCharter(
+            ServerLevel level, VillageSavedData data, Kingdom kingdom,
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter charter,
+            BlockPos point, long currentTick) {
+
+        String type = charter.villageType();
+        String name = charter.name();
+
+        System.out.println("VillageRealization: realizing charter '" + name
+                + "' (" + type + ") at " + point.toShortString());
+
+        // C4 HOOK: branch on charter.capital() here to select a grander
+        // capital type/size once C4/A9 lands. For now the capital realizes as
+        // a normal village (the spawner derives the roster from terrain).
+
         tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
                 .beginAttempt();
         java.util.Optional<Village> spawnedOpt;
         try {
             spawnedOpt = tterrag1112.life_in_the_village.Village.VillageSpawner
-                    .spawnVillage(level, anchor, type, name);
+                    .spawnVillage(level, point, type, name);
         } catch (Exception e) {
-            tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
-                    .record(
-                            tterrag1112.life_in_the_village.Kingdom.Placement
-                                    .PlacementFailureRecorder.Reason.PLANNER_EXCEPTION,
-                            e.getClass().getSimpleName() + ": " + e.getMessage(),
-                            anchor, type);
+            tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.PLANNER_EXCEPTION,
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), point, type);
             spawnedOpt = java.util.Optional.empty();
         }
         boolean succeeded = spawnedOpt.isPresent();
         tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
-                .endAttempt(succeeded, type, anchor);
+                .endAttempt(succeeded, type, point);
 
         if (!succeeded) {
-            // Decoupled failure: keep the kingdom AND the charter (SURVEYED),
-            // back off, retry. Relocation-within-cell is a later slice.
             FailureRecord prev = failureHistory.get(charter.id());
             int attempts = prev == null ? 1 : prev.attempts() + 1;
             if (attempts >= MAX_RETRY_ATTEMPTS) {
-                failureHistory.put(charter.id(),
-                        new FailureRecord(attempts, Long.MAX_VALUE));
-                System.out.println("[CharterRealizationTickSystem] WARN charter '" + name
+                failureHistory.put(charter.id(), new FailureRecord(attempts, Long.MAX_VALUE));
+                System.out.println("[VillageRealization] WARN charter '" + name
                         + "' failed to realize after " + attempts
-                        + " attempts — parked SURVEYED (relocation deferred)");
+                        + " attempts — parked CHARTERED (relocation deferred)");
             } else {
                 long backoff = BACKOFF_TICKS[attempts - 1];
                 failureHistory.put(charter.id(),
                         new FailureRecord(attempts, currentTick + backoff));
-                System.out.println("[CharterRealizationTickSystem] spawn failed for charter '"
-                        + name + "' — left SURVEYED, retry in " + backoff + " ticks (attempt "
+                System.out.println("[VillageRealization] spawn failed for charter '"
+                        + name + "' — left CHARTERED, retry in " + backoff + " ticks (attempt "
                         + attempts + ")");
             }
             return;
         }
 
-        // ── Link + advance stage. ──
+        // Link + sharpen + advance. Position sharpens to the realized Village's
+        // actual position (the spawner set it); the map reads that afterward.
         Village spawned = spawnedOpt.get();
-        spawned.setKingdomId(kingdom.getId());
+        spawned.setKingdomId(kingdom.getId()); // derived from the cell-claim issuer
         kingdom.addVillage(spawned.getId());
         if (charter.capital()) {
             kingdom.setCapitalVillageId(spawned.getId());
@@ -924,18 +1001,87 @@ class CharterRealizationTickSystem implements TickSubsystem {
 
         boolean updated = kingdom.updateSettlementCharter(charter.realized(spawned.getId()));
         if (!updated) {
-            // Charter vanished mid-flight (shouldn't happen) — village still
-            // bound to the kingdom; log and move on.
-            System.out.println("[CharterRealizationTickSystem] WARN charter '" + name
+            System.out.println("[VillageRealization] WARN charter '" + name
                     + "' not found for stage-advance after spawn — village kept, charter "
                     + "stage unchanged");
         }
         failureHistory.remove(charter.id());
         data.setDirty();
 
-        System.out.println("[CharterRealizationTickSystem] Realized charter '" + name
+        System.out.println("[VillageRealization] Realized charter '" + name
                 + "' -> village " + spawned.getId() + " (kingdom " + kingdom.getId()
                 + (charter.capital() ? ", capital" : "") + ") -> REALIZED");
+    }
+
+    /**
+     * Realize one legacy planned Village (natural-spawn path) via the V2
+     * spawner. Folded from the retired {@code VillageRealisationSystem}; the
+     * planned record is replaced by a spawned one preserving name + kingdom.
+     */
+    private void realizePlanned(
+            ServerLevel level, VillageSavedData data, Village planned,
+            BlockPos origin, long currentTick) {
+
+        String name = planned.getName();
+        String type = planned.getVillageType();
+        java.util.UUID plannedId = planned.getId();
+
+        System.out.println("VillageRealization: realizing planned '" + name
+                + "' (" + type + ") at " + origin.toShortString());
+
+        java.util.Optional<Kingdom> kingdomOpt = data.getKingdomForVillage(plannedId);
+
+        // Remove the placeholder so the spawner doesn't see a duplicate name.
+        data.removeVillage(plannedId);
+        kingdomOpt.ifPresent(k -> k.removeVillage(plannedId));
+        data.setDirty();
+
+        tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                .beginAttempt();
+        java.util.Optional<Village> spawnedOpt;
+        try {
+            spawnedOpt = tterrag1112.life_in_the_village.Village.VillageSpawner
+                    .spawnVillage(level, origin, type, name);
+        } catch (Exception e) {
+            tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.PLANNER_EXCEPTION,
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), origin, type);
+            spawnedOpt = java.util.Optional.empty();
+        }
+        boolean succeeded = spawnedOpt.isPresent();
+        tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                .endAttempt(succeeded, type, origin);
+
+        if (!succeeded) {
+            // Restore the placeholder and back off (decoupled failure).
+            Village restored = new Village(name);
+            restored.setVillageType(type);
+            restored.setPlannedOrigin(origin);
+            restored.setRealised(false);
+            data.addVillage(restored);
+            kingdomOpt.ifPresent(k -> k.addVillage(restored.getId()));
+
+            FailureRecord prev = plannedFailureHistory.get(plannedId);
+            int attempts = prev == null ? 1 : prev.attempts() + 1;
+            long backoff = attempts >= MAX_RETRY_ATTEMPTS
+                    ? Long.MAX_VALUE : BACKOFF_TICKS[attempts - 1];
+            plannedFailureHistory.remove(plannedId);
+            plannedFailureHistory.put(restored.getId(),
+                    new FailureRecord(attempts, backoff == Long.MAX_VALUE
+                            ? Long.MAX_VALUE : currentTick + backoff));
+            data.setDirty();
+            System.out.println("[VillageRealization] spawn failed for planned '" + name
+                    + "' — restored placeholder, attempt " + attempts);
+            return;
+        }
+
+        Village spawned = spawnedOpt.get();
+        tterrag1112.life_in_the_village.Village.Planning.VillagePlanHelper
+                .markRealised(spawned, data);
+        kingdomOpt.ifPresent(k -> k.addVillage(spawned.getId()));
+        plannedFailureHistory.remove(plannedId);
+        data.setDirty();
     }
 }
 

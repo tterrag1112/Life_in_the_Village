@@ -17,11 +17,10 @@ import java.util.UUID;
  * operations that don't touch buildings (listings, UI, kingdom membership).
  *
  * <h3>Realisation</h3>
- * {@link tterrag1112.life_in_the_village.Events.VillageRealisationSystem}
- * watches player positions and calls {@link VillageSpawner#spawnVillage} for
- * any planned village whose origin is within the realisation radius. After
- * that call, {@link #markRealised} transitions the record to the realised
- * state.
+ * The unified {@code CharterRealizationTickSystem} (doc 16 V4) watches player
+ * positions and calls {@code VillageSpawner.spawnVillage} for any planned
+ * village whose origin is within the realisation radius. After that call,
+ * {@link #markRealised} transitions the record to the realised state.
  *
  * <h3>Kingdom membership</h3>
  * Villages can be added to a kingdom at plan time — the kingdom object only
