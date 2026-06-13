@@ -53,5 +53,13 @@
     }
   ],
   "terrain_strategy": "SLOPE_AWARE",
-  "town_square_capacity": 5
+  "town_square_capacity": 5,
+  "settlement_tier": "VILLAGE",
+  "kingdom_roles": [
+    "religious_center"
+  ],
+  "biome_affinity": [
+    "forest"
+  ],
+  "max_per_kingdom": 1
 }

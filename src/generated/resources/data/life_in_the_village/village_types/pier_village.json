@@ -55,5 +55,13 @@
     }
   ],
   "terrain_strategy": "WATERFRONT",
-  "town_square_capacity": 3
+  "town_square_capacity": 3,
+  "settlement_tier": "VILLAGE",
+  "kingdom_roles": [
+    "trade_hub"
+  ],
+  "biome_affinity": [
+    "coast"
+  ],
+  "trade_priority": 3
 }

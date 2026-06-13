@@ -61,5 +61,6 @@
     }
   ],
   "terrain_strategy": "FLAT",
-  "town_square_capacity": 5
+  "town_square_capacity": 5,
+  "settlement_tier": "VILLAGE"
 }

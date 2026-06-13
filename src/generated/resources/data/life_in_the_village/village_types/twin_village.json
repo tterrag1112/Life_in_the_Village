@@ -69,5 +69,7 @@
     }
   ],
   "terrain_strategy": "FLAT",
-  "town_square_capacity": 5
+  "town_square_capacity": 5,
+  "settlement_tier": "TOWN",
+  "can_be_capital": true
 }

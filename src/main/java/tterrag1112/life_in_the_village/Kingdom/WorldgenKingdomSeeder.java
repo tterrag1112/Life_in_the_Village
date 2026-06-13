@@ -130,8 +130,8 @@ public class WorldgenKingdomSeeder {
             int cz       = (int)(Math.sin(angle) * dist);
             String[] culture = chooseCulture(rng, i);
             String name      = generateKingdomName(rng);
-            List<String> comp = buildComposition(rng, culture[0], culture[1]);
-            scheduled.add(new ScheduledKingdom(cx, cz, name, culture[0], comp));
+            String capitalType = resolveCapitalType(culture[0], culture[1]);
+            scheduled.add(new ScheduledKingdom(cx, cz, name, culture[0], capitalType));
             System.out.println("[WorldGenKingdomSeeder] Queued '" + name
                     + "' (" + culture[0] + ") at " + cx + "," + cz);
         }
@@ -184,7 +184,8 @@ public class WorldgenKingdomSeeder {
 
         System.out.println("[WorldGenKingdomSeeder] Spawning '" + sk.name
                 + "' (" + sk.culture + ") at " + chosenOrigin.toShortString()
-                + " | biome=" + cell.category() + " | " + sk.composition);
+                + " | biome=" + cell.category()
+                + " | capitalType=" + sk.capitalType());
 
         // Track D3.1 — capital-only initial state. The composition
         // list's first entry is the capital village type; the
@@ -197,8 +198,7 @@ public class WorldgenKingdomSeeder {
         // CapitalGenerator which honors the D1 culture sub-bundle's
         // claimBudgetHint, sets capitalVillageId / foundingTick,
         // and fires the KingdomFounded bus event.
-        String capitalType = sk.composition.isEmpty() ? "default"
-                : sk.composition.get(0);
+        String capitalType = sk.capitalType();
         tterrag1112.life_in_the_village.Kingdom.Worldgen.CapitalGenerator.generate(
                 level, chosenOrigin, sk.name, sk.culture, capitalType,
                 msg -> System.out.println("  " + msg));
@@ -318,23 +318,17 @@ public class WorldgenKingdomSeeder {
         return CULTURES[0];
     }
 
-    private static List<String> buildComposition(Random rng, String culture, String capitalType) {
+    /**
+     * Track C1-d — returns the capital village type for the given culture.
+     * The remaining composition entries (food, materials, specialist) are
+     * removed; portfolio issuance is now handled by
+     * {@link tterrag1112.life_in_the_village.Kingdom.Worldgen.PortfolioIssuer}
+     * which picks settlement types from {@code biomeAffinity} / {@code kingdomRoles}
+     * declared in village type datagen rather than from a hard-coded list.
+     */
+    private static String resolveCapitalType(String culture, String capitalType) {
         Set<String> av = VillageTypeRegistry.INSTANCE.getAvailableTypes();
-        List<String> c = new ArrayList<>();
-        c.add(has(av, capitalType,        "default"));          // 0 — capital
-        c.add(has(av, "farming_village",  "default"));          // 1 — food
-        c.add(has(av, "farming_village",  "default"));          // 2 — food
-        c.add(has(av, "mining_camp",      "default"));          // 3 — materials
-        String specialist = switch (culture) {                   // 4 — specialist
-            case "highland" -> has(av, "fortress_town",   "default");
-            case "imperial" -> has(av, "trade_hub",       "default");
-            default         -> {
-                String[] opts = {"noble_estate","trade_hub","riverside_town","farming_village"};
-                yield has(av, opts[rng.nextInt(opts.length)], "default");
-            }
-        };
-        c.add(specialist);
-        return c;
+        return has(av, capitalType, "default");
     }
 
     private static String has(Set<String> av, String pref, String fallback) {
@@ -384,6 +378,6 @@ public class WorldgenKingdomSeeder {
     }
 
     private record ScheduledKingdom(int cx, int cz, String name,
-                                    String culture, List<String> composition) {}
+                                    String culture, String capitalType) {}
 }
 

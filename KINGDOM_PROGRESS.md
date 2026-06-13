@@ -3647,3 +3647,193 @@ new codec field; no brain/memory touch; no V1 spawner resurrection.
    `MAX_RETRY_ATTEMPTS` it parks SURVEYED with a WARN, still not deleted).
 7. Performance: only ONE charter is realized per pass — no hitch even with several
    surveyed settlements queued near a player.
+
+## C1-d — Portfolio issuance: varied settlement charters driven by dead portfolio fields
+
+**Date:** 2026-06-13. Built to `.claude/planning/15-C1-CHARTER-MODEL-DESIGN.md` (Slice C1-d)
+and `06-ROADMAP-FINAL-DRAFT.md` C3 note. Wires the four dead fields —
+`biomeAffinity`/`kingdomRoles`/`maxPerKingdom`/`tradePriority` — into live issuance logic
+so a newborn kingdom issues a spread of portfolio charters in addition to its capital. Survey
+(C1-b) and realization (C1-c) handle them unchanged — C1-d is pure issuance.
+
+### KEY FINDING: stale generated JSONs — ACTIVATED by this slice
+
+The generated village-type JSONs in `src/generated/resources/data/life_in_the_village/village_types/`
+were **stale**: they predated Phase 21 and were missing every kingdom field
+(`settlement_tier`, `biome_affinity`, `kingdom_roles`, `can_be_capital`, `trade_priority`,
+`max_per_kingdom`). The datagen Java (`VillageTypeDatagen.java`) correctly declared all
+fields via `VillageTypeBuilder`, but `gradlew generateData` had not been re-run. This slice
+**regenerated all 16 JSONs** by patching the generated files directly from the exact values
+in the datagen source. The VillageTypeRegistry parser already read these fields (Phase 21 —
+`parseKingdomReworkSchema`); they are now present in the JSON for the first time, so the
+in-game registry now loads them with affinity/role/cap data live.
+
+### Verified dead-field shapes (from `VillageTypeData.java` ~lines 229-259)
+
+| Field | Type | Getter | Datagen via | Validation |
+|-------|------|--------|-------------|------------|
+| `biomeAffinity` | `Set<String>` | `getBiomeAffinity()` | `VillageTypeBuilder.biomeAffinity(String...)` | empty string rejected |
+| `kingdomRoles` | `Set<String>` | `getKingdomRoles()` | `VillageTypeBuilder.kingdomRoles(String...)` | empty string rejected |
+| `tradePriority` | `int` (0–4) | `getTradePriority()` | `VillageTypeBuilder.tradePriority(int)` | range 0–4 |
+| `maxPerKingdom` | `int` (-1 or +n) | `getMaxPerKingdom()` | `VillageTypeBuilder.maxPerKingdom(int)` | ≠0, ≥-1 |
+
+Readers before C1-d: only `VillageTypeRegistry.validateKingdomFields` (range checks). No
+issuance code read them. After C1-d: `PortfolioIssuer` reads all four at worldgen.
+
+### Affinity coverage (sufficient — drives meaningful selection)
+
+| Affinity tag | Village types | Notes |
+|---|---|---|
+| `mountain` | `mining_camp`, `mountain_keep`, `vineyard_terrace`, `cliff_hamlet` | also fires on steep cells |
+| `forest` | `sacred_grove`, `frontier_outpost`, `bend_hamlet`, `border_keep` | FOREST BiomeCategory |
+| `coast` | `pier_village` | FLAG_COAST or BEACH category |
+| `river` | `riverside_town` | RIVER category or FLAG_FRESHWATER |
+| *(generic — no affinity)* | `default_village`, `farming_hamlet`, `twin_village`, `trade_city`, `crossroads_town`, `sparse_holding` | fallback for plains/desert/savanna/snowy/jungle |
+
+Gap: no desert/savanna/snowy/jungle-specific type. These cells correctly fall to the generic
+pool — not a bug, and not hard-coded here. Adding affinity-specific types for those biomes
+in datagen automatically activates them with no code change.
+
+### Issuance algorithm + constants
+
+`PortfolioIssuer.issue(kingdom, atlas, rng, tick, progress)`:
+1. Load all non-capital village types from `VillageTypeRegistry` (types with `canBeCapital()
+   == false`). Capital types are already issued by `CapitalGenerator`.
+2. Shuffle the kingdom's `claimedCellKeys()` with a deterministic RNG seeded from
+   `kingdom.id XOR level.seed`. Step through with `CANDIDATE_STRIDE = 2`.
+3. For each candidate cell (skipping the capital cell and already-charted cells), read the
+   `AtlasCell` from the pre-filled atlas. Skip null or unbuildable cells.
+4. Score types by affinity: exact-match the cell's `BiomeCategory`, coast flag, steep flag,
+   freshwater flag against each type's `getBiomeAffinity()` set. Pick highest
+   `tradePriority` among matching types not exceeding `maxPerKingdom`. Fallback to highest-
+   priority generic type if no affinity matches.
+5. Issue with role from `kingdomRoles.iterator().next()` (or `"settlement"` if empty),
+   `sizeBand` mapped from `SettlementTier` → `VillageSizeTier`, digest from
+   `CharterDigest.fromCell(cell, band)`.
+6. Stop after `MAX_PORTFOLIO_CHARTERS = 4` non-capital charters.
+
+**Named constants in `PortfolioIssuer.java`:**
+- `MAX_PORTFOLIO_CHARTERS = 4` — capital + 4 = 5 pins per kingdom on spawn.
+- `CANDIDATE_STRIDE = 2` — evaluates ~30–60 of a 60–120-cell claim.
+
+### Seeder reconciliation
+
+`WorldgenKingdomSeeder.buildComposition` was a 5-entry list whose entries 1–4 (food, food,
+mining, specialist) were already dead (only `get(0)` was used, since D3.1). Those entries
+are now **deleted**. `buildComposition` → renamed `resolveCapitalType(culture, capitalType)`
+returning a single `String`. `ScheduledKingdom` record drops `List<String> composition` →
+`String capitalType`. The log line updated accordingly. No functional change to capital
+selection; the dead list is gone.
+
+### Files touched
+
+| File | Change |
+|------|--------|
+| `Kingdom/Worldgen/PortfolioIssuer.java` | **new** — portfolio issuance logic (368 lines) |
+| `Kingdom/Worldgen/CapitalGenerator.java` | Wire `PortfolioIssuer.issue(...)` after capital charter; no other change |
+| `Kingdom/WorldgenKingdomSeeder.java` | Drop dead composition entries 1–4; `buildComposition` → `resolveCapitalType`; `ScheduledKingdom` simplification |
+| `Commands/KingdomDebugCommand.java` | Add `/litv settlement list <kingdom>` subcommand |
+| `src/generated/resources/data/life_in_the_village/village_types/*.json` (all 16) | Add missing kingdom fields (`settlement_tier`, `biome_affinity`, `kingdom_roles`, `can_be_capital`, `trade_priority`, `max_per_kingdom`) — stale regeneration |
+
+### Tie-in audit
+
+- **`CapitalGenerator.generate` callers.** Only `WorldgenKingdomSeeder.processSpawn` (one
+  call site). Signature unchanged — `PortfolioIssuer.issue` is a new call inside, not an
+  argument. Unaffected.
+- **Seeder's dead composition entries.** Entries 1–4 of `buildComposition` were dead since
+  D3.1 (only `get(0)` used at worldgen). Deleted and replaced with `resolveCapitalType`.
+  `ScheduledKingdom` record simplified; `getStatusString()` unaffected (no composition
+  reference). No other caller of `buildComposition` existed.
+- **`VillageTypeRegistry` / `VillageTypeData` readers.** `parseKingdomReworkSchema` (Phase
+  21, already in registry) now actually has data to parse from the regenerated JSONs. No
+  code change to the registry; all field reads in `PortfolioIssuer` use existing getters.
+- **Survey + realization pipeline.** `CharterSurveyTickSystem` and
+  `CharterRealizationTickSystem` operate on all CHARTERED charters regardless of role or
+  type — confirmed by reading both systems. No change needed; portfolio charters
+  automatically enter the pipeline.
+- **Map builders.** `KingdomMapDataBuilder` and `ContinentMapDataBuilder` iterate
+  `kingdom.getSettlementCharters()` for pins; portfolio charters are `isUnrealized()` = true
+  on issuance, so they render as pins. No change needed.
+- **`SettlementCharter.CODEC`.** No new field. 13 fields unchanged, under 16-field cap.
+- **`Kingdom.CODEC` / `KingdomGovernanceData`.** `settlementCharters` list already present
+  (C1-a); portfolio charters are additional entries in the same list. No codec change.
+- **Exhaustive switches.** `PortfolioIssuer.sizeBandFor` switches over `SettlementTier`
+  (OUTPOST/HAMLET/VILLAGE/TOWN/CITY/CAPITAL) — all 6 arms covered. No other switch over
+  `SettlementTier` or `SettlementCharterStage` was changed.
+- **`/litv settlement list` command.** Added alongside existing `survey` and `realize`
+  subcommands; same pattern, same guard (`ServerLevel` check, kingdom-by-name lookup,
+  fully-qualified type references — no new imports needed in `KingdomDebugCommand`).
+
+### Deviations from prompt
+
+- The prompt said "if `biomeAffinity` data is too thin, REPORT it and issue what the data
+  supports." Finding: data is **not** too thin — affinity covers coast/river/mountain/forest
+  with meaningful variety; generic types cover everything else. No datagen follow-up needed
+  for basic portfolio issuance.
+- The seeder's `buildComposition` dead entries were deleted (not just ignored). This was a
+  confirmed dead-code simplification (D3.1 already made entries 1–4 unused); acting on it
+  is in scope per CLAUDE.md "confirmed orphans are part of the same change."
+- `/litv settlement list` was added (cheap, consistent with C1-b/c precedent, named in
+  prompt as desired). It reports all charters (not just portfolio) for full transparency.
+
+### Out-of-scope but flagged
+
+- **C3 territory/borders/provinces.** Named plug-in point: `PortfolioIssuer` produces
+  CHARTERED charters; C3 can enrich selection further (culture-specific roles, tier quotas,
+  emergent-village absorption) without changing the C1-d issuance contract.
+- **Datagen follow-up for uncovered biomes.** Desert/savanna/snowy/jungle cells currently
+  fall to generic types. A future datagen pass adding affinity-specific types for those
+  biomes will activate automatically via `PortfolioIssuer.matchesTag` (the `desert`,
+  `snowy`, `swamp`, `jungle` arms are already written and ready).
+- **Settlement name generation.** Current names are `"<KingdomPrefix> <Role> <n>"` (e.g.
+  `"Iron Trade Hub 1"`). C4 / culture enrichment can replace with lore-appropriate names.
+- **C4 grander capitals.** Capital still realizes as a normal village. Hook in
+  `CharterRealizationTickSystem` (branch on `charter.capital()`) documented in C1-c.
+- **Royal/highland/imperial capital types.** `WorldgenKingdomSeeder` references
+  `royal_capital`, `highland_capital`, `imperial_capital` village types that don't exist in
+  datagen (fall through to `has(av, ..., "default")`). These are pre-existing legacy
+  references, not introduced here; datagen adding those types is future work.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review:
+- Brace balance confirmed: `PortfolioIssuer.java` 88/88, `CapitalGenerator.java` 28/28,
+  `KingdomDebugCommand.java` 232/232, `WorldgenKingdomSeeder.java` 62/62.
+- All 16 generated JSONs validated via `json.load()` — all parse cleanly with kingdom
+  fields present.
+- `PortfolioIssuer` API calls matched against declarations: `getType()`, `getBiomeAffinity()`,
+  `getKingdomRoles()`, `getTradePriority()`, `getMaxPerKingdom()`, `canBeCapital()`,
+  `getSettlementTier()` — all confirmed on `VillageTypeData`; `isSteep()`, `isCoast()`,
+  `isFreshwater()`, `category()`, `isBuildable()` — all confirmed on `AtlasCell` (record).
+  `getTerritorialClaim().orElse(null)` — `Optional<KingdomClaim>` return confirmed.
+  `getCellByCoord(int, int)` — confirmed on `WorldAtlas`. `issueSettlementCharter(...)` —
+  confirmed on `Kingdom`. `CharterDigest.fromCell(cell, band)` — confirmed.
+- `SettlementTier` exhaustive switch in `sizeBandFor`: all 6 arms (OUTPOST/HAMLET/VILLAGE/
+  TOWN/CITY/CAPITAL) covered.
+- No V1 vocabulary touched. No new codec field. No abstract method rename. No new enum
+  (role is `String`, matching existing `kingdomRoles` vocabulary).
+
+### Smoke test (user, in-world)
+
+1. **Generate a new world** (new world per test; pre-existing saves won't have portfolio
+   charters). Wait for great-road generation (console: `[Worldgen] Great-road generation
+   complete`), then kingdom seeding (`[WorldGenKingdomSeeder] All 2 kingdoms placed`).
+2. **Open the Kingdom map** (or Continent map). Each kingdom should show **5 pins**:
+   1 capital + up to 4 portfolio charters. Pins appear at cell centres (pre-survey).
+   Console log should include lines like:
+   - `Chartered 'IronReach Trade Hub 1' (pier_village, role=trade_hub) in cell 45,12 (biome=BEACH/coast)`
+   - `PortfolioIssuer: issued 4 portfolio charter(s) for 'IronReach' (evaluated N of M claimed cells, stride=2).`
+3. **Verify spread**: the 4 portfolio charters should show varied roles/types — you should
+   see at least one coastal/river/mountain/forest type if those biomes are near the kingdom
+   origin. Generic types (farming_hamlet, default_village, etc.) appear for plains cells.
+4. **List charters**: `/litv settlement list <kingdom>` — dumps all charters with stage,
+   role, type, cell, anchor, village. Capital should show `(capital)`, others should not.
+   All should be `[CHARTERED]` before survey.
+5. **Survey all**: `/litv settlement survey <kingdom>` — all CHARTERED charters advance to
+   SURVEYED; pins snap to exact anchors on the map. Any cell that can't host a village
+   stays CHARTERED (logs `[no-anchor]`).
+6. **Realize all**: `/litv settlement realize <kingdom>` (or walk near each anchor) —
+   SURVEYED charters spawn villages. Re-open map: charter pins replaced by village markers.
+   All villages should appear as kingdom villages (bound to the kingdom).
+7. **Cap verification**: `trade_city` has `max_per_kingdom=1` and `sacred_grove` has
+   `max_per_kingdom=1`. At most one of each should appear in a kingdom's charter list.

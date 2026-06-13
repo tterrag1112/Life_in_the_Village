@@ -151,6 +151,14 @@ public final class KingdomDebugCommand {
                                         .then(Commands.argument("name",
                                                         StringArgumentType.string())
                                                 .executes(ctx -> settlementRealize(ctx,
+                                                        StringArgumentType.getString(ctx, "name")))))
+                                // Track C1-d — list all settlement charters for a kingdom
+                                // with their stage, role, village type, and cell position.
+                                // Useful for verifying the portfolio spread after kingdom spawn.
+                                .then(Commands.literal("list")
+                                        .then(Commands.argument("name",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> settlementList(ctx,
                                                         StringArgumentType.getString(ctx, "name"))))))
                         // Track D3.4b — top-level /litv treaty list/propose/break.
                         .then(Commands.literal("treaty")
@@ -1717,6 +1725,55 @@ public final class KingdomDebugCommand {
         send(ctx, "── Realize of " + name + ": " + realized + " realized, "
                 + failed + " failed, " + skipped + " not-SURVEYED ──");
         return realized;
+    }
+
+    /**
+     * Track C1-d — list all settlement charters for a kingdom, showing
+     * stage, role, village type, and target cell position. Useful for
+     * verifying the portfolio spread after kingdom spawn.
+     *
+     * Usage: {@code /litv settlement list <kingdom>}
+     */
+    private static int settlementList(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        tterrag1112.life_in_the_village.Kingdom.Kingdom k =
+                data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal("No kingdom '" + name + "'.")); return 0;
+        }
+        var charters = k.getSettlementCharters();
+        if (charters.isEmpty()) {
+            send(ctx, "── " + name + " has no settlement charters ──");
+            return 0;
+        }
+        send(ctx, "── Settlement charters for " + name
+                + " (" + charters.size() + " total) ──");
+        for (var charter : charters) {
+            int cx = tterrag1112.life_in_the_village.World.Atlas.AtlasCell
+                    .unpackX(charter.targetCellKey());
+            int cz = tterrag1112.life_in_the_village.World.Atlas.AtlasCell
+                    .unpackZ(charter.targetCellKey());
+            String anchor = charter.surveyedAnchor()
+                    .map(net.minecraft.core.BlockPos::toShortString)
+                    .orElse("(unsurveyed)");
+            String village = charter.realizedVillageId()
+                    .map(java.util.UUID::toString)
+                    .map(id -> id.substring(0, 8) + "...")
+                    .orElse("(unrealized)");
+            send(ctx, "  [" + charter.stage() + "] "
+                    + (charter.capital() ? "(capital) " : "")
+                    + "'" + charter.name() + "'"
+                    + " type=" + charter.villageType()
+                    + " role=" + charter.role()
+                    + " size=" + charter.sizeBand()
+                    + " cell=" + cx + "," + cz
+                    + " anchor=" + anchor
+                    + " village=" + village);
+        }
+        return charters.size();
     }
 
     private static void send(CommandContext<CommandSourceStack> ctx, String line) {

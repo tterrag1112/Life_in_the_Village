@@ -57,5 +57,14 @@
     }
   ],
   "terrain_strategy": "SLOPE_AWARE",
-  "town_square_capacity": 4
+  "town_square_capacity": 4,
+  "settlement_tier": "TOWN",
+  "kingdom_roles": [
+    "frontier",
+    "military"
+  ],
+  "biome_affinity": [
+    "forest"
+  ],
+  "can_be_capital": true
 }

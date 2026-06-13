@@ -67,5 +67,13 @@
     }
   ],
   "terrain_strategy": "MOUNTAIN",
-  "town_square_capacity": 4
+  "town_square_capacity": 4,
+  "settlement_tier": "TOWN",
+  "kingdom_roles": [
+    "military"
+  ],
+  "biome_affinity": [
+    "mountain"
+  ],
+  "can_be_capital": true
 }

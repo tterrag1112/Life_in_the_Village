@@ -186,6 +186,19 @@ public final class CapitalGenerator {
         progress.accept("Founded '" + kingdomName + "' with chartered capital '"
                 + capitalName + "'. Heraldry: " + kingdom.getHeraldry().describe());
 
+        // ── Portfolio issuance (Track C1-d) ────────────────────────────
+        // Issue additional settlement charters for the claim's non-capital
+        // cells, driven by biomeAffinity / kingdomRoles / maxPerKingdom /
+        // tradePriority. Purely issuance — survey and realization are
+        // unchanged (CharterSurveyTickSystem and CharterRealizationTickSystem
+        // handle any SURVEYED charter automatically).
+        java.util.Random portfolioRng = new java.util.Random(
+                kingdom.getId().getLeastSignificantBits()
+                ^ kingdom.getId().getMostSignificantBits()
+                ^ level.getSeed());
+        PortfolioIssuer.issue(kingdom, atlas, portfolioRng, foundingTick, progress);
+        data.setDirty();
+
         // ── Fire the bus ────────────────────────────────────────────────
         // Office events fire later, post-realisation, from
         // KingdomOfficeBootstrapTickSystem. KingdomFounded fires now

@@ -81,5 +81,12 @@
     }
   ],
   "terrain_strategy": "FLAT",
-  "town_square_capacity": 8
+  "town_square_capacity": 8,
+  "settlement_tier": "CITY",
+  "kingdom_roles": [
+    "trade_hub"
+  ],
+  "can_be_capital": true,
+  "trade_priority": 3,
+  "max_per_kingdom": 1
 }

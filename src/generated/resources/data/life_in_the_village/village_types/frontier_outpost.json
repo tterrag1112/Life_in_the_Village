@@ -49,5 +49,12 @@
     }
   ],
   "terrain_strategy": "SLOPE_AWARE",
-  "town_square_capacity": 3
+  "town_square_capacity": 3,
+  "settlement_tier": "OUTPOST",
+  "kingdom_roles": [
+    "frontier"
+  ],
+  "biome_affinity": [
+    "forest"
+  ]
 }

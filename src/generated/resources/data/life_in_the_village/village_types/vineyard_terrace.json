@@ -53,5 +53,9 @@
     }
   ],
   "terrain_strategy": "MOUNTAIN",
-  "town_square_capacity": 3
+  "town_square_capacity": 3,
+  "settlement_tier": "VILLAGE",
+  "biome_affinity": [
+    "mountain"
+  ]
 }

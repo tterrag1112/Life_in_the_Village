@@ -41,5 +41,9 @@
     }
   ],
   "terrain_strategy": "MOUNTAIN",
-  "town_square_capacity": 2
+  "town_square_capacity": 2,
+  "settlement_tier": "OUTPOST",
+  "biome_affinity": [
+    "mountain"
+  ]
 }
