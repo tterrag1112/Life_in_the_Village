@@ -12108,3 +12108,90 @@ corrected; exhaustive switch arm (REMOVED_CROSS_STREET in LayoutCommand) removed
 SiteContext record field count 14→13 (under 16-field cap); NetworkPlanner.plan()
 stub produces correct NetworkSpec shape (topology + ANCHOR node + bindings);
 Javadoc stale references cleaned up in 8 files.
+
+---
+
+## A6 compile fix — 2026-06-12
+
+**Branch:** `cowork/a6-compile-fix`
+
+### Error found
+
+**`Skeleton.java:75` — invariant-generics mismatch (compile error)**
+
+`allSegments()` declared `List<RoadSegment>` return type but returned the field
+`primarySegments` which is `List<SpineSegment>`. Java generics are invariant:
+`List<SpineSegment>` is not a `List<RoadSegment>` even though `SpineSegment`
+implements `RoadSegment`.
+
+Root cause: before A6, `allSegments()` built a **new** `List<RoadSegment>` by
+combining `primarySegments` + `crossStreets`. When A6 deleted `crossStreets`,
+the method was simplified to `return primarySegments` — losing the `new
+ArrayList<>(...)` copy that provided the `List<RoadSegment>` identity.
+
+**Fix:** `return new ArrayList<>(primarySegments);` — a fresh `List<RoadSegment>`
+constructed from the `List<SpineSegment>` field. The copy assignment upcasts each
+`SpineSegment` element to `RoadSegment`, producing the correct declared type.
+
+Return type kept as `List<RoadSegment>` (not narrowed to `List<SpineSegment>`)
+because all 9 call sites declare `List<RoadSegment>` locals and would require
+cascading changes.
+
+### Grep evidence — no other dangling refs remain
+
+```
+SpinePath / CrossStreet / REMOVED_CROSS_STREET (live code only, not comments):
+  grep -rn "SpinePath|CrossStreet|REMOVED_CROSS_STREET|spinePath|crossStreet|deriveSpinePath"
+       --include="*.java" src/ | grep -v "//"
+  → zero results in live code (comments only)
+
+import.*SpinePath | import.*CrossStreet:
+  → exit code 1 (no matches)
+
+instanceof CrossStreet | instanceof SpinePath:
+  → exit code 1 (no matches)
+
+List<SpineSegment> returned where List<RoadSegment> declared:
+  grep "return.*primarySegments" src/ (post-fix)
+  → line 66: primarySegments() returns List<SpineSegment>  ✓ (field type matches)
+  → line 78: allSegments() returns new ArrayList<>(primarySegments)  ✓ (copy fixes invariance)
+
+SiteContext field count: 13 fields (anchor, originalAnchor, primaryAxis, tier,
+  inclination, culture, seed, hubs, anchors, strategy, network, zonePartition,
+  gateways) — under 16-field cap.
+
+PhaseEvent.Kind: PLACED_FOUNDATION, PLACED_ITERATIVE, CAPACITY_PLAN,
+  PROACTIVE_CROSS_STREET, PROACTIVE_SKIPPED, ISOLATED, TRIM — all referenced
+  enum constants confirmed present; no exhaustive switch (all switch blocks use
+  default -> {}).
+```
+
+### File touched
+
+- `src/main/java/tterrag1112/life_in_the_village/Village/Planning/V2/Layer4/Skeleton.java`
+  (1 line changed: `return primarySegments` → `return new ArrayList<>(primarySegments)`)
+
+### Deviations from prompt
+
+None. Fix is exactly the `new ArrayList<>(primarySegments)` path the prompt
+specified; return type kept as `List<RoadSegment>` per caller analysis.
+
+### Out-of-scope but flagged
+
+- `PROACTIVE_CROSS_STREET` / `PROACTIVE_SKIPPED` / `CAPACITY_PLAN` in
+  `PhaseEvent.Kind` have no producers (factories deleted in A6). The constants
+  and the `LayoutCommand` switch arms over them are dead. Not a compile error —
+  flagged for a future cleanup pass.
+
+### Smoke test
+
+1. `./gradlew build` compiles clean.
+2. Spawn CITY/TOWN/HAMLET → routes normally, no NPE from `allSegments()`.
+3. `allSegments()` callers (`OverlapAuditor`, `V2VillageSpawnerAdapter`,
+   `PhasedPlanner`, harness tools) receive a `List<RoadSegment>` without
+   ClassCastException.
+
+**Build verification deferred** (sandbox blocks maven.neoforged.net). Static
+review substituted: single error site confirmed by grep; fix is a standard
+copy-constructor upcast; no other invariant-generics mismatches found across
+all Layer4 return statements.

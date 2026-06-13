@@ -70,9 +70,12 @@ public final class Skeleton {
     public void addJunction(Junction j) { junctions.add(j); }
 
     /** All road segments — the chord-decomposed primary network edges.
-     *  Used for frontage scoring in {@link PhasedPlanner#findBestCandidate}. */
+     *  Used for frontage scoring in {@link PhasedPlanner#findBestCandidate}.
+     *  Returns a new {@code List<RoadSegment>} copy — Java generics are
+     *  invariant so {@code List<SpineSegment>} cannot be returned directly
+     *  as {@code List<RoadSegment>}. */
     public List<RoadSegment> allSegments() {
-        return primarySegments;
+        return new ArrayList<>(primarySegments);
     }
 
     // =========================================================================
