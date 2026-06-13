@@ -120,6 +120,7 @@ public final class TickSubsystemRegistry {
         // surveyed before village_realisation (priority 60) considers it.
         register(new CharterSurveyTickSystem());
         register(new VillageRealisationSystem());
+        register(new CharterRealizationTickSystem()); // C1-c: SURVEYED -> REALIZED
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());
         register(new PilgrimageTickSystem());

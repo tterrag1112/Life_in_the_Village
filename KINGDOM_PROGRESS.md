@@ -3458,3 +3458,192 @@ existing call sites; no new codec field; no brain/memory touch.
    charters report as "already non-CHARTERED" and are skipped (idempotent).
 6. Edge: a charter whose cell is all water / too steep logs `[no-anchor]` and stays
    CHARTERED (pin stays at cell centre); the kingdom is NOT deleted.
+
+## C1-c — REALIZATION handoff: SURVEYED charter spawns a village at its anchor, advances SURVEYED → REALIZED
+
+**Date:** 2026-06-13. Built to `.claude/planning/15-C1-CHARTER-MODEL-DESIGN.md`
+(Slice C1-c) and `05-CHARTER-GEN-DESIGN.md` §2 (stage-2 realization on player
+approach, kingdom adopts the result). Closes the charter → survey → realization
+arc: when a player approaches a SURVEYED charter's anchor, the village is planned
+and spawned AT THAT ANCHOR via the canonical V2 spawn path, the produced `Village`
+is bound to the issuing kingdom, and the charter advances SURVEYED → REALIZED
+(`charter.realized(villageId)` + `kingdom.updateSettlementCharter(...)`).
+
+### Verified disposition (seams confirmed before coding)
+- **Existing realization pipeline.** `Events/VillageRealisationSystem` (priority 60,
+  1 Hz) iterates `data.getAllVillages()`, filters `VillagePlanHelper.isPlanned(v)`
+  (a `Village` with `realised=false` + `plannedOrigin`), realizes the closest within
+  `REALISE_RADIUS=256` of any player, ≤1 per tick, via `realisePlannedVillage` →
+  `VillageSpawner.spawnVillage(level, origin, type, name)`. Per-village
+  `FailureRecord` backoff (`MAX_RETRY_ATTEMPTS=5`,
+  `BACKOFF_TICKS={100,400,1200,3600,12000}`) + `tryReplan` over the kingdom claim.
+- **The canonical spawn path.** `VillageSpawner.spawnVillage(ServerLevel, BlockPos,
+  String villageType, String villageName) -> Optional<Village>` delegates to
+  `V2VillageSpawnerAdapter.spawn` (the only spawner path — CLAUDE.md). On success the
+  returned `Village` is realised=true. This is the SAME path the existing realization
+  uses; the charter realization reuses it, not a parallel spawner.
+- **The SURVEYED charter seam (present from C1-a/b).** `charter.surveyedAnchor()`
+  (`Optional<BlockPos>`), `stage()` (== `SURVEYED`), `villageType()`, `sizeBand()`,
+  `kingdomId()`, `name()`, `capital()`, plus the copy-with mutator
+  `charter.realized(UUID villageId)` and the kingdom mutator
+  `kingdom.updateSettlementCharter(updated)` (matches by id). All verified by signature.
+- **Village ↔ kingdom link.** `village.setKingdomId(UUID)` + `kingdom.addVillage(UUID)`
+  (existing bidirectional association) + `kingdom.setCapitalVillageId(UUID)` for the
+  capital. The map's `villageToKingdom` map is built from `kingdom.getVillageIds()`, so
+  `addVillage` is what makes the produced village render as a kingdom village marker.
+- **Map (no double-pin).** Both `KingdomMapDataBuilder` and `ContinentMapDataBuilder`
+  already `if (!charter.isUnrealized()) continue;` in their charter-pin loop. Once
+  `realized(id)` sets `realizedVillageId`, `isUnrealized()` is false → the charter pin
+  drops and the produced `Village` renders via the village-marker loop. No double-pin —
+  verified the guard is unchanged and the village loop reads `getAllVillages()`.
+
+### Handoff-path decision (and why)
+**Path (a): realize the village DIRECTLY from the charter at its anchor — no
+intermediate planned `Village`.** C1-a removed the capital's planned-`Village` wiring;
+the charter IS the record of intent. The existing `VillageRealisationSystem` machinery
+(`isPlanned`, `getPlannedOrigin`, `tryReplan`, the planned→realised UUID churn) only
+operates on `Village` objects flagged `realised=false` — of which charters produce
+none. Materializing a throwaway planned `Village` from each charter just to feed that
+loop would duplicate state and reintroduce the heavyweight-at-worldgen cost the charter
+model was built to remove. Instead I added a **sibling tick pass**,
+`CharterRealizationTickSystem`, that mirrors `CharterSurveyTickSystem`'s structure
+(nearest-charter-to-player, one realization per pass) but realizes SURVEYED charters by
+calling the SAME `VillageSpawner.spawnVillage` at `surveyedAnchor`. This **reuses the
+canonical spawn path** (not duplicated) and a per-charter backoff (mirroring the
+existing one), while keeping the charter out of the planned-`Village` vocabulary. The
+existing `VillageRealisationSystem` is left untouched — both paths now feed the same
+spawner, one keyed off planned `Village`s, one off SURVEYED charters.
+
+### What shipped
+- **`Events/TickSystems.java` — new `CharterRealizationTickSystem`** (package-private,
+  alongside `CharterSurveyTickSystem` / `VillageRealisationSystem`, matching the
+  codebase's "tick systems live in TickSystems.java" convention). `interval()=20`
+  (1 Hz, like `village_realisation`), `priority()=58` (after `charter_survey`=55 so a
+  charter surveyed this tick is eligible the same cadence, before
+  `village_realisation`=60). Each pass: collect every SURVEYED charter whose
+  `surveyedAnchor` is within `REALISE_RADIUS=256` of any player and not in failure
+  cooldown, pick the nearest, realize exactly ONE.
+- **Spawn at the anchor.** Calls `VillageSpawner.spawnVillage(level, anchor,
+  charter.villageType(), charter.name())` wrapped in the same
+  `PlacementFailureRecorder.beginAttempt()/record(PLANNER_EXCEPTION,…)/endAttempt(…)`
+  instrumentation `VillageRealisationSystem` uses. Adaptation is the spawn's own
+  business (real loaded-chunk terrain may differ slightly from the load-free survey —
+  expected per design).
+- **Link + stage advance (on success).** `spawned.setKingdomId(kingdom.getId())` +
+  `kingdom.addVillage(spawned.getId())`; for `charter.capital()` also
+  `kingdom.setCapitalVillageId(spawned.getId())`; then
+  `kingdom.updateSettlementCharter(charter.realized(spawned.getId()))` advances stage
+  to REALIZED. `data.setDirty()`. One INFO log line.
+- **Failure handling (decoupled).** On spawn failure the kingdom is NOT failed and the
+  charter is NOT lost: a per-charter `FailureRecord` (keyed by `charter.id()`, stable
+  across copy-with — unlike the planned-village UUID churn) backs off with the same
+  `BACKOFF_TICKS` schedule, leaving the charter SURVEYED for retry. After
+  `MAX_RETRY_ATTEMPTS` the charter is parked (`nextAttemptTick=Long.MAX_VALUE`) but left
+  intact (one WARN), so a future relocation slice can pick it up. One-shot DEBUG/WARN
+  per outcome, no hot-loop spam (1 Hz, one charter/pass).
+- **`Events/TickSubsystemRegistry.java`.** `register(new CharterRealizationTickSystem())`
+  added next to `VillageRealisationSystem` in `registerDefaults()`. (Execution order is
+  by `priority()`, not registration order — 55 → 58 → 60 holds regardless.)
+- **`Commands/KingdomDebugCommand.java` — `/litv settlement realize <kingdom>`.**
+  Force-realizes every SURVEYED charter of the named kingdom immediately (bypassing the
+  player-approach trigger) for testing without walking to each anchor. Mirrors the tick
+  system's spawn → link → stage-advance exactly; reports per-charter
+  `[realized]/[spawn-failed]` plus a summary. Snapshots charter ids before the loop
+  because `updateSettlementCharter` replaces entries mid-iteration.
+
+### Tie-in audit
+- **Triggers of `VillageRealisationSystem`.** Only `TickSubsystemRegistry` registers it;
+  it is untouched. The new system is a sibling registered alongside it — no behavior
+  change to the planned-`Village` path.
+- **Spawn-path signature.** `VillageSpawner.spawnVillage(ServerLevel, BlockPos, String,
+  String) -> Optional<Village>` — matched against the existing
+  `VillageRealisationSystem` call site verbatim. `V2VillageSpawnerAdapter.spawn` remains
+  the only spawner; no V1 resurrection.
+- **Map builders (no double-pin).** `KingdomMapDataBuilder` and
+  `ContinentMapDataBuilder` charter-pin loops both keep `if (!charter.isUnrealized())
+  continue;`. Confirmed `realized(id)` flips `isUnrealized()` to false and that
+  `addVillage` makes the produced village appear in `villageToKingdom` so the village
+  marker renders. Verified the realized-charter case produces exactly one marker.
+- **`Village.kingdomId` writers.** New write site `spawned.setKingdomId(kingdom.getId())`
+  joins the existing `VillagePlanHelper`/codec writers. Pattern matches the realization
+  path's `kingdomOpt.ifPresent(k -> k.addVillage(...))` (we set kingdomId explicitly too,
+  since charters carry the kingdom but the spawn doesn't stamp it).
+- **`CharterSurveyTickSystem` ordering.** Realization (58) runs after survey (55) and at
+  the same cadence band as the existing realisation (60). A charter must be SURVEYED
+  before this system considers it — confirmed the stage guard
+  (`stage() == SURVEYED`). Survey-before-realize ordering preserved exactly as the C1-b
+  entry placed survey before realisation.
+- **Exhaustive switches / enums.** No new enum value; `SettlementCharterStage.REALIZED`
+  already existed (C1-a). No `switch` over the stage enum exists to update (greps for
+  `switch` + stage found none — the readers are `if` guards in the map builders and tick
+  systems, all dispositioned above).
+- **Codec.** `SettlementCharter.CODEC` untouched — `realized(...)` fills the existing
+  `realizedVillageId` optional field only. No new field; 16-field cap unaffected.
+- **Brains / memory.** None touched. No `MemoryModuleType`.
+
+### Deviations from prompt
+- The prompt floated "generalize `VillageRealisationSystem` to plan at `surveyedAnchor`"
+  (extend) vs a sibling pass. I chose the **sibling pass** because that system is
+  hard-wired to the planned-`Village` data shape (`isPlanned`, `getPlannedOrigin`,
+  name-keyed `FailureRecord` migration, `tryReplan`), which charters do not have — folding
+  charters in would have meant either branching every step on "is this a charter or a
+  planned Village" or synthesizing throwaway planned Villages. The sibling reuses the
+  spawn path (the part that matters) without duplicating the approach loop into the
+  planned-Village machinery. Both feed the same spawner. This honors "don't duplicate the
+  approach/spawn logic" while respecting "fix the planner, not the realiser" — the charter
+  IS the planning record now.
+- A `/litv settlement realize <kingdom>` debug command was added (symmetric to the
+  existing `/litv settlement survey`) for in-world testing without walking. Not strictly
+  requested, but matches the C1-b precedent and the smoke-test need.
+
+### Out-of-scope but flagged (named plug-in points)
+- **C1-d (portfolio / dead-field wiring).** Kingdoms still issue only the capital charter
+  (`CapitalGenerator`); multi-charter issuance driven by
+  `kingdomRoles`/`biomeAffinity`/`maxPerKingdom`/`tradePriority` is C1-d. This system
+  already realizes ANY SURVEYED charter, so C1-d is a pure issuance wire-up — no
+  realization change needed.
+- **C4 / A9 (grander capitals).** The capital realizes as a normal village this slice.
+  Hook: in `CharterRealizationTickSystem`, branch on `charter.capital()` before the
+  spawn to pick a grander village type / size band (and/or a dedicated capital spawn
+  path). Marked in the class javadoc.
+- **Relocation / cell-reselection on persistent spawn failure (doc 15).** Minimal here:
+  retry-with-backoff, then park SURVEYED. Relocating the charter within/across cells (the
+  charter-side analogue of `VillageRealisationSystem.tryReplan`) is deferred. The parked
+  `FailureRecord` and the intact SURVEYED charter are the hook.
+- **Off-thread realization.** Synchronous, one-per-pass, server thread (spawn must run on
+  the server thread anyway). No off-thread work proposed.
+
+### Build verification
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review: brace
+balance confirmed on all 3 touched files (`TickSystems.java` 380/380, `TickSubsystemRegistry.java`
+44/44, `KingdomDebugCommand.java` 226/226); `VillageSpawner.spawnVillage(ServerLevel,
+BlockPos, String, String)` signature matched against the existing `VillageRealisationSystem`
+call site; `PlacementFailureRecorder.beginAttempt/record(Reason,String,BlockPos,String)/
+endAttempt(boolean,String,BlockPos)` matched; `charter.realized(UUID)`,
+`kingdom.updateSettlementCharter`, `setKingdomId`/`addVillage`/`setCapitalVillageId`,
+`findSettlementCharter`/`getKingdomByName` all matched against their declarations;
+tick-system registration symmetry confirmed (class defined + `new …()` in registry); no
+new codec field; no brain/memory touch; no V1 spawner resurrection.
+
+### Smoke test (user, in-world)
+1. Generate / spawn a kingdom so its capital `SettlementCharter` is issued CHARTERED.
+   Open the Kingdom map: the capital pin renders at the cell centre.
+2. Wait (or `/litv settlement survey <kingdom>`) until the charter is SURVEYED — the
+   pin snaps to the exact surveyed anchor (per C1-b).
+3. Walk toward the surveyed anchor. Once within ~256 blocks, within ~1s the
+   `CharterRealizationTickSystem` logs
+   `CharterRealizationTickSystem: realizing charter '…' (royal_capital) at x,y,z`
+   then `Realized charter '…' -> village <uuid> (kingdom <uuid>, capital) -> REALIZED`.
+   A real village spawns AT THE ANCHOR.
+4. Re-open the Kingdom (and Continent) map: the charter pin is GONE; in its place is a
+   normal village marker (no double-pin). The village is bound to the kingdom (it shows
+   under the kingdom's villages; `kingdom.capitalVillageId` now points at it).
+5. To force it immediately instead of walking: `/litv settlement realize <kingdom>` —
+   prints one `[realized] '…' -> village <uuid> (capital)` line per SURVEYED charter +
+   a summary. Already-REALIZED charters report "not-SURVEYED" and are skipped (idempotent).
+6. Edge — spawn failure: if the anchor's real terrain is unspawnable, the log shows
+   `spawn failed for charter '…' — left SURVEYED, retry in N ticks`; the kingdom is NOT
+   deleted, the charter stays SURVEYED, and a later approach retries (after
+   `MAX_RETRY_ATTEMPTS` it parks SURVEYED with a WARN, still not deleted).
+7. Performance: only ONE charter is realized per pass — no hitch even with several
+   surveyed settlements queued near a player.

@@ -141,6 +141,16 @@ public final class KingdomDebugCommand {
                                         .then(Commands.argument("name",
                                                         StringArgumentType.string())
                                                 .executes(ctx -> settlementSurvey(ctx,
+                                                        StringArgumentType.getString(ctx, "name")))))
+                                // Track C1-c — force-realize a kingdom's SURVEYED
+                                // settlement charters now (instead of waiting for the
+                                // CharterRealizationTickSystem player-approach trigger).
+                                // Spawns each at its surveyed anchor and advances to
+                                // REALIZED, binding the village to the kingdom.
+                                .then(Commands.literal("realize")
+                                        .then(Commands.argument("name",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> settlementRealize(ctx,
                                                         StringArgumentType.getString(ctx, "name"))))))
                         // Track D3.4b — top-level /litv treaty list/propose/break.
                         .then(Commands.literal("treaty")
@@ -1654,6 +1664,59 @@ public final class KingdomDebugCommand {
         send(ctx, "── Survey of " + name + ": " + surveyed + " surveyed, "
                 + noAnchor + " no-anchor, " + skipped + " already non-CHARTERED ──");
         return surveyed;
+    }
+
+    /**
+     * Track C1-c — force-realize a kingdom's SURVEYED settlement charters now.
+     * Mirrors {@code CharterRealizationTickSystem} but immediate and over every
+     * SURVEYED charter, for testing without walking to each anchor. Spawns via
+     * the canonical {@code VillageSpawner.spawnVillage}, binds the produced
+     * village to the kingdom, and advances the charter to REALIZED.
+     */
+    private static int settlementRealize(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal("No kingdom '" + name + "'.")); return 0;
+        }
+        int realized = 0, skipped = 0, failed = 0;
+        // Snapshot ids — updateSettlementCharter replaces entries mid-loop.
+        java.util.List<java.util.UUID> ids = new java.util.ArrayList<>();
+        for (var c : k.getSettlementCharters()) ids.add(c.id());
+        for (var id : ids) {
+            var charter = k.findSettlementCharter(id).orElse(null);
+            if (charter == null) continue;
+            if (charter.stage() != tterrag1112.life_in_the_village.Kingdom
+                    .Settlement.SettlementCharterStage.SURVEYED) {
+                skipped++;
+                continue;
+            }
+            var anchor = charter.surveyedAnchor().orElse(null);
+            if (anchor == null) { skipped++; continue; }
+            var spawnedOpt = tterrag1112.life_in_the_village.Village.VillageSpawner
+                    .spawnVillage(level, anchor, charter.villageType(), charter.name());
+            if (spawnedOpt.isEmpty()) {
+                failed++;
+                send(ctx, "  [spawn-failed] '" + charter.name() + "' at "
+                        + anchor.toShortString() + " — left SURVEYED");
+                continue;
+            }
+            var spawned = spawnedOpt.get();
+            spawned.setKingdomId(k.getId());
+            k.addVillage(spawned.getId());
+            if (charter.capital()) k.setCapitalVillageId(spawned.getId());
+            k.updateSettlementCharter(charter.realized(spawned.getId()));
+            realized++;
+            data.setDirty();
+            send(ctx, "  [realized] '" + charter.name() + "' -> village "
+                    + spawned.getId() + (charter.capital() ? " (capital)" : ""));
+        }
+        send(ctx, "── Realize of " + name + ": " + realized + " realized, "
+                + failed + " failed, " + skipped + " not-SURVEYED ──");
+        return realized;
     }
 
     private static void send(CommandContext<CommandSourceStack> ctx, String line) {
