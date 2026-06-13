@@ -2940,3 +2940,150 @@ confirmed present.
 6. **Political charters unaffected.** Grant a political charter
    (`/kingdom charter` flow) and confirm TOLL_RIGHTS/TITLE_GRANT/etc. still work —
    the political `charters` list is untouched.
+
+## Fix — Blank kingdom/continent maps (server viewport mismatch + atlas not pre-filled)
+
+Field-notes bug "Kingdom and continent maps not working": both map screens
+OPEN but render BLANK — no terrain, no kingdom territory, no village markers.
+The screen wiring, packets, and client caches are all correct; the data was
+either built for the wrong viewport or never sampled.
+
+### Traced pipeline (every hop)
+
+Kingdom map (player opens via the Kingdom book map page, `KingdomBookScreen`):
+
+1. `KingdomBookScreen.refreshData()` → builds the panel from client caches
+   (`mapPanel.refresh()`) and fires `RequestKingdomMapSyncPacket(kingdomId)`
+   (C2S). VERIFIED wired + registered.
+2. Server `RequestKingdomMapSyncPacket.handle` (server thread via
+   `enqueueWork`) → `KingdomMapScope.gather(level, kingdomId)` → replies
+   `KingdomMapSyncPacket` (S2C). VERIFIED registered both directions.
+3. `KingdomMapSyncPacket.handle` → `ClientAtlasCache.setCells(...)` + trade/
+   traveller caches, then `book.onMapDataSynced()` → `mapPanel.refresh()`.
+   VERIFIED the handler writes the SAME singleton the builder reads.
+4. `KingdomMapDataBuilder.build` (client) → viewport bounds from
+   `KingdomBoundsProvider.ClaimBasedProvider` = the kingdom's
+   **territorial claim** cells; terrain grid from `ClientAtlasCache` over
+   that viewport; territory tint from the claim; village markers from
+   `Building.ClientBuildingCache`; capital charter pin (C1-a) at the
+   unrealized charter cell-centre.
+5. Layers (`TerrainLayer`/`KingdomTerritoryLayer`/`VillageLayer`/…) draw via
+   `MapProjection`. Layers default visible; projection math is sound.
+
+### Failing hop + evidence
+
+Hop 2 (server `KingdomMapScope.gather`) emitted atlas cells for the WRONG
+viewport, and never sampled the atlas it read:
+
+- The **client** computes its rendered viewport from the **territorial
+  claim** (`KingdomBoundsProvider.ClaimBasedProvider.getOwnedCells`, reads
+  `Kingdom.getTerritorialClaim().claimedCellKeys()`).
+- The **server** computed its emitted-cell viewport from **village AABBs**
+  (`KingdomMapScope.influenceCellsFor` iterated `kingdom.getVillageIds()` +
+  `Village.getBounds`), NOT the claim.
+
+Consequences, both visible as "blank":
+  (a) For a kingdom with no sited capital Village — which post-C1-a is the
+      normal birth state (kingdom is born with a claim + an unrealized
+      capital charter, no Village) — `influenceCellsFor` returned EMPTY, so
+      `gather` returned `empty()`: ZERO atlas cells sent → fully blank
+      terrain. (The claim-based client viewport still drew a frame +
+      charter pin, but no terrain.)
+  (b) Even for a SITED kingdom, the server only sent cells in the small
+      village-influence box (village bounds + 3 cells), while the client
+      tried to render the entire CLAIM viewport — so most of the rendered
+      area had no `ClientAtlasCache` cell and fell through to ocean: terrain
+      looked blank/sparse.
+  Additionally, `gather` only read already-sampled cells
+  (`atlas.getCellByCoord`) and never called `ensureRegionFilled`; the
+  worldgen capital fill (radius 2500) does not necessarily cover the whole
+  claim, and cells never re-sample once present — so claim cells beyond the
+  worldgen fill were absent and rendered ocean.
+
+The continent map (`ContinentMapScope`) was already claim-based and already
+pre-filled the atlas (`ensureRegionFilled`), so its server/client viewports
+already lined up — its blankness shared the same upstream cause as the
+kingdom map (a chartered-but-unsited world having no map content) and is
+resolved once the kingdom side stops gating on villages; no continent code
+change was needed.
+
+### Fix (surgical, server-side only)
+
+`Gui/Map/Kingdom/KingdomMapScope.java`:
+1. `influenceCellsFor` now reads the **territorial claim** first
+   (`getTerritorialClaim().claimedCellKeys()`) — the identical source the
+   client `ClaimBasedProvider` uses, so emitted cells == rendered viewport.
+   The legacy village-AABB box is kept only as a fallback for older saves
+   with no claim. This also makes an unsited kingdom non-blank (claim is
+   non-empty by construction).
+2. `gather` now `ensureRegionFilled`s the atlas across the focus viewport
+   (bounded 1s synchronous budget, mirroring `ContinentMapScope.PREFILL_NANOS`)
+   BEFORE reading cells, so claim cells the worldgen pass never reached get
+   sampled on demand.
+
+No packet, codec, record, or client change — the same
+`KingdomMapSyncPacket` now carries the right cells and the existing client
+builder/layers render them.
+
+### Tie-in audit
+
+- `KingdomMapScope.gather` — single caller `RequestKingdomMapSyncPacket.handle`
+  (server thread, `enqueueWork`); signature unchanged; still returns the same
+  `Result` record. UNAFFECTED downstream.
+- `influenceCellsFor` — private; both call sites (focus viewport + foreign-
+  kingdom intersection) now get claim cells. Foreign-intersection still works
+  (claim cells intersect the viewport the same way). Heavier per open (full
+  claims vs small boxes) but bounded and only on map open.
+- `KingdomClaim` / `Kingdom.getTerritorialClaim()` — read-only use; the claim
+  is set at `CapitalGenerator.generate` and synced via `Kingdom.CODEC`
+  (`territorialClaim` optionalFieldOf), confirmed present client-side.
+- `WorldAtlas.ensureRegionFilled` — existing public method, already used by
+  `ContinentMapScope`; same signature `(level, blockX, blockZ, blockRadius,
+  nanos)`.
+- No enum/sealed-type/record-field changes; no exhaustive switches touched.
+
+### Deviations from prompt
+
+- None substantive. The prompt anticipated possible client-side causes
+  (identity mismatch, off-screen projection, never-sent request, swallowed
+  exception); the trace ruled each out and localized the failure to the
+  server builder's viewport source + missing pre-fill, which is where the
+  fix lands.
+
+### Out-of-scope but flagged
+
+- The kingdom-map `KingdomMapDataBuilder` "capital detection TODO" for
+  realized-Village capitals (C1-c/C2) is unchanged; the C1-a charter pin
+  already flags the unsited capital.
+- `ClientAtlasCache` is a single shared singleton across the kingdom and
+  continent maps — opening one overwrites the other's cells. Harmless today
+  (one screen at a time) but noted if simultaneous map embeds ever appear.
+- Foreign-kingdom viewport intersection now iterates full claims; if very
+  large claims become common, a precomputed claim bbox would cheapen it.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net). Static
+review in place: brace balance on `KingdomMapScope.java` (39/39); imports
+clean (`KingdomClaim` referenced via `{@link}`); `ensureRegionFilled`
+signature matched against `WorldAtlas`; `AtlasCell.CELL_SHIFT`/`CELL_HALF`
+constants confirmed; packet registration symmetry confirmed (request +
+sync registered, sent, handled for both kingdom and continent).
+
+### Smoke test (user, in-world)
+
+1. New world; let the seeder spawn kingdoms (or `/litv` spawn a kingdom).
+   Confirm a kingdom exists (`/kingdom list` or the Kingdom book).
+2. Open the Kingdom book → Map page. EXPECT: terrain (biome-coloured cells)
+   across the kingdom's claim, the claim tinted as kingdom territory with a
+   border outline — NOT a flat ocean rectangle.
+3. Confirm the capital charter pin (C1-a): a capital-styled marker at the
+   capital cell centre even before the capital Village has sited. Once the
+   capital realizes, its Village marker takes over (no double pin).
+4. For a SITED kingdom, confirm village markers appear at village centres
+   and clicking one routes to the village map.
+5. Open the continent map (keybind). EXPECT: the continent landmass renders
+   with terrain, the seed kingdom's claim tinted, other kingdoms' claims on
+   the same continent tinted distinctly, and charter/village pins present.
+   Press Refresh once if the first open shows "filling more" (large
+   continents fill across opens).

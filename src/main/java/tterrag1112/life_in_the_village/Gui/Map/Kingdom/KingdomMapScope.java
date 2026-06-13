@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Kingdom.Kingdom;
+import tterrag1112.life_in_the_village.Kingdom.KingdomClaim;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Village.Economy.Trade.*;
 import tterrag1112.life_in_the_village.Village.Travel.TravellerSnapshot;
@@ -35,6 +36,9 @@ public final class KingdomMapScope {
     /** How far outside a village centre to extend kingdom influence. */
     private static final int INFLUENCE_RADIUS_CELLS = 3;
 
+    /** Synchronous atlas pre-fill budget on map open. Matches ContinentMapScope. */
+    private static final long PREFILL_NANOS = 1_000_000_000L;
+
     public record Result(
             List<AtlasCell> cells,
             List<MapRoadSnapshot> roads,
@@ -64,8 +68,24 @@ public final class KingdomMapScope {
         int maxCX = bounds[2] + BUFFER_PADDING_CELLS;
         int maxCZ = bounds[3] + BUFFER_PADDING_CELLS;
 
-        // Atlas cells in viewport (only those already sampled — unsampled
-        // cells stay unknown on the client and render as ocean)
+        // Ensure the atlas is sampled across the focus viewport before
+        // reading. The worldgen capital fill only covers a fixed radius
+        // around the capital cell; a claim can reach beyond it, and a cell
+        // never re-samples once present, so without this the client renders
+        // ocean for any claim cell the worldgen pass didn't reach. Bounded
+        // synchronous budget — this is a manually-opened inspection screen.
+        int viewportBlockRadius =
+                ((Math.max(maxCX - minCX, maxCZ - minCZ) + 2) / 2 + 1)
+                        << AtlasCell.CELL_SHIFT;
+        int centreBlockX =
+                (((minCX + maxCX) / 2) << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+        int centreBlockZ =
+                (((minCZ + maxCZ) / 2) << AtlasCell.CELL_SHIFT) + AtlasCell.CELL_HALF;
+        atlas.ensureRegionFilled(level, centreBlockX, centreBlockZ,
+                viewportBlockRadius, PREFILL_NANOS);
+
+        // Atlas cells in viewport (now sampled above; any still-absent cell
+        // means the fill budget ran out and the client renders it as ocean)
         List<AtlasCell> cells = new ArrayList<>();
         for (int cx = minCX; cx <= maxCX; cx++) {
             for (int cz = minCZ; cz <= maxCZ; cz++) {
@@ -206,12 +226,25 @@ public final class KingdomMapScope {
     }
 
     /**
-     * Server-side version of the fallback bounds provider. Uses the
-     * server-authoritative village AABBs via {@link Village#getBounds}.
-     * When real kingdom border storage lands, swap this out (same single
-     * call site as the client-side provider).
+     * Cells the kingdom "occupies" for viewport purposes. Reads the
+     * authoritative territorial {@link KingdomClaim} first — this is the
+     * SAME source the client-side {@code KingdomBoundsProvider.ClaimBasedProvider}
+     * uses to compute the rendered viewport, so the cells the server emits
+     * line up with the cells the client will draw. Crucially, the claim is
+     * non-empty by construction even before a capital sites (post-C1-a a
+     * kingdom is born with a claim + an unrealized capital charter but no
+     * Village yet), so the map is no longer blank for an unsited kingdom.
+     *
+     * <p>Falls back to the legacy village-AABB influence box only when a
+     * kingdom has no claim (older saves predating territorial claims).
      */
     private static Set<Long> influenceCellsFor(Kingdom kingdom, VillageSavedData data) {
+        var claim = kingdom.getTerritorialClaim().orElse(null);
+        if (claim != null && !claim.claimedCellKeys().isEmpty()) {
+            return new HashSet<>(claim.claimedCellKeys());
+        }
+
+        // Legacy fallback — village AABBs (older saves without a claim).
         Set<Long> owned = new HashSet<>();
         for (UUID vid : kingdom.getVillageIds()) {
             Village v = data.getVillageById(vid).orElse(null);
