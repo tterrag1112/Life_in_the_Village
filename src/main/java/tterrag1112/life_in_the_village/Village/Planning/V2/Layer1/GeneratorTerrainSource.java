@@ -2,8 +2,10 @@ package tterrag1112.life_in_the_village.Village.Planning.V2.Layer1;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
@@ -15,6 +17,7 @@ import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
 
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -49,7 +52,9 @@ import java.util.concurrent.ConcurrentHashMap;
  *       block is then {@link Blocks#WATER}, matching
  *       {@code SyntheticTerrainSource}'s water-column convention.</li>
  *   <li><b>Forest</b> inferred from biome tags
- *       ({@code #minecraft:is_forest / is_taiga / is_jungle}). There are
+ *       ({@code #minecraft:is_forest / is_taiga / is_jungle}), with a
+ *       ResourceKey fallback when tags are unbound (headless survey
+ *       construction; see {@link #matchesTagsOrKeys}). There are
  *       no real trees at survey time, so a short synthetic log+leaf
  *       column is stamped above the surface — enough log/leaf blocks for
  *       {@link V2FeatureMap}'s 30-block column scan to cross its
@@ -222,16 +227,87 @@ public final class GeneratorTerrainSource implements TerrainSource {
     }
 
     private static boolean isForest(Holder<Biome> biome) {
-        return biome.is(BiomeTags.IS_FOREST)
-                || biome.is(BiomeTags.IS_TAIGA)
-                || biome.is(BiomeTags.IS_JUNGLE);
+        return matchesTagsOrKeys(biome, FOREST_TAGS, FOREST_KEYS);
     }
 
     private static boolean isSandy(Holder<Biome> biome) {
+        // DESERT is a single biome key (Biomes.DESERT) — is(ResourceKey) never
+        // touches tags, so it is always safe and stays a direct check.
         return biome.is(Biomes.DESERT)
-                || biome.is(BiomeTags.IS_BEACH)
-                || biome.is(BiomeTags.IS_BADLANDS);
+                || matchesTagsOrKeys(biome, SANDY_TAGS, SANDY_KEYS);
     }
+
+    // =========================================================================
+    // Tag-then-ResourceKey biome matching (unbound-tag robustness)
+    // =========================================================================
+
+    /**
+     * Robust biome membership test. Tries the biome <b>tags</b> first — the
+     * worldgen-mod-proof path (a modded forest biome carries
+     * {@code #minecraft:is_forest}; C1 design §3). On a live {@link ServerLevel}
+     * tags are bound and this is all that runs.
+     *
+     * <p>But the headless {@code VanillaRegistries.createLookup()} registries
+     * (used by the harness and any pre-server survey-construction path) run
+     * <b>code bootstraps only</b> — they never load the datapack biome-tag
+     * JSON, so {@link Holder.Reference} tags are unbound and
+     * {@code biome.is(TagKey)} throws {@code IllegalStateException("Tags not
+     * bound")}. {@link Holder} exposes no non-throwing tags-present probe
+     * (`isBound()` checks key+value, not tags; `tags()` itself throws when
+     * unbound), so the unbound state is detected by catching that exception —
+     * once per unique column thanks to the column cache — and falling back to
+     * {@link ResourceKey} matching. ResourceKeys are always present on a bound
+     * holder, so the fallback can never throw and exactly reproduces the
+     * vanilla tag membership (the {@code *_KEYS} sets below mirror the tag
+     * JSON). Vanilla biomes classify identically on both paths; only modded
+     * biomes (absent from the fallback set) are coarser in the unbound case,
+     * which only ever occurs pre-server where no modded generator is installed.
+     */
+    private static boolean matchesTagsOrKeys(Holder<Biome> biome,
+                                             TagKey<Biome>[] tags,
+                                             Set<ResourceKey<Biome>> keys) {
+        try {
+            for (TagKey<Biome> tag : tags) {
+                if (biome.is(tag)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (IllegalStateException unboundTags) {
+            // "Tags not bound" — headless registries. Fall back to keys.
+            return biome.unwrapKey().filter(keys::contains).isPresent();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static final TagKey<Biome>[] FOREST_TAGS = (TagKey<Biome>[]) new TagKey[] {
+            BiomeTags.IS_FOREST, BiomeTags.IS_TAIGA, BiomeTags.IS_JUNGLE };
+
+    @SuppressWarnings("unchecked")
+    private static final TagKey<Biome>[] SANDY_TAGS = (TagKey<Biome>[]) new TagKey[] {
+            BiomeTags.IS_BEACH, BiomeTags.IS_BADLANDS };
+
+    /** Mirrors {@code #minecraft:is_forest + is_taiga + is_jungle} membership
+     *  (vanilla 1.21.11 tag JSON) for the unbound-tag fallback. */
+    private static final Set<ResourceKey<Biome>> FOREST_KEYS = Set.of(
+            // is_forest
+            Biomes.FOREST, Biomes.FLOWER_FOREST, Biomes.BIRCH_FOREST,
+            Biomes.OLD_GROWTH_BIRCH_FOREST, Biomes.DARK_FOREST,
+            Biomes.PALE_GARDEN, Biomes.GROVE,
+            // is_taiga
+            Biomes.TAIGA, Biomes.SNOWY_TAIGA, Biomes.OLD_GROWTH_PINE_TAIGA,
+            Biomes.OLD_GROWTH_SPRUCE_TAIGA,
+            // is_jungle
+            Biomes.JUNGLE, Biomes.SPARSE_JUNGLE, Biomes.BAMBOO_JUNGLE);
+
+    /** Mirrors {@code #minecraft:is_beach + is_badlands} membership (vanilla
+     *  1.21.11 tag JSON) for the unbound-tag fallback. DESERT is matched
+     *  separately by {@link #isSandy} via {@code is(Biomes.DESERT)}. */
+    private static final Set<ResourceKey<Biome>> SANDY_KEYS = Set.of(
+            // is_beach
+            Biomes.BEACH, Biomes.SNOWY_BEACH,
+            // is_badlands
+            Biomes.BADLANDS, Biomes.ERODED_BADLANDS, Biomes.WOODED_BADLANDS);
 
     // =========================================================================
     // Synthesized column model

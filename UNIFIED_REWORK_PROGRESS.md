@@ -12406,3 +12406,169 @@ review substituted: every NeoForge symbol grep-verified against decompiled
 `BlockPos.asLong`, `MultiNoiseBiomeSource.createFromPreset(Holder)`,
 `BlockState.isAir`. Brace balance confirmed (71/71 source, 23/23 test). Construction
 mirrors the verified `GeneratorSamplingBenchmarkTest` (C0 bundle) exactly.
+
+
+---
+
+### 2026-06-12 — Track C1 slice 1 fix-up: GeneratorTerrainSource unbound-tag crash (tag-then-ResourceKey fallback)
+
+Surgical fix to the C1 slice above. The `GeneratorTerrainSourceTest`
+(`scansToNonDegenerateClassification`) threw at runtime — the source was never
+exercised green in the headless harness.
+
+#### Root cause
+
+```
+java.lang.IllegalStateException: Tags not bound
+  at net.minecraft.core.Holder$Reference.boundTags(Holder.java:167)
+  at net.minecraft.core.Holder$Reference.is(Holder.java:175)
+  at GeneratorTerrainSource.isForest(GeneratorTerrainSource.java:225)
+  at GeneratorTerrainSource.surfaceFor(:215) -> synthesize(:205) -> column(:178)
+  -> height(:151) -> V2FeatureMap.scan(:144)
+```
+
+`isForest` did `biomeHolder.is(BiomeTags.IS_FOREST/IS_TAIGA/IS_JUNGLE)`. Biome
+tag membership lives in datapack JSON (`data/minecraft/tags/worldgen/biome/
+is_forest.json` etc.). `VanillaRegistries.createLookup()` — used by the harness
+AND by any pre-server survey-construction path — runs **code bootstraps only**;
+it never loads that JSON, so `Holder.Reference.tags` stays `null` and
+`boundTags()` throws `IllegalStateException("Tags not bound")` (verified in
+decompiled `Holder.java:165-176`). On a live `ServerLevel` tags ARE bound, so
+the production path worked; only the tag-unbound (headless) environment crashed.
+
+`isSandy` had the **same latent bug** on its `BiomeTags.IS_BEACH` /
+`BiomeTags.IS_BADLANDS` arms — it just never got reached because `isForest`
+threw first. (`is(Biomes.DESERT)` is a `ResourceKey` check and never touches
+tags, so it was always safe.) Both tag-call sites are now hardened.
+
+#### Robustness fix — tag path when bound, ResourceKey fallback when not
+
+New `matchesTagsOrKeys(Holder, TagKey[], Set<ResourceKey>)` helper. It tries the
+**tag path first** (the worldgen-mod-proof path the C1 design wants — a modded
+forest biome carries `#minecraft:is_forest`); on the `IllegalStateException`
+("Tags not bound") it falls back to **ResourceKey matching** against a key set
+that mirrors the vanilla tag JSON exactly. `Holder.unwrapKey()` is always present
+on a bound holder, so the fallback can never throw.
+
+- Detection mechanism: `catch (IllegalStateException)`. Verified against
+  decompiled `Holder.java` that there is **no non-throwing tags-present API** —
+  `isBound()` only checks key+value (line 209), and `tags()` itself routes
+  through the throwing `boundTags()` (line 242). Catching is the only option.
+  Cost is negligible: `surfaceFor` runs once per *unique column* (the
+  `ConcurrentHashMap` memo), not per block, so this is not a hot-loop try/catch.
+- Fallback key sets cross-checked against the 1.21.11 resource jar tag JSON:
+  - `FOREST_KEYS` (14): is_forest {FOREST, FLOWER_FOREST, BIRCH_FOREST,
+    OLD_GROWTH_BIRCH_FOREST, DARK_FOREST, PALE_GARDEN, GROVE} + is_taiga {TAIGA,
+    SNOWY_TAIGA, OLD_GROWTH_PINE_TAIGA, OLD_GROWTH_SPRUCE_TAIGA} + is_jungle
+    {JUNGLE, SPARSE_JUNGLE, BAMBOO_JUNGLE}.
+  - `SANDY_KEYS` (5): is_beach {BEACH, SNOWY_BEACH} + is_badlands {BADLANDS,
+    ERODED_BADLANDS, WOODED_BADLANDS}. (DESERT stays a direct `is(ResourceKey)`.)
+  For vanilla biomes the two paths classify identically; only *modded* biomes
+  absent from the fallback set are coarser when tags are unbound — and that only
+  ever happens pre-server, where no modded generator is installed.
+
+**Hardened tag-call sites (all `.is(TagKey)` in the file):** `isForest`
+(IS_FOREST, IS_TAIGA, IS_JUNGLE) and `isSandy` (IS_BEACH, IS_BADLANDS). Audit of
+`synthesize`/`surfaceFor`/`isForest`/`isSandy` confirms these are the *only*
+tag-dependent branches; water/depth uses heightmap comparison (no tags), and
+`is(Biomes.DESERT)` is a ResourceKey check. No other `.is(` tag calls exist.
+
+#### Test decision — tags NOT bound headlessly; test covers the fallback
+
+Investigated binding biome tags in the `VanillaRegistries.createLookup()`
+context. `MappedRegistry.bindAllTagsToEmpty()` exists but binds tags to *empty*
+(forest would never trip -> defeats the section-4 guard). Binding the *real*
+tags would require standing up a `TagLoader`/`TagManager` to parse the vanilla
+biome-tag JSON and `bindTag` each into the registry — disproportionate for a
+surgical fix-up. **Decision: the test exercises the ResourceKey fallback path;
+the tag path is exercised in-game (live `ServerLevel`) only.**
+
+Made this explicit in the test so nobody mistakes it for tag-path coverage:
+- Class javadoc states the unbound-tags reality and the fallback-only coverage.
+- A new in-test assertion proves it: `assertThrows(IllegalStateException.class,
+  () -> probe.is(BiomeTags.IS_FOREST))` with a "Tags not bound" message check.
+  If a future MC/NeoForge bump starts binding tags here, this assertion fails
+  loudly and tells the maintainer the test would then cover the primary tag path.
+- The section-4-trap guard (FOREST>0, WATER+SHORE>0, OPEN>0, STONE<total) is
+  unchanged and is meaningful either way, since the fallback key set mirrors the
+  tag JSON.
+
+#### Files touched
+
+- `Village/Planning/V2/Layer1/GeneratorTerrainSource.java` — `matchesTagsOrKeys`
+  helper + `FOREST_TAGS/SANDY_TAGS` arrays + `FOREST_KEYS/SANDY_KEYS` sets;
+  `isForest`/`isSandy` routed through it; imports (`ResourceKey`, `TagKey`,
+  `Set`); class + bullet javadoc updated. No change to the two-constructor
+  shape, caching, height/biome/water logic.
+- `Village/Planning/V2/Harness/GeneratorTerrainSourceTest.java` — class javadoc
+  (tag-binding decision) + the unbound-tags `assertThrows` probe. Assertions and
+  scan logic otherwise unchanged.
+
+#### Tie-in audit
+
+- **Upstream feeders.** Inputs are `ChunkGenerator`/`RandomState`/biome holders
+  from either a `ServerLevel` (tags bound) or `VanillaRegistries` (tags unbound).
+  Both now handled; no feeder changes.
+- **Downstream callers.** `GeneratorTerrainSource` is consumed only via the
+  `TerrainSource` interface (by `V2FeatureMap.scan`) and constructed by the C1
+  test + the (out-of-scope) survey scheduler. The public method signatures
+  (`height`/`blockAt`/`maxY`/`biomeAt`) are unchanged — the fix is entirely
+  inside private synthesis. No caller updates needed.
+- **Sibling systems.** Sibling samplers `AtlasSampler`/`DeepTerrainInspector`
+  run only on a live `ServerLevel` (tags bound) and are untouched.
+- **Exhaustive switches.** No enum/sealed type added or changed (`Surface`
+  enum and its `switch` in `Column.blockAt` are untouched).
+
+#### Simplification sweep
+
+No new classes; one private helper + four private static fields added inside the
+existing source. No orphans created. The fallback sets are the minimum needed to
+reproduce the tag JSON for the consumer (the classifier) — no speculative keys.
+
+#### Deviations from prompt
+
+- The prompt asked to evaluate a cleaner non-throwing tag-binding probe "if it
+  exists." It does **not** exist on `Holder` in 1.21.11 (verified in decompiled
+  `Holder.java`), so the `catch (IllegalStateException)` approach is used as the
+  prompt's accepted fallback.
+- Headless tag-binding was judged not reasonably achievable within a surgical
+  fix-up (requires a `TagLoader`/`TagManager` JSON-parse apparatus), so the test
+  covers the fallback rather than the tag path — the prompt's explicitly
+  sanctioned alternative, made explicit in-test.
+
+#### Out-of-scope but flagged
+
+- **Tag-path headless coverage.** If a later slice wants the primary tag path
+  validated headlessly, stand up a `TagLoader` over the vanilla biome-tag JSON
+  (present in `neoforge-...-client-extra...minecraft-resources.jar`) and
+  `bindTag` into the registry in `@BeforeAll`; then drop the `assertThrows`
+  probe and the scan would exercise tags directly. Not needed for this slice.
+- **Fallback key-set drift.** `FOREST_KEYS`/`SANDY_KEYS` mirror the 1.21.11 tag
+  JSON. A vanilla biome-tag change in a future MC bump would need a one-line
+  set update; the in-game tag path is unaffected (it reads the live tags).
+
+#### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net; no JDK present
+for a focused `javac`). Static review substituted: every NeoForge symbol
+grep-verified against decompiled `neoforge-21.11.38-beta` sources —
+`Holder.Reference.boundTags`/`is(TagKey)`/`is(ResourceKey)`/`unwrapKey()`
+(`Holder.java:156-201`), no non-throwing tags-present API (`isBound()` line 209,
+`tags()`->`boundTags()` line 242), `MappedRegistry.bindTag`/`bindAllTagsToEmpty`
+(line 362/379), `BiomeSource.getNoiseBiome(int,int,int,Climate.Sampler)`
+(line 165), `BiomeTags.IS_FOREST/IS_TAIGA/IS_JUNGLE/IS_BEACH/IS_BADLANDS`,
+`Biomes.*` keys (cross-checked vs `is_forest/is_taiga/is_jungle/is_beach/
+is_badlands.json` in the resources jar), `ResourceKey`/`TagKey` import paths,
+`Set.of`. `@SafeVarargs` deliberately NOT used (the helper takes an array
+parameter, not varargs). Brace balance confirmed (92/92 source, 34/34 test).
+
+#### Smoke / validation test (user-runnable)
+
+1. Fetch + checkout the branch:
+   `git fetch .claude/bundles/c1-terrain-source-tagfix.bundle cowork/c1-terrain-source-tagfix:cowork/c1-terrain-source-tagfix && git checkout cowork/c1-terrain-source-tagfix`
+2. `./gradlew test --tests "*GeneratorTerrainSourceTest"`
+3. Expect: **PASS** (previously threw `IllegalStateException: Tags not bound`),
+   with the printed `WATER=... SHORE=... FOREST=... STONE=... OPEN=...` table
+   where FOREST > 0, WATER+SHORE > 0, OPEN > 0, STONE < total. The new
+   `assertThrows` probe confirms tags are unbound (fallback path) in this
+   headless context.

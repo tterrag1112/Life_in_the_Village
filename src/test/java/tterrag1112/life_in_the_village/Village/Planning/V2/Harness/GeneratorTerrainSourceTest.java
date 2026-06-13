@@ -50,6 +50,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the classifier produces <b>non-degenerate</b> output: some FOREST, some
  * WATER, plenty of OPEN, and crucially that the map is NOT all-STONE.
  *
+ * <p><b>Tag binding (the unbound-tag decision):</b> {@code
+ * VanillaRegistries.createLookup()} runs <b>code bootstraps only</b> — it does
+ * NOT load the datapack biome-tag JSON (e.g. {@code #minecraft:is_forest}), so
+ * biome {@code Holder.Reference}s here have <b>unbound tags</b>:
+ * {@code biome.is(TagKey)} would throw {@code IllegalStateException("Tags not
+ * bound")}. Binding real tags headlessly would mean standing up a
+ * {@code TagLoader}/{@code TagManager} to parse the vanilla tag JSON and
+ * {@code bindTag} each into the registry — out of proportion for this slice.
+ * So <b>this test exercises {@link GeneratorTerrainSource}'s ResourceKey
+ * fallback path, not the primary tag path.</b> The tag path
+ * ({@code matchesTagsOrKeys} when tags ARE bound) is exercised <b>in-game on a
+ * live {@code ServerLevel}</b> only. The fallback's biome-key sets mirror the
+ * vanilla tag JSON exactly, so for vanilla biomes the two paths classify
+ * identically — the §4-trap guard below is therefore meaningful either way.
+ *
  * <p>Bootstrap mirrors {@link HeadlessHarnessTest} / {@code net.minecraft.data.Main}.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -117,6 +132,26 @@ public class GeneratorTerrainSourceTest {
         System.out.printf(Locale.ROOT,
                 "  WATER=%d SHORE=%d FOREST=%d STONE=%d OPEN=%d%n",
                 water, shore, forest, stone, open);
+
+        // ── Confirm the unbound-tags reality this test runs under ────────────
+        // VanillaRegistries.createLookup() does NOT bind biome tags, so the
+        // SOURCE is exercising its ResourceKey fallback (not the tag path).
+        // Prove it explicitly so nobody mistakes this for tag-path coverage:
+        // biome.is(TagKey) must throw "Tags not bound" in this context.
+        Holder<net.minecraft.world.level.biome.Biome> probe =
+                biomes.getNoiseBiome(0, 0, 0, randomState.sampler());
+        assertNotNull(probe, "biome probe was null");
+        IllegalStateException unbound = org.junit.jupiter.api.Assertions
+                .assertThrows(IllegalStateException.class,
+                        () -> probe.is(net.minecraft.tags.BiomeTags.IS_FOREST),
+                        "Expected tags to be UNBOUND in VanillaRegistries.createLookup() "
+                                + "(this test covers the ResourceKey fallback, not the tag "
+                                + "path); if this no longer throws, tags are now bound and "
+                                + "the test would then exercise the primary tag path.");
+        assertTrue(unbound.getMessage() != null
+                        && unbound.getMessage().contains("Tags not bound"),
+                "unexpected IllegalStateException (wanted \"Tags not bound\"): "
+                        + unbound.getMessage());
 
         // ── Non-degenerate assertions (the §4-trap guard) ────────────────────
         assertTrue(total > 0, "scan produced no cells");
