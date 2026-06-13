@@ -101,7 +101,7 @@ public final class ContinentMapDataBuilder {
         for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
             for (var charter : k.getSettlementCharters()) {
                 if (!charter.isUnrealized()) continue;
-                BlockPos pos = charter.targetCellCentre();
+                BlockPos pos = charter.pinPos(); // C1-b: exact surveyedAnchor once SURVEYED, else cell centre
                 long key = AtlasCell.packKey(
                         pos.getX() >> AtlasCell.CELL_SHIFT,
                         pos.getZ() >> AtlasCell.CELL_SHIFT);

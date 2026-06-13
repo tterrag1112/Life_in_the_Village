@@ -121,7 +121,7 @@ public final class KingdomMapDataBuilder {
         for (Kingdom k : Kingdom.ClientKingdomCache.getKingdoms()) {
             for (var charter : k.getSettlementCharters()) {
                 if (!charter.isUnrealized()) continue; // realized -> Village marker
-                BlockPos pos = charter.targetCellCentre();
+                BlockPos pos = charter.pinPos(); // C1-b: exact surveyedAnchor once SURVEYED, else cell centre
                 int cx = pos.getX() >> AtlasCell.CELL_SHIFT;
                 int cz = pos.getZ() >> AtlasCell.CELL_SHIFT;
                 if (cx < minCX || cx > maxCX || cz < minCZ || cz > maxCZ) continue;

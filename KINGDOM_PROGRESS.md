@@ -3313,3 +3313,148 @@ matched by screen-key).
 6. If the continent map shows "Partial: … refresh to fill more" on first
    open over a large unexplored area, press Refresh once — more terrain
    fills in (1s budget per pass).
+
+## C1-b — SURVEY stage: scan the cell via GeneratorTerrainSource, advance CHARTERED → SURVEYED
+
+**Date:** 2026-06-12. Built to `.claude/planning/15-C1-CHARTER-MODEL-DESIGN.md`
+(Slice C1-b) and `08-C0-SAMPLING-SPIKE.md` §8.2/§3. A chartered settlement now
+scans its target atlas cell through the load-free `GeneratorTerrainSource`,
+picks an exact block anchor + a footprint-fit score, and advances
+CHARTERED → SURVEYED, snapping its map pin from the cell centre to the
+surveyed point.
+
+### Verified disposition (seams confirmed before coding)
+1. **SettlementCharter staged API.** `surveyed(BlockPos anchor, float score)`
+   copy-with mutator exists and sets `stage = SURVEYED`,
+   `surveyedAnchor = Optional.of(anchor)`, `footprintScore = Optional.of(score)`,
+   leaving `realizedVillageId` untouched. `kingdom.updateSettlementCharter(
+   SettlementCharter)` matches-by-id and replaces in place (returns boolean).
+   Both `surveyedAnchor` and `footprintScore` are existing `optionalFieldOf`
+   codec fields — **no new codec field added** (13-field charter unchanged;
+   cap is 16). Confirmed via `git diff` on the codec.
+2. **GeneratorTerrainSource construction.** Production `GeneratorTerrainSource(
+   ServerLevel)` ctor present; a survey builds one per charter, scans, discards
+   (per-instance column cache, nothing static). WORLD_SURFACE_WG vs
+   OCEAN_FLOOR_WG water detection + biome-tag/ResourceKey forest synthesis
+   (the tag-fix) are in place. `TerrainSource.height(x,z)` returns an exact
+   block Y; `blockAt(x,y,z).getFluidState()` gives the water probe.
+3. **Sampling-path choice — DeepTerrainInspector formula driven off
+   GeneratorTerrainSource (NOT AtlasSampler-direct).** Reasoning: doc 15 names
+   C1-b as "scan via GeneratorTerrainSource", and the V2 seam is the
+   `TerrainSource` interface. Routing the anchor-pick through
+   `GeneratorTerrainSource` (a) keeps the survey on the canonical V2 path the
+   way C1-c realization will (`V2FeatureMap.scan(TerrainSource,...)`), and
+   (b) yields an exact block Y for the anchor (the pre-survey cell-centre pin
+   used nominal Y=64). I reuse DeepTerrainInspector's *suitability formula*
+   (`flat - 2·water - 0.3·steep`, threshold 0.05) and *step-4 grid shape*, but
+   read through the source — NOT a full `V2FeatureMap.scan` (that is the 1–2s
+   region tier, explicitly out of scope; this is the tens-of-ms anchor-pick
+   tier, ~17×17 samples over one 64-block cell).
+4. **Cell → world coords.** `AtlasCell.unpackX/unpackZ(key)` → cellX/cellZ;
+   block bounds `cellX << CELL_SHIFT (=6)` .. `+ CELL_SIZE (64) - 1`; centre
+   `+ CELL_HALF (32)`. The survey scans that 64×64 box.
+5. **Tick-system precedent.** `GraphEdgeRealizationSystem` (interval 40,
+   priority 150, candidate list → sort → exactly one item per pass, player-
+   relevance distance). The new system copies this shape.
+
+### What shipped
+- **`CharterSurvey`** (`Kingdom/Settlement/CharterSurvey.java`) — the anchor-pick.
+  `survey(ServerLevel, SettlementCharter)` builds a `GeneratorTerrainSource`,
+  scans the target cell on a step-4 grid, and returns a `Result(Optional<BlockPos>
+  anchor, float footprintScore, flatRatio, waterRatio, steepRatio)`. The anchor
+  is the flattest non-water grid point nearest the cell centre; water columns are
+  never anchored. `viable()` is false (anchor empty) when there is no land point
+  or suitability ≤ 0.05. A `survey(TerrainSource, seaLevel, charter)` overload is
+  the test/headless seam (synthetic source). `footprintRadius(typeData)` delegates
+  to `DeepTerrainInspector.footprintRadius` (recorded for C1-c, not used to widen
+  the scan this slice).
+- **`CharterSurveyTickSystem`** (added to `Events/TickSystems.java`, registered in
+  `TickSubsystemRegistry`) — GraphEdgeRealizationSystem-shaped. interval 40,
+  priority 55 (before `village_realisation`'s 60). Each pass: collect every
+  CHARTERED charter across `ctx.villageData().getAllKingdoms()` within 4096
+  blocks of any player, sort nearest-first, survey **exactly one**, and on a
+  viable result advance via `charter.surveyed(anchor, score)` +
+  `kingdom.updateSettlementCharter(...)` + `villageData.setDirty()`. Overworld-
+  only; no-op when no players online. Non-viable → leave CHARTERED + one-shot
+  println for retry next pass (kingdom NOT failed).
+- **Map-pin upgrade.** Added `SettlementCharter.pinPos()` — returns
+  `surveyedAnchor` when present, else `targetCellCentre()` (derived; no new codec
+  field). Both `KingdomMapDataBuilder` and `ContinentMapDataBuilder` now read
+  `charter.pinPos()` instead of `targetCellCentre()`, so a SURVEYED pin renders at
+  the exact anchor. The continent builder's `pos.getX() >> CELL_SHIFT` cell-key
+  membership test still resolves to the same cell (anchor is within the cell), so
+  viewport filtering is unaffected.
+- **Debug command.** `/litv settlement survey <kingdom>` (in `KingdomDebugCommand`)
+  — force-surveys every CHARTERED charter of the named kingdom now (bypassing the
+  scheduler), reporting per-charter `[surveyed]/[no-anchor]` plus a summary. Mirrors
+  the system's logic exactly. (Distinct from the pre-existing `/litv charter …`,
+  which operates on the political D3.4b `Charter`, not `SettlementCharter`.)
+
+### Tie-in audit
+- **Tick-system registry.** `CharterSurveyTickSystem` registered in
+  `registerDefaults()` next to `VillageRealisationSystem`; runs on the server
+  thread inside the dispatcher's per-system try/catch. Interval/priority chosen so
+  survey precedes realisation within a tick. Registration symmetry verified
+  (class defined + `new …()` in registry).
+- **Readers of charter stage/anchor.** The two map builders are the only readers
+  of `targetCellCentre()` for charters — both switched to `pinPos()`. `isUnrealized()`
+  guard in both loops is unchanged: SURVEYED is still unrealized, so a surveyed
+  charter keeps its pin (now at the anchor); REALIZED still falls through to the
+  Village marker. No other reader of `surveyedAnchor`/`stage` exists yet (C1-c will
+  add the realization reader).
+- **Codec.** SettlementCharter codec untouched — filling existing optional fields
+  only. `git diff` confirms no `fieldOf`/`optionalFieldOf` change.
+- **Brains / memory.** None touched. No `MemoryModuleType`, no `getBrain`. (A survey
+  system has no business in brain memory — confirmed it doesn't.)
+- **Enums.** No new enum; `SettlementCharterStage.SURVEYED` already existed.
+
+### Deviations from prompt
+- The prompt's `GraphEdgeRealizationSystem` reference resolves to a class **inside
+  `TickSystems.java`** (not its own file); the new system follows suit and lives in
+  `TickSystems.java` alongside its siblings, rather than a standalone file.
+- The debug command is `/litv settlement survey <kingdom>` rather than reusing the
+  `/litv charter …` subtree, because that subtree is already bound to the unrelated
+  political `Charter` (D3.4b). A new `settlement` literal avoids the collision.
+- A below-sea-level surface is also treated as water in the anchor-pick (belt-and-
+  braces alongside the fluid-state probe), mirroring DeepTerrainInspector treating
+  OCEAN/RIVER as water. Minor hardening, not in the prompt.
+
+### Out-of-scope but flagged (named plug-in points)
+- **C1-c (SURVEYED → REALIZED).** Seam: `charter.realized(villageId)` +
+  generalize `VillageRealisationSystem` to plan a Village at `surveyedAnchor`
+  (instead of `getPlannedOrigin()`), then call `realized(...)`/
+  `updateSettlementCharter(...)`. The realization reader of `surveyedAnchor` lands
+  there. `CharterSurvey.footprintRadius` is the hook to widen the scan past the
+  single cell when the footprint spills.
+- **C1-d (portfolio fields).** Dead portfolio fields untouched — not wired.
+- **Off-thread survey scheduler (C0 §8.3).** Flagged in `CharterSurveyTickSystem`
+  javadoc: run `CharterSurvey.survey` on a worker (source is concurrent-read safe),
+  commit `updateSettlementCharter` back on the server thread. NOT built this slice.
+- **Relocation / cell-reselection on no-viable-anchor (doc 15).** Minimal handling
+  shipped (leave CHARTERED + retry). Relocating within/across cells is deferred.
+
+### Build verification
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review:
+brace balance confirmed on all 7 touched files; tick-system registration symmetry
+confirmed; `GeneratorTerrainSource(ServerLevel)` / `TerrainSource.height` /
+`blockAt().getFluidState().isEmpty()` / `ServerLevel.getSeaLevel()` /
+`AtlasCell.unpack*`/`CELL_SHIFT`/`CELL_SIZE`/`CELL_HALF` all matched against
+existing call sites; no new codec field; no brain/memory touch.
+
+### Smoke test (user, in-world)
+1. Spawn / generate a kingdom so its capital `SettlementCharter` is issued
+   CHARTERED. Open the Kingdom map: the capital pin renders at the **cell
+   centre** (nominal Y).
+2. Stand within ~4096 blocks of that cell with the world running. Within ~2s
+   (interval 40t) the `CharterSurveyTickSystem` runs and logs
+   `[CharterSurveyTickSystem] Surveyed charter '…' -> SURVEYED anchor x,y,z`.
+3. Re-open the Kingdom (and Continent) map: the pin has **snapped to the exact
+   surveyed anchor** (offset from the cell centre, real ground Y).
+4. To force it immediately instead of waiting: `/litv settlement survey <kingdom>`
+   — prints one `[surveyed] '…' -> x,y,z score=… flat=…` line per CHARTERED
+   charter and a summary. Re-open the map to see the pin move.
+5. Performance: only ONE charter is surveyed per pass — no hitch even with several
+   chartered settlements. Run `/litv settlement survey` repeatedly; already-SURVEYED
+   charters report as "already non-CHARTERED" and are skipped (idempotent).
+6. Edge: a charter whose cell is all water / too steep logs `[no-anchor]` and stays
+   CHARTERED (pin stays at cell centre); the kingdom is NOT deleted.

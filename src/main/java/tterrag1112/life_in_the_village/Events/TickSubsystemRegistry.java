@@ -115,6 +115,10 @@ public final class TickSubsystemRegistry {
         register(new WanderingTraderTickSystem());
 
         register(new AtlasFillSystem());
+        // Track C1-b -- advances CHARTERED settlement charters to SURVEYED
+        // (anchor-pick over the target cell). Priority 55 so a charter is
+        // surveyed before village_realisation (priority 60) considers it.
+        register(new CharterSurveyTickSystem());
         register(new VillageRealisationSystem());
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());

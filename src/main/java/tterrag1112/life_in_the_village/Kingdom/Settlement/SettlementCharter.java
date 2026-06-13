@@ -138,6 +138,16 @@ public record SettlementCharter(
         return realizedVillageId.isEmpty();
     }
 
+    /**
+     * Map-pin position for this charter: the exact {@link #surveyedAnchor}
+     * once SURVEYED (C1-b), the cell centre otherwise. Map data builders
+     * read this so a SURVEYED pin snaps from the cell centre to the precise
+     * surveyed point. No new codec field — derived from existing state.
+     */
+    public BlockPos pinPos() {
+        return surveyedAnchor.orElseGet(this::targetCellCentre);
+    }
+
     /** Block-space centre of the committed atlas cell — the pre-survey pin. */
     public BlockPos targetCellCentre() {
         int cx = AtlasCell.unpackX(targetCellKey);

@@ -131,6 +131,17 @@ public final class KingdomDebugCommand {
                                                         .executes(ctx -> charterRevoke(ctx,
                                                                 StringArgumentType.getString(ctx, "kingdom"),
                                                                 StringArgumentType.getString(ctx, "charterUuid")))))))
+                        // Track C1-b — force-survey a kingdom's CHARTERED
+                        // settlement charters now (instead of waiting for the
+                        // CharterSurveyTickSystem scheduler). Advances each to
+                        // SURVEYED with an exact anchor; the map pin then snaps
+                        // from the cell centre to the surveyed point.
+                        .then(Commands.literal("settlement")
+                                .then(Commands.literal("survey")
+                                        .then(Commands.argument("name",
+                                                        StringArgumentType.string())
+                                                .executes(ctx -> settlementSurvey(ctx,
+                                                        StringArgumentType.getString(ctx, "name"))))))
                         // Track D3.4b — top-level /litv treaty list/propose/break.
                         .then(Commands.literal("treaty")
                                 .then(Commands.literal("list")
@@ -1596,6 +1607,53 @@ public final class KingdomDebugCommand {
         counts.forEach((dispatcher, count) ->
                 send(ctx, "  " + dispatcher + " : " + count));
         return counts.size();
+    }
+
+    /**
+     * Track C1-b — force-survey every CHARTERED settlement charter of the
+     * named kingdom, bypassing the {@code CharterSurveyTickSystem}
+     * scheduler. Mirrors the system's per-charter logic (anchor-pick via
+     * {@code CharterSurvey}, advance via {@code surveyed(...)} +
+     * {@code updateSettlementCharter(...)}). Reports each outcome.
+     */
+    private static int settlementSurvey(CommandContext<CommandSourceStack> ctx, String name) {
+        if (!(ctx.getSource().getLevel() instanceof ServerLevel level)) {
+            ctx.getSource().sendFailure(Component.literal("Server only.")); return 0;
+        }
+        VillageSavedData data = VillageSavedData.get(level);
+        Kingdom k = data.getKingdomByName(name).orElse(null);
+        if (k == null) {
+            ctx.getSource().sendFailure(Component.literal("No kingdom '" + name + "'.")); return 0;
+        }
+        int surveyed = 0, skipped = 0, noAnchor = 0;
+        for (var charter : k.getSettlementCharters()) {
+            if (charter.stage() != tterrag1112.life_in_the_village.Kingdom
+                    .Settlement.SettlementCharterStage.CHARTERED) {
+                skipped++;
+                continue;
+            }
+            var result = tterrag1112.life_in_the_village.Kingdom.Settlement.CharterSurvey
+                    .survey(level, charter);
+            if (!result.viable()) {
+                noAnchor++;
+                send(ctx, "  [no-anchor] '" + charter.name() + "' suit="
+                        + result.footprintScore() + " water=" + result.waterRatio()
+                        + " steep=" + result.steepRatio() + " — left CHARTERED");
+                continue;
+            }
+            var pos = result.anchor().get();
+            var updated = charter.surveyed(pos, result.footprintScore());
+            if (k.updateSettlementCharter(updated)) {
+                surveyed++;
+                data.setDirty();
+                send(ctx, "  [surveyed] '" + charter.name() + "' -> " + pos.toShortString()
+                        + " score=" + result.footprintScore()
+                        + " flat=" + result.flatRatio());
+            }
+        }
+        send(ctx, "── Survey of " + name + ": " + surveyed + " surveyed, "
+                + noAnchor + " no-anchor, " + skipped + " already non-CHARTERED ──");
+        return surveyed;
     }
 
     private static void send(CommandContext<CommandSourceStack> ctx, String line) {
