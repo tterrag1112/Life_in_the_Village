@@ -62,6 +62,16 @@ public record RequestKingdomMapSyncPacket(UUID kingdomId, int playerX, int playe
             if (!(ctx.player() instanceof ServerPlayer sp)) return;
             if (!(sp.level() instanceof ServerLevel level)) return;
 
+            // Map builders read settlement charters + village→kingdom from the
+            // client-side ClientKingdomCache, which is only populated on join /
+            // book-open and goes stale as charters are created at claim time.
+            // Refresh it with the live kingdom state (codec carries
+            // settlementCharters) BEFORE the map reply. Both payloads enqueue on
+            // the client main thread in send order, so the cache is fresh when
+            // the map builder runs. Without this, charter pins never appear.
+            VillageSavedData data = VillageSavedData.get(level);
+            PacketDistributor.sendToPlayer(sp, new SyncKingdomPacket(data.getAllKingdoms()));
+
             KingdomMapScope.Result result =
                     KingdomMapScope.gather(level, pkt.playerX(), pkt.playerZ());
 
