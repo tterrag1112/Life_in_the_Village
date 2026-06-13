@@ -5,7 +5,6 @@ import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
-import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
@@ -224,13 +223,23 @@ public final class StallAllocator {
         return false;
     }
 
+    /** First container block entity in the stall box. Matches ANY
+     *  {@link net.minecraft.world.Container} (barrel, chest, trapped
+     *  chest, ...), not just {@code ChestBlockEntity}: the current stall
+     *  templates place BARRELS, so the chest-only pre-fix returned null
+     *  and left {@code chestPos = ZERO}, which made every market read
+     *  "active stall chests=0". Recording a real container pos here lets
+     *  the chest-pos-keyed siblings (payment routing, work post, channel
+     *  display) resolve a live container too. MarketInventory no longer
+     *  depends on this being set — it footprint-scans — but a correct
+     *  chestPos keeps the rest of the stall plumbing honest. */
     private static BlockPos findChestInBox(ServerLevel level, BoundingBox box) {
         for (int x = box.minX(); x <= box.maxX(); x++) {
             for (int y = box.minY(); y <= box.maxY(); y++) {
                 for (int z = box.minZ(); z <= box.maxZ(); z++) {
                     BlockPos pos = new BlockPos(x, y, z);
                     BlockEntity be = level.getBlockEntity(pos);
-                    if (be instanceof ChestBlockEntity) return pos;
+                    if (be instanceof net.minecraft.world.Container) return pos;
                 }
             }
         }

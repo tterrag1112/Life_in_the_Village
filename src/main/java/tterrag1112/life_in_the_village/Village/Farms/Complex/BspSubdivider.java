@@ -138,7 +138,7 @@ public final class BspSubdivider {
         recurse(new int[]{bb.minX(), bb.minZ(), bb.maxX(), bb.maxZ()},
                 /*axisToggle*/ chooseFirstAxis(bb),
                 stopArea, minSideBlocks, in.stripAspect(),
-                rng, leaves);
+                /*depth*/ 0, rng, leaves);
 
         if (in.verbose()) {
             org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).info(
@@ -219,13 +219,43 @@ public final class BspSubdivider {
         return (bb.maxX() - bb.minX()) >= (bb.maxZ() - bb.minZ()) ? 0 : 1;
     }
 
+    /** Hard recursion-depth backstop. A binary subdivision of any
+     *  sane farm bbox terminates in well under this many levels
+     *  (each viable cut at least halves an axis, and bbox sides are
+     *  bounded by the spec radius). If we ever hit this ceiling the
+     *  region shape has defeated the cut logic; rather than overflow
+     *  the stack and crash the server during worldgen we log ONE WARN
+     *  with the offending rect and emit it as a single plot. */
+    private static final int MAX_DEPTH = 32;
+    private static volatile boolean LOGGED_DEPTH_CAP = false;
+
     private static void recurse(int[] rect, int axis, double stopArea,
                                  int minSideBlocks, double stripAspect,
-                                 Random rng, List<int[]> out) {
+                                 int depth, Random rng, List<int[]> out) {
         int w = rect[2] - rect[0];
         int h = rect[3] - rect[1];
         double area = (double) w * h;
         if (area <= stopArea) { out.add(rect); return; }
+        // Backstop: depth ceiling. Worldgen must never crash the server
+        // on a weird (concave / wedge / sliver) claim — emit the rect
+        // whole and warn once. The strict-shrink guards below should
+        // make this unreachable in practice; it exists so a future
+        // regression degrades to "one big plot" instead of a
+        // StackOverflowError (crash-2026-06-12: stripAspect recompute
+        // defeated the axis-fallback and recursed forever on a rect
+        // narrow on its steered axis but wide on the other).
+        if (depth >= MAX_DEPTH) {
+            if (!LOGGED_DEPTH_CAP) {
+                org.slf4j.LoggerFactory.getLogger(BspSubdivider.class).warn(
+                        "BspSubdivider.recurse: hit MAX_DEPTH={} on rect "
+                                + "[{}, {}]..[{}, {}] ({}x{}); emitting as a single "
+                                + "plot. Region shape likely concave/sliver; not a crash.",
+                        MAX_DEPTH, rect[0], rect[1], rect[2], rect[3], w, h);
+                LOGGED_DEPTH_CAP = true;
+            }
+            out.add(rect);
+            return;
+        }
         // Agriculture-ring stage 1 — strip-aspect steering. With a hint,
         // the cut axis is chosen per node instead of alternating: a rect
         // stringier than the hint cuts its LONG axis (rein the string in);
@@ -239,20 +269,21 @@ public final class BspSubdivider {
             boolean xIsLong = w >= h;
             axis = cutLong == xIsLong ? 0 : 1;
         }
-        if (axis == 0 && w < 2 * minSideBlocks) {
-            // X cut would produce too-narrow children; try Z.
-            if (h >= 2 * minSideBlocks) {
-                recurse(rect, 1, stopArea, minSideBlocks, stripAspect, rng, out);
-                return;
-            }
-            out.add(rect);
-            return;
-        }
-        if (axis == 1 && h < 2 * minSideBlocks) {
-            if (w >= 2 * minSideBlocks) {
-                recurse(rect, 0, stopArea, minSideBlocks, stripAspect, rng, out);
-                return;
-            }
+        // Cut eligibility per axis: a child must clear minSideBlocks, so
+        // the parent must be ≥ 2× along the axis we cut. Decide the cut
+        // axis HERE (not by recursing with a different axis arg): the
+        // pre-fix fallback re-called recurse(rect, otherAxis, …), but the
+        // strip-aspect block above re-derives `axis` from the unchanged
+        // rect dims on re-entry and clobbers that argument, so the rect
+        // never shrank → infinite self-recursion (the StackOverflow). We
+        // resolve the eligible axis inline and only recurse on genuinely
+        // smaller children; if neither axis can be cut, emit the rect.
+        boolean canCutX = w >= 2 * minSideBlocks;
+        boolean canCutZ = h >= 2 * minSideBlocks;
+        if (axis == 0 && !canCutX) axis = 1;       // steered X infeasible → Z
+        else if (axis == 1 && !canCutZ) axis = 0;  // steered Z infeasible → X
+        if ((axis == 0 && !canCutX) || (axis == 1 && !canCutZ)) {
+            // Neither axis admits a viable cut — terminal leaf.
             out.add(rect);
             return;
         }
@@ -273,8 +304,18 @@ public final class BspSubdivider {
                                      cut - gapHalf,    rect[3]};
             int[] right = new int[]{cut + gapHalf,    rect[1],
                                      rect[2],          rect[3]};
-            recurse(left,  1, stopArea, minSideBlocks, stripAspect, rng, out);
-            recurse(right, 1, stopArea, minSideBlocks, stripAspect, rng, out);
+            // Strict-shrink invariant: every child must be dimensionally
+            // smaller than the parent on the cut axis. The cut lands in
+            // the middle 50% and the gap only narrows children further,
+            // so each child's width < parent width by construction. If a
+            // degenerate cut ever failed to shrink a child, emit the
+            // parent rather than recurse on an equal-or-larger box.
+            if (childShrank(left, rect, 0) && childShrank(right, rect, 0)) {
+                recurse(left,  1, stopArea, minSideBlocks, stripAspect, depth + 1, rng, out);
+                recurse(right, 1, stopArea, minSideBlocks, stripAspect, depth + 1, rng, out);
+            } else {
+                out.add(rect);
+            }
         } else {
             int lo = rect[1] + h / 4;
             int hi = rect[3] - h / 4;
@@ -283,9 +324,24 @@ public final class BspSubdivider {
                                      rect[2],          cut - gapHalf};
             int[] bottom = new int[]{rect[0],          cut + gapHalf,
                                      rect[2],          rect[3]};
-            recurse(top,    0, stopArea, minSideBlocks, stripAspect, rng, out);
-            recurse(bottom, 0, stopArea, minSideBlocks, stripAspect, rng, out);
+            if (childShrank(top, rect, 1) && childShrank(bottom, rect, 1)) {
+                recurse(top,    0, stopArea, minSideBlocks, stripAspect, depth + 1, rng, out);
+                recurse(bottom, 0, stopArea, minSideBlocks, stripAspect, depth + 1, rng, out);
+            } else {
+                out.add(rect);
+            }
         }
+    }
+
+    /** True iff {@code child} is strictly smaller than {@code parent}
+     *  along {@code axis} (0 = X width, 1 = Z height) AND non-degenerate
+     *  (positive extent) on that axis. The strict-shrink guard that
+     *  guarantees recursion terminates: a child that didn't shrink (or
+     *  inverted to zero/negative size) is never recursed into. */
+    private static boolean childShrank(int[] child, int[] parent, int axis) {
+        int childExtent  = axis == 0 ? child[2]  - child[0]  : child[3]  - child[1];
+        int parentExtent = axis == 0 ? parent[2] - parent[0] : parent[3] - parent[1];
+        return childExtent > 0 && childExtent < parentExtent;
     }
 
     /** E.bug.4 — width of the footpath inserted between adjacent

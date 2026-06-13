@@ -46,20 +46,75 @@ public final class MarketInventory {
 
     // -- Stall-chest enumeration ----------------------------------------------
 
-    /** Live containers backing every active stall of {@code market} that has a
-     *  real (non-ZERO) chest position. Order is the stall list order. */
+    /** Half-extent (blocks) of the cube scanned around each stall's
+     *  origin/chest position for container block entities. Covers the
+     *  {@code stall_1} footprint ({@link MarketStall#FOOTPRINT_SIZE} = 5)
+     *  with slack for rotation: the placed structure can extend in
+     *  negative directions from the placement origin depending on its
+     *  rotation, so a symmetric cube around the anchor is the robust
+     *  geometry given only {@code stallOrigin} is persisted (the placer's
+     *  exact placed box is not stored on the stall record). */
+    private static final int STALL_SCAN_RADIUS = MarketStall.FOOTPRINT_SIZE;
+
+    /** Live containers backing every active stall of {@code market}.
+     *
+     *  <p>Discovery is by <b>footprint scan</b>, not a single chest pos:
+     *  the stall structures place multiple BARRELS (3 each in the current
+     *  templates), and barrels are {@code BarrelBlockEntity}, not
+     *  {@code ChestBlockEntity}. The pre-fix code read only
+     *  {@code stall.getChestPos()} and only matched chests, so a
+     *  barrel-stocked market reported {@code active stall chests=0} and
+     *  every merchant deposit clean-failed. We now scan the stall
+     *  footprint (around the chest pos when set, else the stall origin)
+     *  and collect <b>every</b> {@link Container} block entity — chests,
+     *  barrels, trapped chests, any container — deduped by position so a
+     *  double chest's two halves (one logical container) aren't counted
+     *  twice. Order is stall list order, then scan order within a stall.
+     */
     public static List<Container> stallChests(ServerLevel level, Building market) {
         List<Container> out = new ArrayList<>();
         if (market == null) return out;
         VillageSavedData data = VillageSavedData.get(level);
         for (MarketStall s : data.getStallsForMarket(market.getId())) {
             if (!s.isActive()) continue;
-            BlockPos cp = s.getChestPos();
-            if (cp == null || cp.equals(BlockPos.ZERO)) continue;
-            BlockEntity be = level.getBlockEntity(cp);
-            if (be instanceof Container c) out.add(c);
+            collectStallContainers(level, s, out);
         }
         return out;
+    }
+
+    /** Live containers backing a single {@code stall} (footprint scan).
+     *  Same discovery as {@link #stallChests} for one stall — used by
+     *  {@code MerchantStartingStock} so initial stock lands in the same
+     *  containers the read paths later see. */
+    public static List<Container> stallContainers(ServerLevel level, MarketStall stall) {
+        List<Container> out = new ArrayList<>();
+        if (stall == null) return out;
+        collectStallContainers(level, stall, out);
+        return out;
+    }
+
+    /** Appends every {@link Container} block entity in {@code stall}'s
+     *  footprint to {@code out}. Anchor for the scan is the recorded chest
+     *  pos when present, else the stall origin. Containers are deduped by
+     *  the {@link Container} identity so adjacent halves of a double chest
+     *  (which share one {@code Container}) are added once. */
+    private static void collectStallContainers(ServerLevel level, MarketStall stall,
+                                               List<Container> out) {
+        BlockPos anchor = stall.getChestPos();
+        if (anchor == null || anchor.equals(BlockPos.ZERO)) {
+            anchor = stall.getStallOrigin();
+        }
+        if (anchor == null || anchor.equals(BlockPos.ZERO)) return;
+        java.util.Set<Container> seen = new java.util.HashSet<>(out);
+        int r = STALL_SCAN_RADIUS;
+        for (int dx = -r; dx <= r; dx++) {
+            for (int dy = -r; dy <= r; dy++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    BlockEntity be = level.getBlockEntity(anchor.offset(dx, dy, dz));
+                    if (be instanceof Container c && seen.add(c)) out.add(c);
+                }
+            }
+        }
     }
 
     // -- Read -----------------------------------------------------------------

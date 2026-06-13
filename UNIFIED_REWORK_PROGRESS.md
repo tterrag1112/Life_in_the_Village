@@ -11383,3 +11383,189 @@ checked (`[TickSpike]` = 3/3; `[FoodAccess]` uses `sb.toString()`,
    - If `affordableFoodInBuildingBounds=true` but the NPC still failed,
      the cause is elsewhere (pathing / wealth gate / price) and the
      same line shows wealth vs the gate.
+
+---
+
+## 2026-06-12 — Farm BSP StackOverflow crash + market barrel-stall discovery (cowork/farm-bsp-stall-fix)
+
+Two scoped bug fixes shipped together: a server-crashing infinite
+recursion in farm-field subdivision, and a market inventory discovery
+gap that left every barrel-stocked stall invisible to the merchant
+economy.
+
+### Item 1 — StackOverflowError in `BspSubdivider.recurse` (CRITICAL)
+
+**Verified mechanism (not depth, an algorithmic non-terminator).** The
+Agriculture-ring round-2 change set `STRIP_ASPECT = 2.75` (always > 0),
+so the strip-aspect cut-axis steering block at the top of `recurse`
+(`if (stripAspect > 0) { … axis = … }`) is live on every node. That
+block **re-derives `axis` from the rect's current dimensions on every
+entry**, discarding the `axis` argument passed by the caller. The
+pre-fix axis-fallback path handled a too-narrow steered axis by
+re-calling `recurse(rect, otherAxis, …)` with the SAME rect and a
+different `axis` argument — but on re-entry the strip-aspect block
+immediately recomputed the same axis from the unchanged dims and routed
+straight back into the same fallback. The rect never shrank →
+`recurse` called itself forever on an identical rect → StackOverflow at
+the fallback call site (crash report: hundreds of identical
+`BspSubdivider.recurse(BspSubdivider.java:245)` frames). The 600→1800
+blockBudget / 3→6 radiusMultiplier change is what created intermediate
+rects that were still bigger than `stopArea`, too narrow to cut on the
+strip-steered axis (`< 2·minSideBlocks`), yet wide enough on the other
+axis — i.e. exactly the shape the fallback was meant to handle and
+instead looped on.
+
+**Exact change (algorithm-level, plus a backstop):**
+- The fallback no longer recurses with a flipped `axis` argument.
+  Cut-axis eligibility (`canCutX`/`canCutZ` = side ≥ 2·minSideBlocks) is
+  resolved **inline**: if the steered axis can't be cut, switch to the
+  other axis in-place; if neither can, emit the rect as a single
+  terminal leaf. No self-call on an unshrunk rect is possible.
+- Added a `childShrank(child, parent, axis)` strict-shrink guard: each
+  child must be strictly smaller than its parent on the cut axis (and
+  have positive extent) or the parent is emitted whole instead of
+  recursing. Guarantees every recursive call receives a strictly
+  smaller region.
+- Added `MAX_DEPTH = 32` hard backstop: at the ceiling, log ONE WARN
+  with the rect dims and emit it as a single plot. Worldgen degrades to
+  "one big plot" instead of crashing the server on a pathological shape.
+- `recurse` now threads a `depth` parameter (root call passes 0,
+  children `depth + 1`).
+
+**Concave/holed-claim audit.** `recurse` operates purely on the bbox;
+it never intersects claim cells, so an all-excluded child (entirely
+outside the concave region polygon, e.g. the wedge sector around the
+nucleus gate) is not a non-termination source — it simply samples zero
+member cells in the post-recursion clip loop (`Polygon.contains`) and
+is dropped as `< minPlotSize`. No other non-terminating path found.
+
+**Files:** `Village/Farms/Complex/BspSubdivider.java`.
+
+### Item 2 — MarketInventory / starting stock blind to barrel stalls
+
+**Verified mechanism.** Two compounding flaws, both keyed on a single
+chest position:
+1. The stall templates resolved by `StallVariant` (the variant-system
+   `stall_blue/green/red/purple/level_1.nbt`) place **barrels**, not
+   chests. (`stall_1.nbt`, the legacy `directNbt` fallback, has chests —
+   but the live markets use the barrel variants.)
+2. `StallAllocator.findChestInBox` matched only `ChestBlockEntity`, so
+   for a barrel stall it returned null and `chestPos` stayed
+   `BlockPos.ZERO`.
+3. `MarketInventory.stallChests` skipped any stall whose `chestPos` was
+   ZERO, and even when set would read only the ONE container at that pos
+   (stalls hold 3 barrels). Result: `active stall chests=0`, every
+   merchant `store` clean-failed, and `MerchantStartingStock` (which
+   also bailed on `chestPos == ZERO`) never seeded stock.
+
+**Exact change:**
+- `MarketInventory.stallChests` now discovers containers by a
+  **footprint scan**: for each active stall it scans a cube of radius
+  `MarketStall.FOOTPRINT_SIZE` (5) around the chest pos (or the stall
+  origin when chest pos is unset) and collects **every**
+  `net.minecraft.world.Container` block entity (barrels, chests,
+  trapped chests — anything), deduped by `Container` identity so a
+  double chest's two halves aren't double-counted. All three read paths
+  (`countItem`, `takeUpTo`, `store`) route through `stallChests`, so the
+  fix lands on every path at once.
+- Added public `MarketInventory.stallContainers(level, stall)` (single-
+  stall footprint scan) and routed `MerchantStartingStock
+  .initialStockIfNeeded` through it: it now stocks only when every
+  container is empty and spreads stock across the stall's containers, so
+  initial stock lands in the exact containers the read paths later see.
+- Broadened `StallAllocator.findChestInBox` to match any `Container`,
+  not just `ChestBlockEntity`, so `chestPos` resolves to a live barrel
+  for the chest-pos-keyed sibling systems too (payment routing, work
+  post, channel display). Removed the now-unused `ChestBlockEntity`
+  import.
+
+**Tie-in audit.**
+- All `MarketInventory` read/take/store call sites (`TradeHandler`,
+  `EatMealBehavior`, `StallGoods`, `AbstractProductionBehavior`,
+  `MonasteryEconomy`) route through `stallChests`/`stallContainers` and
+  are corrected transitively — no signature changes.
+- `MarketChannel` (line 256) filters stalls on
+  `!getChestPos().equals(ZERO)`; the broadened `findChestInBox` now sets
+  a real chest pos for barrel stalls, so the channel sees them.
+- Direct `getChestPos()` consumers for non-inventory roles
+  (`TradeHandler` payment routing, `MarketWorkPost`, `NpcEconomy`,
+  `StallManagementActionPacket`, `EventStallManager`,
+  `StallGoods` single-stall path) now also get a real chest pos from the
+  allocator fix; their behavior is unchanged where chestPos was already
+  set, improved where it was ZERO. No signature changes.
+
+**Files:** `Village/Markets/Complex/MarketInventory.java`,
+`Village/Economy/Market/MerchantStartingStock.java`,
+`Village/Markets/Complex/StallAllocator.java`.
+
+### Deviations from prompt
+
+- Item 1: the prompt floated "a child region equal to its parent" as
+  the failure. The actual non-terminator was subtler — the
+  axis-fallback re-call passed a flipped axis that the strip-aspect
+  block then clobbered, so the SAME rect recursed with the SAME
+  effective axis. The strict-shrink guard the prompt asked for is in
+  place regardless, and the real fix is the inline axis resolution that
+  removes the clobbered-argument re-call entirely.
+- Item 2: the prompt asked to scan "the stall's region/bounds." The
+  placed `seat.box()` is not persisted on `MarketStall` (only
+  `stallOrigin` + `chestPos` + `FOOTPRINT_SIZE` are), so the scan is a
+  symmetric `FOOTPRINT_SIZE`-radius cube around the anchor rather than
+  the exact placed box. Flagged as a geometry gap below.
+
+### Out-of-scope but flagged
+
+- **Geometry gap:** `MarketStall` does not persist the stall's placed
+  bounding box, so container discovery uses a generous cube around the
+  anchor. If two stalls are ever placed within `FOOTPRINT_SIZE` of each
+  other, one stall's scan could pick up a neighbour's container. Current
+  `StallAllocator` enforces a `GAP` between boxes so this is not a
+  live problem, but persisting `seat.box()` on the stall record would
+  make discovery exact. Not changed (would touch the codec + every
+  `MarketStall` constructor / call site).
+- **`deriveFootpathCells` cost (noted, not fixed):** a prior audit
+  flagged it as superlinear; at 1800-cell claims it iterates the claim
+  region per plot. Not touched per prompt — note only. If farm worldgen
+  shows a frame spike at AGRICULTURAL CITY spawn after this fix, that is
+  the next thing to profile.
+- `MAX_DEPTH`/`childShrank` are deliberately conservative backstops; if
+  a real claim ever trips the WARN, the region shape (not the cut logic)
+  should be investigated.
+
+### Build verification
+
+Build verification deferred (sandbox blocks maven.neoforged.net).
+Static review in its place: brace/paren balance confirmed on all four
+touched files (BspSubdivider 83/83 braces, 244/244 parens;
+MarketInventory 57/57, 120/120; MerchantStartingStock 16/16, 131/131;
+StallAllocator 41/41, 142/142). Symbols grep-verified:
+`recurse`/`childShrank` signatures consistent (all calls thread
+`depth`); `MarketStall.FOOTPRINT_SIZE` + `getStallOrigin()` exist;
+`net.minecraft.world.Container` imported in MarketInventory; unused
+`ChestBlockEntity` import removed from StallAllocator; `STRIP_ASPECT =
+2.75` confirmed as the always-on trigger.
+
+### Smoke-test plan (Garrett)
+
+1. **New AGRICULTURAL CITY world — no crash.** Create a fresh world and
+   `/litv spawn` (or natural-spawn) a CITY with AGRICULTURAL focus so
+   FARMHOUSE complexes generate with the 1800-cell / 6× claims. The
+   server must NOT crash with a `StackOverflowError` in
+   `BspSubdivider.recurse`. Walk the farm fields: each farmhouse complex
+   should be subdivided into multiple field STRIPS (not one giant plot,
+   and not a missing-fields hole). At INFO, a one-off
+   `BspSubdivider.recurse: hit MAX_DEPTH=32 …` WARN should NOT appear
+   for normal claims (if it does, capture the rect dims).
+2. **Barrel-stall market sees stock.** In a CITY with a market
+   (`CITYTEST_market_1`-style), confirm the 4 stalls each have their 3
+   barrels. The server log should NO LONGER print
+   `[MarketInventory] no stall chest could absorb … (active stall
+   chests=0)`.
+3. **Sell 64 bread → lands in a stall barrel.** As a player, sell a
+   stack of 64 bread at a barrel stall. The bread must end up inside one
+   of that stall's barrels (open a barrel and verify), not be dropped or
+   refused.
+4. **MarketChannel sees the stock.** Query/observe the market channel
+   (merchant stock readout / NPC food-buy): the bread just sold, plus
+   the `MerchantStartingStock` seed, should be visible as market stock.
+   An NPC should be able to buy food from the barrel stall.

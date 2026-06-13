@@ -160,18 +160,26 @@ public final class MerchantStartingStock {
                                             MarketStall stall,
                                             Village village,
                                             VillageSavedData data) {
-        if (stall.getChestPos().equals(net.minecraft.core.BlockPos.ZERO)) return;
+        // Discover the stall's containers the SAME way MarketInventory's
+        // read/take/store paths do — a footprint scan that finds every
+        // container (the stall templates place BARRELS, not chests), not
+        // a single getChestPos() lookup. The pre-fix code keyed off
+        // getChestPos() (which stays BlockPos.ZERO for barrel stalls,
+        // since the placer only detected ChestBlockEntity), so initial
+        // stock was never placed and MarketChannel saw an empty market.
+        java.util.List<net.minecraft.world.Container> containers =
+                tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory
+                        .stallContainers(level, stall);
+        if (containers.isEmpty()) return;
 
-        net.minecraft.world.level.block.entity.BlockEntity be =
-                level.getBlockEntity(stall.getChestPos());
-        if (!(be instanceof net.minecraft.world.Container chest)) return;
-
-        // Only stock if completely empty
-        boolean hasItems = false;
-        for (int i = 0; i < chest.getContainerSize(); i++) {
-            if (!chest.getItem(i).isEmpty()) { hasItems = true; break; }
+        // Only stock if every container is completely empty (a freshly
+        // placed stall). Any existing content means the stall is already
+        // in play and should not be re-seeded.
+        for (net.minecraft.world.Container c : containers) {
+            for (int i = 0; i < c.getContainerSize(); i++) {
+                if (!c.getItem(i).isEmpty()) return;
+            }
         }
-        if (hasItems) return;
 
         Set<BuildingType> presentTypes = village.getBuildingIds().stream()
                 .map(data::getBuildingById)
@@ -183,14 +191,23 @@ public final class MerchantStartingStock {
         Map<net.minecraft.world.item.Item, Integer> stock =
                 computeStock(presentTypes, new java.util.Random());
 
+        // Spread stock across the stall's containers: fill empty slots in
+        // order, moving to the next container when one fills. Lands in the
+        // exact containers MarketInventory later reads from.
         stock.forEach((item, qty) -> {
             net.minecraft.world.item.ItemStack stack =
                     new net.minecraft.world.item.ItemStack(item, qty);
-            for (int i = 0; i < chest.getContainerSize() && !stack.isEmpty(); i++) {
-                if (chest.getItem(i).isEmpty()) {
-                    chest.setItem(i, stack.copy());
-                    stack.setCount(0);
+            for (net.minecraft.world.Container c : containers) {
+                for (int i = 0; i < c.getContainerSize() && !stack.isEmpty(); i++) {
+                    if (c.getItem(i).isEmpty()) {
+                        int put = Math.min(stack.getCount(), stack.getMaxStackSize());
+                        net.minecraft.world.item.ItemStack slot = stack.copy();
+                        slot.setCount(put);
+                        c.setItem(i, slot);
+                        stack.shrink(put);
+                    }
                 }
+                if (stack.isEmpty()) break;
             }
         });
     }
