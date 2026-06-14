@@ -58,6 +58,9 @@ import java.util.*;
 public class VillageSpawner {
 
     private static final int MIN_VILLAGE_DISTANCE = 128;
+    // distSqr returns the squared Euclidean distance, so compare against the squared threshold.
+    private static final long MIN_VILLAGE_DISTANCE_SQ =
+            (long) MIN_VILLAGE_DISTANCE * MIN_VILLAGE_DISTANCE;
 
     /** Maximum offset (blocks) searched during local refinement. */
     private static final int LOCAL_REFINEMENT_RADIUS = 40;
@@ -180,7 +183,7 @@ public class VillageSpawner {
         for (Village v : data.getAllVillages()) {
             BlockPos anchor = v.getAnchorPos();
             if (anchor == null) continue;
-            if (anchor.distSqr(candidate) < MIN_VILLAGE_DISTANCE) return false;
+            if (anchor.distSqr(candidate) < MIN_VILLAGE_DISTANCE_SQ) return false;
         }
         return true;
     }
