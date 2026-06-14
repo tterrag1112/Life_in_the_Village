@@ -111,19 +111,38 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
      * @param applyMultipliers when true, scale {@code recipe.ticks()} by industry
      *                         × crafting speed and roll a quality bonus output.
      * @param recordLedger     when true, fire the workplace-production ledger.
+     * @param fuelPerBatch     E-S4a — fuel consumed during the deposit step,
+     *                         per batch unit (item → count). Empty = no fuel
+     *                         (HOME / MONK / every E-S2/E-S3 context). The
+     *                         BLACKSMITH smelt branch passes {@code COAL → 2}.
+     * @param fuelSource       E-S4a — building the fuel is drawn from; null
+     *                         falls back to {@code building}. Only consulted
+     *                         when {@code fuelPerBatch} is non-empty.
      */
     public record Plan(Building building, BlockPos workstationPos,
                        ProductionRecipe recipe, Skill skill,
                        int xpPerBatch, String activityLabel,
-                       int batchSize, boolean applyMultipliers, boolean recordLedger) {
+                       int batchSize, boolean applyMultipliers, boolean recordLedger,
+                       Map<Item, Integer> fuelPerBatch, Building fuelSource) {
 
         /** Legacy 6-arg shape (HOME / MONK): single batch, no multipliers, no
-         *  ledger — byte-identical to the pre-E-S2 record. */
+         *  ledger, no fuel — byte-identical to the pre-E-S2 record. */
         public Plan(Building building, BlockPos workstationPos,
                     ProductionRecipe recipe, Skill skill,
                     int xpPerBatch, String activityLabel) {
             this(building, workstationPos, recipe, skill, xpPerBatch, activityLabel,
-                    1, false, false);
+                    1, false, false, Map.of(), null);
+        }
+
+        /** E-S2/E-S3 9-arg shape (converted professions): batch + multipliers +
+         *  ledger, but no fuel — byte-identical to the pre-E-S4a record for
+         *  Candlemaker / Weaver / Carpenter / Stonemason. */
+        public Plan(Building building, BlockPos workstationPos,
+                    ProductionRecipe recipe, Skill skill,
+                    int xpPerBatch, String activityLabel,
+                    int batchSize, boolean applyMultipliers, boolean recordLedger) {
+            this(building, workstationPos, recipe, skill, xpPerBatch, activityLabel,
+                    batchSize, applyMultipliers, recordLedger, Map.of(), null);
         }
     }
 
@@ -285,12 +304,44 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
         Building outputDest = outputBuilding(level, entity, plan);
         boolean legacy = plan.batchSize() == 1 && !plan.applyMultipliers();
         int batch = Math.max(1, plan.batchSize());
-        // Consume all inputs × batch from the workBuilding — unchanged.
+
+        // E-S4a — fuel availability pre-check (opt-in; the isEmpty guard makes
+        // this block unreachable for HOME / MONK / Candlemaker / Weaver /
+        // Carpenter / Stonemason, all of which pass Map.of() for fuelPerBatch —
+        // so their deposit path is byte-identical to before).
+        //
+        // Fuel is verified BEFORE consuming any inputs so that a coal shortfall
+        // aborts cleanly with nothing consumed (ore is NOT destroyed).
+        if (!plan.fuelPerBatch().isEmpty()) {
+            Building fuelSrc = plan.fuelSource() != null ? plan.fuelSource() : building;
+            for (Map.Entry<Item, Integer> e : plan.fuelPerBatch().entrySet()) {
+                if (BuildingStorageAccess.countItem(level, fuelSrc, e.getKey())
+                        < (long) e.getValue() * batch) {
+                    // Fuel is short — abort before touching inputs.
+                    phase = Phase.DONE;
+                    return;
+                }
+            }
+        }
+
+        // Consume all inputs × batch from the workBuilding.
+        // Inputs are already confirmed available by the selection step; a
+        // mid-craft race (item consumed elsewhere) is handled by the takeItem
+        // false-abort below — same as before.
         for (Map.Entry<Item, Integer> e : recipe.inputs().entrySet()) {
             if (!BuildingStorageAccess.takeItem(level, building, e.getKey(), e.getValue() * batch)) {
                 // An input vanished mid-craft (consumed elsewhere). Abort cleanly.
                 phase = Phase.DONE;
                 return;
+            }
+        }
+
+        // E-S4a — consume fuel × batch (only reached when fuelPerBatch is
+        // non-empty AND the pre-check above confirmed enough is available).
+        if (!plan.fuelPerBatch().isEmpty()) {
+            Building fuelSrc = plan.fuelSource() != null ? plan.fuelSource() : building;
+            for (Map.Entry<Item, Integer> e : plan.fuelPerBatch().entrySet()) {
+                BuildingStorageAccess.takeItem(level, fuelSrc, e.getKey(), e.getValue() * batch);
             }
         }
 

@@ -29,11 +29,22 @@ import java.util.Map;
  * skill's recipes in the SAME order the profession iterated before). No recipe
  * value, gate, order, or selection changed.</p>
  *
- * <p>Not (yet) here: the data-driven {@link BlacksmithRecipeRegistry} JSON
- * smelting/crafting recipes remain a separate runtime feeder the blacksmith
- * reads directly (only its inline masterpieces migrated); and
- * {@code ProfessionSupplyChain} (item buy/sell routing) is a separate concern
- * left untouched. Both are flagged future folds.</p>
+ * <p>E-S4a — the BLACKSMITH JSON fold: smithing is now genuinely skill-owned.
+ * {@link #forSkill(Skill) forSkill(BLACKSMITHING)} returns the full blacksmith
+ * production act — the JSON-loaded smelting + crafting recipes (from the
+ * still-live {@link BlacksmithRecipeRegistry} reload listener) merged with the
+ * inline masterpiece constants, in the same iteration order the former
+ * {@code BlacksmithProductionBehavior} used (smelting ++ inline-smelting, then
+ * crafting ++ inline-crafting). The merge is computed <i>at call time</i> by
+ * delegating to {@link BlacksmithRecipeRegistry#INSTANCE}, so datapack reloads
+ * are reflected automatically without any static-init coupling: this class's
+ * {@code <clinit>} never touches the registry (the delegation lives in a method,
+ * not the static {@code BY_SKILL} builder), and the registry's {@code <clinit>}
+ * never touches this class — no init cycle. The registry remains the JSON data
+ * source / reload listener; {@code getData()} consumers are untouched.</p>
+ *
+ * <p>Not (yet) here: {@code ProfessionSupplyChain} (item buy/sell routing) is a
+ * separate concern left untouched, a flagged future fold.</p>
  */
 public final class SkillRecipes {
 
@@ -290,16 +301,79 @@ public final class SkillRecipes {
         m.put(Skill.WEAVING,      buildWeavingRecipes());
         m.put(Skill.CARPENTRY,    buildCarpentryRecipes());
         m.put(Skill.MASONRY,      buildMasonryRecipes());
-        // Blacksmith inline masterpieces (the JSON registry feeds the rest).
+        // Blacksmith inline masterpieces. E-S4a — the JSON-loaded smelting /
+        // crafting recipes are NOT baked into BY_SKILL (they are dynamic /
+        // reload-driven); forSkill(BLACKSMITHING) merges them in at call time
+        // (see blacksmithRecipes()). The per-child-skill buckets keep their
+        // inline-masterpiece-only lists for any consumer keyed on the sub-skill.
         m.put(Skill.TOOLSMITHING,   List.of(MAKE_DIAMOND_PICKAXE));
         m.put(Skill.WEAPONSMITHING, List.of(MAKE_DIAMOND_SWORD));
-        m.put(Skill.BLACKSMITHING,  List.of(MAKE_NETHERITE_INGOT));
+        // BLACKSMITHING intentionally absent from BY_SKILL — forSkill special-
+        // cases it to fold the JSON registry + inline smelting masterpiece.
         return Collections.unmodifiableMap(m);
     }
 
     /** The recipes owned by {@code skill}, in profession-iteration order
-     *  (empty for a skill with no registered recipes). */
+     *  (empty for a skill with no registered recipes).
+     *
+     *  <p>E-S4a — {@link Skill#BLACKSMITHING} is the parent skill that owns the
+     *  whole smithing act; it is served by {@link #blacksmithRecipes()} (JSON
+     *  registry ++ inline masterpieces), merged at call time so datapack reloads
+     *  are reflected. Every other skill is served from the static
+     *  {@link #BY_SKILL} map verbatim (unchanged).</p> */
     public static List<ProductionRecipe> forSkill(Skill skill) {
+        if (skill == Skill.BLACKSMITHING) return blacksmithRecipes();
         return BY_SKILL.getOrDefault(skill, List.of());
+    }
+
+    // =========================================================================
+    // E-S4a — BLACKSMITH JSON fold. The registry stays the JSON data source /
+    // reload listener; these read its live data at call time and append the
+    // inline masterpiece constants, preserving the former class's bins + order.
+    // =========================================================================
+
+    /** Inline crafting masterpieces appended after the JSON-loaded crafting
+     *  recipes (former {@code BlacksmithProductionBehavior.INLINE_CRAFTING_RECIPES}). */
+    private static final List<ProductionRecipe> INLINE_CRAFTING =
+            List.of(MAKE_DIAMOND_PICKAXE, MAKE_DIAMOND_SWORD);
+    /** Inline smelting masterpieces appended after the JSON-loaded smelting
+     *  recipes (former {@code BlacksmithProductionBehavior.INLINE_SMELTING_RECIPES};
+     *  netherite uses the furnace + coal via the smelt branch). */
+    private static final List<ProductionRecipe> INLINE_SMELTING =
+            List.of(MAKE_NETHERITE_INGOT);
+
+    /** The smelting bin: JSON-loaded smelting recipes ++ inline smelting
+     *  masterpieces. Reads the live registry data each call. */
+    public static List<ProductionRecipe> blacksmithSmelting() {
+        return concat(BlacksmithRecipeRegistry.INSTANCE.getData().getSmeltingRecipes(),
+                INLINE_SMELTING);
+    }
+
+    /** The crafting bin: JSON-loaded crafting recipes ++ inline crafting
+     *  masterpieces. Reads the live registry data each call. */
+    public static List<ProductionRecipe> blacksmithCrafting() {
+        return concat(BlacksmithRecipeRegistry.INSTANCE.getData().getCraftingRecipes(),
+                INLINE_CRAFTING);
+    }
+
+    /** The full BLACKSMITHING production act, in the former class's iteration
+     *  order: smelting bin then crafting bin. Returned by
+     *  {@code forSkill(BLACKSMITHING)}. */
+    public static List<ProductionRecipe> blacksmithRecipes() {
+        List<ProductionRecipe> smelting = blacksmithSmelting();
+        List<ProductionRecipe> crafting = blacksmithCrafting();
+        List<ProductionRecipe> all = new ArrayList<>(smelting.size() + crafting.size());
+        all.addAll(smelting);
+        all.addAll(crafting);
+        return Collections.unmodifiableList(all);
+    }
+
+    private static List<ProductionRecipe> concat(List<ProductionRecipe> a,
+                                                 List<ProductionRecipe> b) {
+        if (b.isEmpty()) return a;
+        List<ProductionRecipe> out = new ArrayList<>(a.size() + b.size());
+        out.addAll(a);
+        out.addAll(b);
+        return Collections.unmodifiableList(out);
     }
 }
