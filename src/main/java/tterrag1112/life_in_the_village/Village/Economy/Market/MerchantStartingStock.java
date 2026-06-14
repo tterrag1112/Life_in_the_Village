@@ -153,13 +153,20 @@ public final class MerchantStartingStock {
     }
 
     /**
-     * Called once per stall on the first daily tick after the village loads.
-     * Stocks the stall chest if it is empty, using village composition.
+     * Stocks the stall's containers with starting goods if they are empty,
+     * using village composition.
+     *
+     * <p>merchant-stall-fixes A: returns {@code true} when stock was actually
+     * placed, so the caller can flip the stall's persistent {@code seeded}
+     * flag and never re-seed it. Returns {@code false} when nothing was seeded
+     * — no containers found, or a container already held content (a sold-down
+     * stall must not be refilled with free goods). The empty-content guard is
+     * the secondary safety; the caller's {@code !isSeeded()} gate is primary.</p>
      */
-    public static void initialStockIfNeeded(ServerLevel level,
-                                            MarketStall stall,
-                                            Village village,
-                                            VillageSavedData data) {
+    public static boolean initialStockIfNeeded(ServerLevel level,
+                                               MarketStall stall,
+                                               Village village,
+                                               VillageSavedData data) {
         // Discover the stall's containers the SAME way MarketInventory's
         // read/take/store paths do — a footprint scan that finds every
         // container (the stall templates place BARRELS, not chests), not
@@ -170,14 +177,14 @@ public final class MerchantStartingStock {
         java.util.List<net.minecraft.world.Container> containers =
                 tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory
                         .stallContainers(level, stall);
-        if (containers.isEmpty()) return;
+        if (containers.isEmpty()) return false;
 
         // Only stock if every container is completely empty (a freshly
         // placed stall). Any existing content means the stall is already
         // in play and should not be re-seeded.
         for (net.minecraft.world.Container c : containers) {
             for (int i = 0; i < c.getContainerSize(); i++) {
-                if (!c.getItem(i).isEmpty()) return;
+                if (!c.getItem(i).isEmpty()) return false;
             }
         }
 
@@ -210,5 +217,6 @@ public final class MerchantStartingStock {
                 if (stack.isEmpty()) break;
             }
         });
+        return true;
     }
 }
