@@ -3,7 +3,6 @@ package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 import com.google.common.collect.ImmutableMap;
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.GlobalPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
@@ -30,7 +29,6 @@ import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.GreetPlayerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
-import tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -743,12 +741,11 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     }
 
     private void handOffToSell(ServerLevel level) {
-        // L1-fix — selling is real work: clear the work-satisfied signal.
-        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
-        BlockPos marketOrigin = market.getShape().getOrigin();
-        entity.getBrain().setMemory(NpcMemoryTypes.CARGO_DESTINATION.get(),
-                GlobalPos.of(level.dimension(), marketOrigin));
-        entity.getBrain().setMemory(NpcMemoryTypes.WORK_PHASE.get(), WorkPhase.SELL);
+        // E-S2 — the CARGO_DESTINATION + WORK_PHASE=SELL + NO_ACTIONABLE_WORK
+        // writes are now the shared WorkshopVending.triggerSell helper (so a
+        // converted context profession fires the identical trigger). Behavior is
+        // preserved verbatim; APB still owns its own AWAITING_SELL phase write.
+        WorkshopVending.triggerSell(entity, market, level);
         phase = Phase.AWAITING_SELL;
     }
 

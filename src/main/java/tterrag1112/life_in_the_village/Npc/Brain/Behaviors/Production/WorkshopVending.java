@@ -1,5 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.GlobalPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.SimpleContainer;
@@ -7,6 +9,8 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase;
 import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -108,6 +112,35 @@ public final class WorkshopVending {
         return dayTime >= sellWindowDayTick
                 && lastDailySellTick < todayBase
                 && (gameTime - lastDailySellTick) >= minSellInterval;
+    }
+
+    // =========================================================================
+    // Sell-trigger (hand-off to the universal SellToMarketBehavior)
+    // =========================================================================
+
+    /**
+     * E-S2 — fire the workshop SELL TRIGGER: write the {@code CARGO_DESTINATION}
+     * (the market origin as a {@link GlobalPos}) and {@code WORK_PHASE=SELL}, and
+     * clear the {@code NO_ACTIONABLE_WORK} liveliness signal (selling is real
+     * work). The universal {@code SellToMarketBehavior} (installed on every
+     * TownspersonMob's WORK activity at priority 1, memory-gated on
+     * {@code CARGO_DESTINATION}) then runs the market trip and calls
+     * {@link #executeSell}.
+     *
+     * <p>Memory-write semantics are character-for-character identical to
+     * {@code AbstractProductionBehavior.handOffToSell} so that a converted
+     * context profession triggers the existing sell pipeline exactly as an
+     * APB-based workshop does. The caller is responsible for yielding (e.g. a
+     * context behavior arranges its {@code canStillUse} to return false the
+     * tick after this fires, so the priority-1 sell behavior can take over).</p>
+     */
+    public static void triggerSell(TownspersonMob entity, Building market, ServerLevel level) {
+        // Selling is real work: clear the work-satisfied signal.
+        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+        BlockPos marketOrigin = market.getShape().getOrigin();
+        entity.getBrain().setMemory(NpcMemoryTypes.CARGO_DESTINATION.get(),
+                GlobalPos.of(level.dimension(), marketOrigin));
+        entity.getBrain().setMemory(NpcMemoryTypes.WORK_PHASE.get(), WorkPhase.SELL);
     }
 
     // =========================================================================
