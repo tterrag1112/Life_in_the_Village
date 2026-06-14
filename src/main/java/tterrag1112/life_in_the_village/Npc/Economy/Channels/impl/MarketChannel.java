@@ -87,13 +87,14 @@ public final class MarketChannel implements EconomicChannel {
             policied = MarketPricing.sellPrice(
                     tterrag1112.life_in_the_village.Village.Economy.Currency.PricingContext
                             .forNpc(intent.item(), level, village, data, stall));
-            // Stock check reads the market's stall chests (the only merchant
-            // inventory), NOT the building's own storage. Pre-unification this
-            // read building bounds and declined NO STOCK while stalls held the
-            // goods (MerchantStartingStock stocks stall.getChestPos()).
+            // Stock check reads ONLY the resolved seller stall's containers
+            // (merchant-stall-fixes B — strict per-stall, no market-wide pool).
+            // If no stall holds the item, stall==null and available collapses
+            // to 0 → the channel declines (router falls through). The market
+            // BUILDING's own storage is never read.
             available = Math.min(intent.quantity(),
-                    tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory
-                            .countItem(level, market, intent.item()));
+                    tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods
+                            .available(level, market, stall, intent.item()));
         } else {
             // Seller receives the buy-side price. Stalls are sell endpoints,
             // so no stall override on this side.
@@ -214,15 +215,21 @@ public final class MarketChannel implements EconomicChannel {
     private static TradeResult executeSell(TradeIntent intent, Building market, Village village,
                                            int qty, long pricePerUnit, ServerLevel level,
                                            VillageSavedData data) {
-        // NPC selling into the market → the market's stall chests (the only
-        // merchant inventory). Clean-fail when no stall chest can absorb:
+        // NPC selling into the market → the MARKET MERCHANT's own stall only
+        // (merchant-stall-fixes B — strict per-stall, no spill across stalls,
+        // never the building). Clean-fail when that stall can't absorb:
         // nothing moves, no payment is minted, the seller keeps the goods.
+        TownspersonMob marketMerchant = findMerchant(level, market);
+        MarketStall sink = marketMerchant != null
+                ? data.getStallByOwner(marketMerchant.getUUID()).orElse(null)
+                : null;
+        if (sink == null) return TradeResult.fail("no market merchant stall to buy into");
         ItemStack incoming = new ItemStack(intent.item(), qty);
-        if (!tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory
-                .store(level, market, incoming)) {
+        if (!tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods
+                .store(level, market, sink, incoming)) {
             int stored = qty - incoming.getCount();
-            if (stored <= 0) return TradeResult.fail("market stalls full — sale declined");
-            qty = stored; // partial: only pay for what the stalls absorbed
+            if (stored <= 0) return TradeResult.fail("merchant stall full — sale declined");
+            qty = stored; // partial: only pay for what the stall absorbed
         }
         long total = pricePerUnit * qty;
         TownspersonMob seller = TownspersonMob.findByUUID(level, intent.actorId()).orElse(null);
@@ -250,18 +257,16 @@ public final class MarketChannel implements EconomicChannel {
                 .findFirst();
     }
 
+    /** First active stall whose OWN containers hold the item, via the
+     *  canonical footprint scan (covers barrels, not just getChestPos).
+     *  Resolution stays per-stall: each candidate is checked against its own
+     *  containers only — no pooling. */
     private static MarketStall findStallWithItem(Building market, TradeIntent intent,
                                                  ServerLevel level, VillageSavedData data) {
         return data.getStallsForMarket(market.getId()).stream()
-                .filter(s -> s.isActive() && !s.getChestPos().equals(BlockPos.ZERO))
-                .filter(s -> {
-                    var be = level.getBlockEntity(s.getChestPos());
-                    if (!(be instanceof net.minecraft.world.Container chest)) return false;
-                    for (int i = 0; i < chest.getContainerSize(); i++) {
-                        if (chest.getItem(i).is(intent.item())) return true;
-                    }
-                    return false;
-                })
+                .filter(MarketStall::isActive)
+                .filter(s -> tterrag1112.life_in_the_village.Village.Markets.Complex
+                        .StallGoods.available(level, market, s, intent.item()) > 0)
                 .findFirst().orElse(null);
     }
 

@@ -285,16 +285,26 @@ class VillageDailyTickSystem implements TickSubsystem {
             // Re-assign StallKeeperGoal to NPC stall owners whose goals
 // were lost on server restart
             reAssignStallGoals(level, village, vdata, tick);
-            // Stock any empty merchant stalls on first load
-            if (tick <= 6000L) {
-                vdata.getStallsForVillage(village.getId()).forEach(stall -> {
-                    if (stall.isActive()
-                            && stall.getOwnerType() == MarketStall.OwnerType.NPC) {
-                        MerchantStartingStock.initialStockIfNeeded(
-                                level, stall, village, vdata);
+            // Seed each NPC stall with starting stock exactly ONCE, ever
+            // (merchant-stall-fixes A). The old gate keyed off absolute world
+            // game-time (tick <= 6000L), so on any reloaded/older world the
+            // seeding never fired and starting stock stayed empty. Now we gate
+            // per-stall on a persistent `seeded` flag: a sold-down stall is
+            // never re-filled with free goods, and a never-seeded stall on an
+            // old world finally gets its stock. MerchantStartingStock's
+            // empty-content guard remains the secondary safety.
+            vdata.getStallsForVillage(village.getId()).forEach(stall -> {
+                if (stall.isActive()
+                        && stall.getOwnerType() == MarketStall.OwnerType.NPC
+                        && !stall.isSeeded()) {
+                    boolean seeded = MerchantStartingStock.initialStockIfNeeded(
+                            level, stall, village, vdata);
+                    if (seeded) {
+                        stall.setSeeded(true);
+                        vdata.setDirty();
                     }
-                });
-            }
+                }
+            });
 
 
             vdata.setDirty();

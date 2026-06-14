@@ -86,7 +86,16 @@ public class MarketStall {
             // (owner → management, non-owner → trade). BlockPos.ZERO ⇒ not
             // yet captured (falls back to a scan around the origin).
             BlockPos.CODEC.optionalFieldOf("signPos", BlockPos.ZERO)
-                    .forGetter(MarketStall::getSignPos)
+                    .forGetter(MarketStall::getSignPos),
+            // initial-stock seeding marker (merchant-stall-fixes A). Persistent
+            // so each NPC stall is seeded with starting stock exactly ONCE,
+            // ever — replaces the old absolute world-time gate that only fired
+            // on worlds younger than ~5 min. optionalFieldOf default keeps
+            // pre-fix saves loading (they re-seed once, which is correct).
+            // NOTE: this is codec field #16 — the RecordCodecBuilder ceiling.
+            // Do not add a 17th without packing.
+            Codec.BOOL.optionalFieldOf("seeded", false)
+                    .forGetter(MarketStall::isSeeded)
     ).apply(i, MarketStall::fromCodec));
 
     /** Codec apply target — restores the event marker after construction
@@ -99,12 +108,13 @@ public class MarketStall {
                                          long rentPaidUntilTick, boolean active,
                                          int reputation, long totalSales,
                                          Map<String, Long> customPrices, String eventId,
-                                         BlockPos signPos) {
+                                         BlockPos signPos, boolean seeded) {
         MarketStall s = new MarketStall(stallId, marketBuildingId, slotIndex,
                 stallOrigin, chestPos, ownerUUID, ownerDisplayName, ownerType,
                 rentPaidUntilTick, active, reputation, totalSales, customPrices);
         if (eventId != null && !eventId.isEmpty()) s.eventId = UUID.fromString(eventId);
         if (signPos != null && !signPos.equals(BlockPos.ZERO)) s.signPos = signPos;
+        s.seeded = seeded;
         return s;
     }
 
@@ -198,6 +208,12 @@ public class MarketStall {
     // BlockPos.ZERO = not yet captured. Set post-construction by the sign
     // funnel; persisted via the codec adapter.
     private BlockPos signPos = BlockPos.ZERO;
+
+    // merchant-stall-fixes A — true once this stall has received its initial
+    // starting stock. Persisted via the codec adapter; set post-construction
+    // (not in the canonical constructor, so create()/legacy callers are
+    // unchanged). Each NPC stall seeds exactly once, ever.
+    private boolean seeded = false;
 
     // ── Canonical constructor (matches codec) ─────────────────────────────────
 
@@ -325,6 +341,13 @@ public class MarketStall {
     public void setSignPos(BlockPos pos) { this.signPos = pos == null ? BlockPos.ZERO : pos; }
 
     public boolean hasSignPos() { return signPos != null && !signPos.equals(BlockPos.ZERO); }
+
+    // ── Initial-stock seeding (merchant-stall-fixes A) ───────────────────────
+
+    /** True once this stall has been seeded with its initial starting stock. */
+    public boolean isSeeded() { return seeded; }
+
+    public void setSeeded(boolean seeded) { this.seeded = seeded; }
 
     // =========================================================================
     // Custom pricing (±20% band)
