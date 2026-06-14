@@ -81,7 +81,7 @@ public final class VillagePlacement {
      * target. This is the single knob to turn for global density -- it is
      * deterministic, so tuning is reproducible.
      */
-    public static final int SPACING_CHUNKS = 8;
+    public static final int SPACING_CHUNKS = 48;
 
     /**
      * Minimum separation in <b>chunks</b> between candidates of adjacent
@@ -91,7 +91,7 @@ public final class VillagePlacement {
      * {@code SEPARATION} chunks -- exactly vanilla's mechanism. Must be
      * {@code < SPACING}.
      */
-    public static final int SEPARATION_CHUNKS = 2;
+    public static final int SEPARATION_CHUNKS = 8;
 
     /**
      * Fixed salt mixed into the per-region RNG seed, mirroring vanilla's

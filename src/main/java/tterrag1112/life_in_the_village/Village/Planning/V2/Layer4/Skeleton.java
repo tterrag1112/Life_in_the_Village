@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Village.Planning.V2.Layer4;
 
 import net.minecraft.core.BlockPos;
+import tterrag1112.life_in_the_village.Kingdom.Settlement.VillagePlacement;
 import tterrag1112.life_in_the_village.Village.Planning.Primitives.RoadPrimitive;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.CardinalAxis;
 import tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.NetworkEdge;
