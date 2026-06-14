@@ -279,9 +279,13 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
     private void tickDepositing(ServerLevel level, TownspersonMob entity, long gameTime) {
         ProductionRecipe recipe = plan.recipe();
         Building building = plan.building();
+        // E-S3 — output redirect hook: consume inputs from plan.building() (always
+        // the workBuilding), but deposit the produced output to the context-supplied
+        // outputBuilding (default = plan.building(), so HOME/MONK are unaffected).
+        Building outputDest = outputBuilding(level, entity, plan);
         boolean legacy = plan.batchSize() == 1 && !plan.applyMultipliers();
         int batch = Math.max(1, plan.batchSize());
-        // Consume all inputs × batch — multi-input via takeItem per entry.
+        // Consume all inputs × batch from the workBuilding — unchanged.
         for (Map.Entry<Item, Integer> e : recipe.inputs().entrySet()) {
             if (!BuildingStorageAccess.takeItem(level, building, e.getKey(), e.getValue() * batch)) {
                 // An input vanished mid-craft (consumed elsewhere). Abort cleanly.
@@ -294,42 +298,44 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
             // HOME / MONK byte-exact path: store the producedStack verbatim (its
             // count is the recipe's outputCount, or the override's own count for
             // the monk's scripture). No byproducts, no quality roll — identical to
-            // the pre-E-S2 primitive.
+            // the pre-E-S2 primitive. outputDest == building for legacy plans.
             ItemStack output = producedStack(level, entity, building, recipe);
-            BuildingStorageAccess.storeWithFallback(level, building, output,
+            BuildingStorageAccess.storeWithFallback(level, outputDest, output,
                     entity.getPersonalInventory());
         } else {
             // E-S2 enriched path (converted professions): batch-scaled output,
             // fixed byproducts (per run), and the crafting quality bonus.
+            // All deposit to outputDest (= plan.building() unless overridden).
             ItemStack output = producedStack(level, entity, building, recipe);
             output.setCount(recipe.outputCount() * batch);
-            BuildingStorageAccess.storeWithFallback(level, building, output,
+            BuildingStorageAccess.storeWithFallback(level, outputDest, output,
                     entity.getPersonalInventory());
             for (ItemStack byproduct : recipe.byproducts()) {
-                BuildingStorageAccess.storeWithFallback(level, building,
+                BuildingStorageAccess.storeWithFallback(level, outputDest,
                         byproduct.copy(), entity.getPersonalInventory());
             }
             float qualityChance = WorkshopMultipliers.craftingQualityChance(entity);
             if (qualityChance > 0 && entity.getRandom().nextFloat() < qualityChance) {
-                BuildingStorageAccess.storeWithFallback(level, building,
+                BuildingStorageAccess.storeWithFallback(level, outputDest,
                         new ItemStack(recipe.output(), batch), entity.getPersonalInventory());
             }
         }
 
         SkillXp.award(entity, plan.skill(), plan.xpPerBatch(), gameTime);
 
-        // E-S2 — workplace-production ledger hook (opt-in).
+        // E-S2 — workplace-production ledger hook (opt-in). Ledger always credits
+        // the workBuilding (the professional's registered workplace).
         if (plan.recordLedger()) {
             WorkplaceAssignmentManager.onWorkplaceProduction(level, building.getId(),
                     BuiltInRegistries.ITEM.getKey(recipe.output()).toString(),
                     recipe.outputCount() * batch);
         }
 
-        LOGGER.info("[{}] {} ({} {}) made {}x {}; building stock now {}",
+        LOGGER.info("[{}] {} ({} {}) made {}x {}; outputDest stock now {}",
                 getClass().getSimpleName(), entity.getNpcName(), plan.skill(),
                 entity.getSkills().getLevel(plan.skill()),
                 recipe.outputCount() * batch, recipe.output(),
-                BuildingStorageAccess.countItem(level, building, recipe.output()));
+                BuildingStorageAccess.countItem(level, outputDest, recipe.output()));
 
         // E-S2 — vending: after depositing, hand surplus off to the universal
         // SellToMarketBehavior (opt-in; HOME/MONK return empty, so this is a
@@ -355,7 +361,7 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
             return false;
         }
         Map<Item, Integer> surplus = WorkshopVending.computeSurplus(level,
-                plan.building(), intent.sellableOutputs(), intent.quotas(),
+                outputBuilding(level, entity, plan), intent.sellableOutputs(), intent.quotas(),
                 intent.defaultThreshold());
         if (surplus.isEmpty()) return false;
         lastDailySellTick = gameTime;
@@ -424,6 +430,27 @@ public abstract class ContextProductionBehavior extends Behavior<TownspersonMob>
     protected Optional<VendingIntent> vendingIntent(ServerLevel level, TownspersonMob entity,
                                                     Plan plan) {
         return Optional.empty();
+    }
+
+    /**
+     * E-S3 — the building that receives the produced output (and byproducts /
+     * quality bonus). Default {@code plan.building()} — identical to the pre-E-S3
+     * behaviour for HOME, MONK, Candlemaker, Weaver, Carpenter, and Stonemason,
+     * all of which deposit to their own workBuilding.
+     *
+     * <p>A context that redirects output (e.g. a Miller that deposits flour to
+     * the village stockpile rather than the mill) overrides this to return the
+     * redirect target. The deposit phase consumes inputs from {@code plan.building()}
+     * (the workBuilding) regardless of this override, so the hook only affects
+     * where produced items land and where the vending surplus is measured from.</p>
+     *
+     * <p>HOME and MONK never override; the default is always their building.
+     * This hook is only consulted during the enriched deposit path
+     * ({@code applyMultipliers=true}); legacy plans (batch 1, no multipliers)
+     * also pass through it so the override is applied consistently.</p>
+     */
+    protected Building outputBuilding(ServerLevel level, TownspersonMob entity, Plan plan) {
+        return plan.building();
     }
 
     // ── Shared selection helpers (used by subclasses' selectPlan) ────────────

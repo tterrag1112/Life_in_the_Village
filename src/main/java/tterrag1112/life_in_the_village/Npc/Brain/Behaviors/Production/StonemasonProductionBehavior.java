@@ -1,203 +1,148 @@
 package tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production;
 
-import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.sounds.SoundEvent;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.world.item.Item;
-import net.minecraft.world.item.Items;
-import net.minecraft.world.level.block.StonecutterBlock;
-import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Entities.ActivityState;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopRole;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopRoleAssigner;
+import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.GreetPlayerBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Homestead.ContextProductionBehavior;
+import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Village.AmenityType;
 import tterrag1112.life_in_the_village.Village.Building;
-import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
-import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
-import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
-import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
- * Stonemason cuts raw stone into dressed building materials at a stonecutter.
- * Draws stone and cobblestone from the village mine or stockpile.
- * Finished products (bricks, slabs, stairs, walls) go to the stonemason
- * building and are sold at market.
+ * E-S3 — STONEMASON workshop as a <i>context</i> over the shared
+ * {@link ContextProductionBehavior} primitive. Replaces the former
+ * {@code AbstractProductionBehavior}-based Stonemason (convert-then-delete).
+ *
+ * <p>Pattern follows the Candlemaker E-S2 pilot. Craft table lives in
+ * {@link StonemasonCrafts}; workstation is a {@link AmenityType#STONECUTTER}
+ * scanned inside the stonemason building.</p>
+ *
+ * <h3>Parity with the former class</h3>
+ * <ul>
+ *   <li><b>Crafts</b> — all MASONRY-skill recipes + quotas in
+ *       {@link StonemasonCrafts}; {@link StonemasonCrafts#chooseCraft} reproduces
+ *       the lowest-stock-ratio target selection + skill gate + input check.</li>
+ *   <li><b>Workstation</b> — stonecutter block, resolved via
+ *       {@link AmenityType#STONECUTTER}.</li>
+ *   <li><b>Batch + multipliers</b> — plan opts into batch sizing (cap 8) and
+ *       multiplier/quality-bonus scaling.</li>
+ *   <li><b>Buy</b> — stone-type basket via {@link #resourcesToBuy}.</li>
+ *   <li><b>Sell, ledger, gates, XP (MASONRY, 3/cycle)</b> — identical to
+ *       the Candlemaker pilot structure.</li>
+ * </ul>
  */
-public class StonemasonProductionBehavior extends AbstractProductionBehavior {
+public class StonemasonProductionBehavior extends ContextProductionBehavior {
 
-    private static final int MAX_BATCH = 8;
+    private static final ActivityState BLOCKED_ROLE        = ActivityState.IDLE.withBlocking("workshop role gate");
+    private static final ActivityState BLOCKED_OFF_WORK    = ActivityState.IDLE.withBlocking("off work hours");
+    private static final ActivityState BLOCKED_WORK_BLOCK  = ActivityState.IDLE.withBlocking("injured / asleep / overridden");
+    private static final ActivityState BLOCKED_NO_BUILDING = ActivityState.IDLE.withBlocking("no assigned work building");
 
-    // M1 — definitions live in SkillRecipes (owning skill MASONRY); RECIPES is
-    // the MASONRY bucket in the same order buildRecipes() produced.
-    private static final List<ProductionRecipe> RECIPES =
-            SkillRecipes.forSkill(tterrag1112.life_in_the_village.Npc.Skills.Skill.MASONRY);
+    private static final long ROLE_CHECK_INTERVAL = 24000L;
+    private long lastRoleCheckTick = -ROLE_CHECK_INTERVAL;
 
-    
-
-    @Override protected BuildingType requiredBuildingType() { return BuildingType.STONEMASON; }
-
-    @Override
-    protected Optional<BlockPos> findWorkstation(ServerLevel level, Building building) {
-        return findBlock(level, building, b -> b instanceof StonecutterBlock);
-    }
+    private Building workBuilding;
 
     @Override
-    protected Optional<ProductionRecipe> chooseRecipe(ServerLevel level, Building building) {
-        Building source = resolveInputSource(level, building);
-        if (source == null) return Optional.empty();
-
-        Optional<Item> target = productionTarget(level, building);
-
-        // Try to make the priority target
-        if (target.isPresent()) {
-            Optional<ProductionRecipe> specific = findRecipeForOutput(level, source, target.get());
-            if (specific.isPresent()) return specific;
+    protected boolean checkContextGate(ServerLevel level, TownspersonMob entity) {
+        if (ProfessionRoleManager.isMarketSeller(entity)) {
+            entity.setActivityState(BLOCKED_ROLE);
+            return false;
         }
-
-        if (target.isEmpty()) return Optional.empty();
-
-        // Opportunistic: best available below quota
-        return findBestAvailable(level, building, source);
-    }
-
-    // Phase 6.6.5 — meetsSkillGate(MasonRecipe) removed. The base class
-    // meetsSkillRequirements (6.4.10.1) is now the canonical check; gates
-    // live on ProductionRecipe.skillRequirements.
-
-    @Override
-    protected int calculateBatchSize(ServerLevel level, ProductionRecipe recipe) {
-        Building source = resolveInputSource(level, workBuilding);
-        if (source == null) return 0;
-        int available = recipe.inputs().entrySet().stream()
-                .mapToInt(e -> BuildingStorageAccess.countItem(level, source, e.getKey())
-                        / e.getValue())
-                .min().orElse(0);
-        return Math.min(available, MAX_BATCH);
-    }
-
-    @Override
-    protected Building resolveInputSource(ServerLevel level, Building workBuilding) {
-        VillageSavedData data = VillageSavedData.get(level);
-        return entity.getAssignedVillageName()
-                .flatMap(data::getVillageByName)
-                .flatMap(village -> {
-                    // Prefer mine
-                    Optional<Building> mine = village.getBuildingIds().stream()
-                            .map(data::getBuildingById).filter(Optional::isPresent)
-                            .map(Optional::get).filter(b -> b.getType() == BuildingType.MINE)
-                            .findFirst();
-                    if (mine.isPresent() && hasStoneInputs(level, mine.get())) return mine;
-                    // Fall back to stockpile
-                    return village.getBuildingIds().stream()
-                            .map(data::getBuildingById).filter(Optional::isPresent)
-                            .map(Optional::get)
-                            .filter(b -> b.getType() == BuildingType.STOCKPILE)
-                            .findFirst();
-                })
-                .orElse(workBuilding);
-    }
-
-    @Override
-    protected Map<Item, Integer> stockQuotas() {
-        return Map.ofEntries(
-                Map.entry(Items.STONE_BRICKS,         32),
-                Map.entry(Items.STONE_BRICK_SLAB,     32),
-                Map.entry(Items.STONE_BRICK_STAIRS,   16),
-                Map.entry(Items.STONE_BRICK_WALL,     16),
-                Map.entry(Items.CHISELED_STONE_BRICKS, 8),
-                Map.entry(Items.COBBLESTONE_SLAB,     16),
-                Map.entry(Items.COBBLESTONE_STAIRS,   16),
-                Map.entry(Items.COBBLESTONE_WALL,     16),
-                Map.entry(Items.SMOOTH_STONE_SLAB,    16),
-                Map.entry(Items.POLISHED_ANDESITE,    16),
-                Map.entry(Items.POLISHED_GRANITE,      8),
-                Map.entry(Items.POLISHED_DIORITE,      8));
-    }
-
-    @Override
-    protected List<Item> sellableOutputs() {
-        return RECIPES.stream().map(ProductionRecipe::output).distinct().toList();
-    }
-
-    @Override
-    protected boolean canProduceItem(Item item) {
-        return RECIPES.stream().anyMatch(r -> r.output() == item);
-    }
-
-    @Override protected SoundEvent workSound() { return SoundEvents.UI_STONECUTTER_TAKE_RESULT; }
-
-    @Override
-    protected Map<Item, Integer> resourcesToBuy(ServerLevel level, Building building) {
-        Map<Item, Integer> toBuy = new LinkedHashMap<>();
-        Building source = resolveInputSource(level, building);
-
-        List<Item> stoneInputs = List.of(Items.STONE, Items.COBBLESTONE,
-                Items.SMOOTH_STONE, Items.STONE_BRICKS,
-                Items.ANDESITE, Items.GRANITE, Items.DIORITE);
-
-        for (Item stone : stoneInputs) {
-            int avail = source != null
-                    ? BuildingStorageAccess.countItem(level, source, stone) : 0;
-            if (avail < 8) toBuy.put(stone, 16 - avail);
+        if (!entity.isWorkTime()) {
+            entity.setActivityState(BLOCKED_OFF_WORK);
+            return false;
         }
-        return toBuy;
-    }
-
-    @Override
-    protected void onProductionComplete(ServerLevel level,
-                                        ProductionRecipe recipe, int batchSize) {
-        if (workBuilding == null) return;
-        WorkplaceAssignmentManager.onWorkplaceProduction(
-                level, workBuilding.getId(),
-                net.minecraft.core.registries.BuiltInRegistries.ITEM
-                        .getKey(recipe.output()).toString(),
-                batchSize * recipe.outputCount());
-    }
-
-    // =========================================================================
-    // Helpers
-    // =========================================================================
-
-    private Optional<ProductionRecipe> findRecipeForOutput(ServerLevel level,
-                                                           Building source, Item output) {
-        return RECIPES.stream()
-                .filter(r -> r.output() == output)
-                .filter(this::meetsSkillRequirements)
-                .filter(r -> hasAllInputs(level, source, r))
-                .findFirst();
-    }
-
-    private Optional<ProductionRecipe> findBestAvailable(ServerLevel level,
-                                                        Building building,
-                                                        Building source) {
-        Map<Item, Integer> quotas = stockQuotas();
-        ProductionRecipe best = null;
-        double lowestRatio = Double.MAX_VALUE;
-
-        for (ProductionRecipe r : RECIPES) {
-            if (!meetsSkillRequirements(r)) continue;
-            if (!hasAllInputs(level, source, r)) continue;
-            int stock = BuildingStorageAccess.countItem(level, building, r.output());
-            int quota = quotas.getOrDefault(r.output(), 0);
-            if (stock >= quota) continue;
-            double ratio = quota == 0 ? 0.0 : (double) stock / quota;
-            if (ratio < lowestRatio) { lowestRatio = ratio; best = r; }
+        if (entity.isWorkingBlocked()) {
+            entity.setActivityState(BLOCKED_WORK_BLOCK);
+            return false;
         }
-        return Optional.ofNullable(best);
-    }
+        if (GreetPlayerBehavior.isGreetPending(entity)) return false;
 
-    private boolean hasStoneInputs(ServerLevel level, Building building) {
-        return RECIPES.stream().anyMatch(r -> hasAllInputs(level, building, r));
-    }
-
-    private static boolean hasAllInputs(ServerLevel level, Building source,
-                                        ProductionRecipe recipe) {
-        for (var e : recipe.inputs().entrySet()) {
-            if (BuildingStorageAccess.countItem(level, source, e.getKey()) < e.getValue()) {
-                return false;
-            }
+        workBuilding = ProductionHelpers
+                .findAssignedBuilding(entity, level, BuildingType.STONEMASON)
+                .orElse(null);
+        if (workBuilding == null) {
+            entity.setActivityState(BLOCKED_NO_BUILDING);
+            return false;
         }
+        tickRoleCheck(level, workBuilding);
         return true;
     }
 
+    @Override
+    protected Optional<Plan> selectPlan(ServerLevel level, TownspersonMob entity) {
+        if (workBuilding == null) return Optional.empty();
+        StonemasonCrafts.StonemasonCraft craft = StonemasonCrafts.chooseCraft(level, workBuilding, entity);
+        if (craft == null) return Optional.empty();
+        int batch = StonemasonCrafts.batchSize(level, workBuilding, craft.recipe());
+        if (batch <= 0) return Optional.empty();
+
+        net.minecraft.core.BlockPos cutter = firstAmenityPos(level, workBuilding,
+                List.of(AmenityType.STONECUTTER));
+
+        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+
+        return Optional.of(new Plan(workBuilding, cutter,
+                craft.recipe(), Skill.MASONRY, craft.xpPerBatch(),
+                craft.activityLabel(),
+                batch, /*applyMultipliers*/ true, /*recordLedger*/ true));
+    }
+
+    @Override
+    protected void onNoPlan(ServerLevel level, TownspersonMob entity) {
+        if (workBuilding != null) {
+            Map<Item, Integer> toBuy = resourcesToBuy(level, entity, workBuilding);
+            procure(level, entity, workBuilding, toBuy);
+        }
+        entity.setActivityState(ActivityState.IDLE.withBlocking("no viable mason craft"));
+        entity.getBrain().setMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
+    }
+
+    @Override
+    protected Map<Item, Integer> resourcesToBuy(ServerLevel level, TownspersonMob entity,
+                                                Building workBuilding) {
+        return StonemasonCrafts.resourcesToBuy(level, workBuilding);
+    }
+
+    @Override
+    protected Optional<VendingIntent> vendingIntent(ServerLevel level, TownspersonMob entity,
+                                                    Plan plan) {
+        Building market = ProductionHelpers.findMarketInVillage(entity, level).orElse(null);
+        if (market == null) return Optional.empty();
+        return Optional.of(new VendingIntent(market, StonemasonCrafts.sellableOutputs(),
+                StonemasonCrafts.quotas(), DEFAULT_SURPLUS_THRESHOLD,
+                StonemasonCrafts.SELL_WINDOW_DAY_TICK));
+    }
+
+    @Override
+    protected float roleSpeedMultiplier(TownspersonMob entity) {
+        if (entity == null) return 1.0f;
+        WorkshopRole role = ProfessionRoleManager.getRole(entity, WorkshopRole.class);
+        if (role == WorkshopRole.APPRENTICE) {
+            return 1.0f / WorkshopRole.APPRENTICE.productionSpeedMultiplier();
+        }
+        return 1.0f;
+    }
+
+    private void tickRoleCheck(ServerLevel level, Building building) {
+        if (building == null) return;
+        long tick = level.getGameTime();
+        if (tick - lastRoleCheckTick >= ROLE_CHECK_INTERVAL) {
+            lastRoleCheckTick = tick;
+            WorkshopRoleAssigner.assignRoles(level, building);
+        }
+    }
 }
