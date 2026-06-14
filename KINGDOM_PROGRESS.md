@@ -4266,3 +4266,205 @@ no dangling `{@link}` to the deleted class.
    morphology is C4, not here).
 7. **No steady-state log spam.** With no charter/planned village in range there
    are no per-tick realization logs.
+
+## V5 — Frontier villages + Kingdom LOD (final slice of village-first generation)
+
+Doc 16 §9 V5. Completes the core thesis: villages exist world-wide (not only
+inside kingdom claims), and far regions don't pay enumeration/realization cost
+up front. Builds on V1 (`VillagePlacement` deterministic primitive), V2
+(`ClaimVillageEnumerator`), V3 (`CapitalPromoter`), V4 (unified
+`village_realization` pass).
+
+### Disposition (verified before code) — the claim-determinism finding (KEY)
+
+**Claims are NOT a deterministic function of seed.** `KingdomClaimComputer.compute`
+runs an imperative Dijkstra flood over `atlas.getCellByCoord(...)`:
+`KingdomClaimCosts.totalCost` returns `5.0` for an UNFILLED cell (the `cell==null`
+branch in `baseCost`) and a real terrain-keyed cost for a filled cell. So the
+claim's SHAPE depends on how much of the atlas was filled at compute time — i.e.
+on processing/fill order, not on the seed alone. The seeder pre-fills ~2500 blocks
+around the origin before computing, so a given run is reproducible-given-its-fill,
+but the claim is **order-dependent**, exactly as the dispatch warned. This finding
+gated the whole LOD design.
+
+Consequence: the frontier↔claimed reconciliation must NOT depend on what was
+processed when. We achieve that by separating the two things order can affect:
+- **POSITION is deterministic-from-seed** (V1 spread) and is the same whether a
+  region ends up frontier or claimed.
+- **OWNERSHIP/culture is derived from the (imperative) claim**, and is a monotonic
+  upgrade (default → kingdom) applied idempotently by absorption.
+So order affects *who owns a village*, never *which village exists where*.
+
+Other disposition checks:
+- `SPACING_CHUNKS=48`, `SEPARATION_CHUNKS=8` confirmed in `VillagePlacement`
+  (Garrett's ~48 tuning is already in). Frontier gets its OWN sparser knob.
+- `ClaimVillageEnumerator` enumerates V1 candidates whose cell is in the claim and
+  persists owned `SettlementCharter`s; the V4 `village_realization` pass picks
+  charters/planned villages near players, one per pass. Frontier villages must
+  flow through both — done.
+
+### Frontier placement — the deterministic SUBSET rule (absorption-clean)
+
+`VillagePlacement.FRONTIER_SPACING_MULTIPLIER = 3` (new named tunable). A region
+is a **frontier region** iff `floorMod(rx,M)==0 && floorMod(rz,M)==0`
+(`isFrontierRegion`, pure). Frontier density = `1/M²` of the dense kingdom grid
+(1 frontier village per 9 dense regions at M=3 — sparser than settled land, per
+Garrett). `floorMod` (not `%`) makes the subset symmetric across the origin, so
+negative regions follow the same rule → order-independent everywhere.
+
+Crucially the frontier candidate is the SAME `evaluateRegion(R)` candidate the
+kingdom grid would place at R (frontier is a SUBSET of the dense grid, not a
+separate grid). So when region R later falls in a claim, the kingdom OWNS the
+already-placed candidate — identical cell, identical position — with NO duplicate
+and NO reposition. This is the dispatch's strongly-preferred approach, chosen
+exactly because it makes absorption an identity and sidesteps the imperative-claim
+flicker risk. `evaluateFrontierRegion(...)` = the V1 candidate gated by
+`isFrontierRegion`.
+
+Frontier villages: `default` culture (`VillagePlacement.FRONTIER_CULTURE`), no
+owner. Persisted as `SettlementCharter` with the new `FRONTIER_KINGDOM` sentinel
+owner (`new UUID(0,0)`) — REUSES the existing record, NO new codec field
+(`SettlementCharter` stays 14 fields; Kingdom nested codec untouched at 16/16).
+`SettlementCharter.frontier(...)`, `.isFrontier()`, `.absorbedBy(kingdomId)` added.
+
+### Absorption (frontier → claimed)
+
+`VillageSavedData.absorbFrontierChartersInto(kingdom)`: any frontier charter whose
+cell the kingdom's claim contains is moved into the kingdom (re-stamped via
+`absorbedBy`, preserving id/cell/candidate/stage/realizedId), so a realized
+frontier village is simply re-owned in place; culture upgrade is derived (a
+village follows its owning kingdom). `ClaimVillageEnumerator.enumerate` now runs
+absorption FIRST, so the absorbed cell is in `chartedCells` and enumeration never
+issues a duplicate. The realization pass also has a late-absorption safety net:
+`realizeFrontier` re-resolves `getKingdomForCell` at realize time and, if claimed,
+hands off to the owned path. Dedup-clean and order-independent: same region → same
+single village whichever ran first.
+
+### Kingdom / frontier LOD (near-eager / distant-lazy)
+
+`FrontierVillageEnumerator` + the new `frontier_enumeration` tick system
+(interval 100 = 5s, priority 57, just before realization at 58). It enumerates
+frontier charters ONLY within `ENUMERATE_RADIUS_REGIONS = 3` placement regions
+(~2.3k blocks at spacing 48) of a player, bounded to `MAX_REGIONS_PER_PASS = 64`
+region evals per pass. Distant frontier is never enumerated/persisted until a
+player nears — the LOD that keeps worldgen+memory off far regions and addresses
+the "packed area → lag" report. Near-player kingdoms still claim/enumerate eagerly
+at spawn (current seeder behavior, unchanged).
+
+Given the IMPERATIVE claim mechanism, consistency is kept by RESOLVING THE CLAIM
+ON DEMAND: a region is charted as frontier only if `getKingdomForCell(cell)` is
+empty RIGHT NOW. If a kingdom later claims it, absorption re-owns the same village
+in place. Realization is unchanged Tier-2, approach-gated, one-at-a-time; frontier
+charters are now a third realization source alongside kingdom charters and legacy
+planned villages.
+
+### Named tunables (dial like SPACING)
+- `VillagePlacement.FRONTIER_SPACING_MULTIPLIER = 3` — frontier sparseness (1/M²).
+- `FrontierVillageEnumerator.ENUMERATE_RADIUS_REGIONS = 3` — LOD enumeration radius.
+- `FrontierVillageEnumerator.MAX_REGIONS_PER_PASS = 64` — per-pass region budget.
+
+### Cost-tier compliance (§1, the load-bearing rule)
+Frontier placement + the unclaimed check are Tier-0/1: load-free on-demand digests
+(via V1 `evaluateRegion`) + the persisted claim sets. NO column scan, NO
+atlas-fill forcing, NO V2 leaked into frontier placement, the claim, or
+enumeration. The only Tier-2 work remains in `village_realization` (V4, on
+approach). LOD defers WORK, not correctness — position is fixed by seed regardless
+of order.
+
+### Test coverage added (`VillagePlacementTest`)
+- `frontierSubsetIsTheEveryMthRegionRule` — the pure subset predicate (incl.
+  negative regions).
+- `frontierIsSparserThanKingdomGrid` — frontier count = `1/M²` of dense, and
+  `frontier < dense`.
+- `frontierCandidateIsIdenticalToDenseCandidate` — the ABSORPTION identity (same
+  pos/cell/role/band as the dense candidate).
+- `nonFrontierRegionsPlaceNoFrontierVillage` — non-frontier regions place no
+  frontier village (but the dense grid still would).
+- `frontierIsOrderIndependent` — forward sweep == reverse sweep.
+(Subset/density/symmetry math independently verified: ratio exactly 9.0 at M=3,
+`isFrontier(-3,-3)=true`, `(1,0)=false`, `(-1,0)=false`.)
+
+### Tie-in audit
+- **Upstream feeders.** `VillagePlacement` (frontier reuses V1); `WorldAtlas`
+  digests (load-free); persisted `KingdomClaim` sets (for the unclaimed check).
+- **Downstream callers.** `ClaimVillageEnumerator.enumerate` — updated (absorbs
+  first; signature unchanged → `CapitalGenerator` call site unaffected).
+  `village_realization` (`CharterRealizationTickSystem`) — updated (frontier
+  charters added as a third source; `realizeFrontier` with late-absorption).
+  `VillageSavedData` governance codec — frontier list added (4→5 fields, well
+  under 16); save/load wired. `Kingdom.adoptSettlementCharter` added for
+  absorption (preserves id, unlike `issueSettlementCharter`).
+- **Sibling systems.** Map data builders (`ContinentMapDataBuilder`,
+  `KingdomMapDataBuilder`) iterate KINGDOM charters only — frontier charters do
+  not pin on the map (acceptable: maps are a separate future track; realized
+  frontier villages render as normal `Village` markers, no double-pin since the
+  frontier charter advances to REALIZED on spawn). Flagged below.
+- **Ownership derivation.** `getKingdomForCell` is the single source of truth for
+  village→kingdom; frontier = a charter whose cell no claim contains. Absorption
+  is the only place the relation changes, and it only re-stamps the owner.
+- **Exhaustive switches.** No enum/sealed-type changes (no new
+  `SettlementCharterStage`, no new `MemoryModuleType`). `FRONTIER_KINGDOM` is a
+  sentinel UUID, not a new enum value.
+
+### Simplification sweep
+Classes in scope: `VillagePlacement` (+frontier methods/const), `SettlementCharter`
+(+frontier factory/sentinel/absorbedBy), `VillageSavedData` (+frontier list/helpers),
+`Kingdom` (+adoptSettlementCharter), `ClaimVillageEnumerator` (absorb-first),
+`FrontierVillageEnumerator` (new), `TickSystems`/`TickSubsystemRegistry`
+(+frontier_enumeration). No orphans introduced; no overlapping pair created —
+frontier reuses the SettlementCharter record and the V4 realization pass rather
+than parallel machinery. No V1 (`ShapeRecipe`/`ZoneRegistry`/etc.) vocabulary
+touched.
+
+### Deviations from prompt
+- LOD scope: the dispatch's "distant KINGDOMS defer enumeration" — the existing
+  seeder only spawns 2 kingdoms near world origin (`MIN/MAX_KINGDOMS=2`,
+  2k–4k blocks), so there are no genuinely-distant kingdoms to defer today. The
+  LOD that matters in practice is FRONTIER LOD (the unbounded world-wide layer),
+  which is what `frontier_enumeration` defers near-eager/distant-lazy. Distant
+  kingdom deferral is a no-op given the current seeder and is noted as a hook for
+  when multi/far-kingdom seeding lands; the consistency design (resolve claim on
+  demand) is in place for it.
+
+### Out-of-scope but flagged
+- Atlas-fill staging (§8) — untouched.
+- Grander capitals (C4/A9) — the C4 hook in `realizeCharter` is unchanged.
+- Type-aware composition — frontier role stays a label.
+- Map system rework — frontier villages do not pin pre-realization; the on-demand
+  map could compute them via `evaluateFrontierRegion` when the map track lands.
+
+### Build verification
+Build verification deferred (sandbox blocks maven.neoforged.net). Static review:
+brace balance confirmed on every touched file (VillagePlacement 71/71,
+SettlementCharter 53/53, VillageSavedData 287/287, Kingdom 308/308,
+ClaimVillageEnumerator 29/29, FrontierVillageEnumerator 25/25, TickSystems 394/394,
+TickSubsystemRegistry 44/44, VillagePlacementTest 34/34); all referenced helper
+signatures verified against source (`getKingdomForCell`, `getTerritorialClaim`,
+`CharterDigest.fromCell`, `VillageSpawner.spawnVillage`, `AtlasCell.packKey/unpack`,
+`regionForBlockX/Z`); `ClaimVillageEnumerator.enumerate` signature unchanged so the
+`CapitalGenerator` call site is unaffected; subset/density math independently
+verified in Python (ratio 9.0 at M=3).
+
+### Smoke test (user, in-world)
+1. **Fresh world.** Wait for kingdom seeding to complete.
+2. **Walk out past a kingdom's territory shading into the wilderness.** Within a
+   few hundred blocks, villages appear OUTSIDE any kingdom claim — at the sparser
+   frontier density (noticeably fewer than inside a kingdom). Console:
+   `FrontierVillageEnumerator: issued N frontier village charter(s) … default
+   culture, no owner`, then on approach `realizing FRONTIER charter '…'` →
+   `Realized FRONTIER charter '…' -> village … (no owner, default culture) ->
+   REALIZED`.
+3. **Tune density.** Raise `FRONTIER_SPACING_MULTIPLIER` (e.g. 4) → fewer frontier
+   villages on a fresh world; lower toward 1 → denser. Deterministic per seed.
+4. **Distant areas don't lag worldgen.** Roam far; frontier is only charted within
+   ~3 regions of you (no global pre-enumeration). No worldgen stall in packed
+   areas.
+5. **Absorption.** Find a frontier village near a kingdom edge; if a kingdom's
+   claim grows to include it (or via `/litv` claim tools), the village is absorbed
+   — same position, NO duplicate, now owned (kingdom culture). Console:
+   `ClaimVillageEnumerator: absorbed N frontier village(s) … re-owned in place …
+   no duplicate`.
+6. **No steady-state log spam.** Standing still with nothing new in range → no
+   per-tick frontier/realization logs.
+7. **Test suite.** `./gradlew test --tests "*VillagePlacement*"` is green,
+   including the 5 new frontier tests.

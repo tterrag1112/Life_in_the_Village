@@ -1414,6 +1414,18 @@ public class Kingdom {
         return charter;
     }
 
+    /**
+     * Track V5 -- ABSORPTION: adopt an externally-built settlement charter
+     * (preserving its id), used when a frontier charter is absorbed into this
+     * kingdom (the cell it sits in became claimed). Unlike
+     * {@link #issueSettlementCharter} this does NOT mint a new id -- the same
+     * charter (and any realized Village it points at) is simply re-owned.
+     */
+    public void adoptSettlementCharter(
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter charter) {
+        settlementCharters.add(charter);
+    }
+
     /** Looks up a settlement charter by id. */
     public Optional<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
             findSettlementCharter(UUID charterId) {

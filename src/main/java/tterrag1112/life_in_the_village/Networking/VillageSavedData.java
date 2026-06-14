@@ -108,7 +108,12 @@ public class VillageSavedData extends SavedData implements
             List<Kingdom>      kingdoms,
             List<VillageEvent> events,
             List<GuildData>    guilds,
-            List<VillageSimData> simSnapshots
+            List<VillageSimData> simSnapshots,
+            // Track V5 -- ownerless FRONTIER settlement charters (villages
+            // placed outside every kingdom claim). Owned charters live on
+            // their Kingdom; these have no owning kingdom yet (the
+            // FRONTIER_KINGDOM sentinel) until absorbed. 5/16 fields.
+            List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter> frontierCharters
     ) {
         public static final Codec<VillageGovernanceData> CODEC =
                 RecordCodecBuilder.create(i -> i.group(
@@ -122,7 +127,10 @@ public class VillageSavedData extends SavedData implements
                                 .optionalFieldOf("guilds", new ArrayList<>())
                                 .forGetter(VillageGovernanceData::guilds),
                         VillageSimData.CODEC.listOf().optionalFieldOf("simSnapshots", new ArrayList<>())
-                                .forGetter(VillageGovernanceData::simSnapshots)
+                                .forGetter(VillageGovernanceData::simSnapshots),
+                        tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter.CODEC
+                                .listOf().optionalFieldOf("frontierCharters", new ArrayList<>())
+                                .forGetter(VillageGovernanceData::frontierCharters)
                 ).apply(i, VillageGovernanceData::new));
     }
 
@@ -476,7 +484,9 @@ public class VillageSavedData extends SavedData implements
                     VillageGovernanceData.CODEC
                             .fieldOf("governanceData")
                             .forGetter(d -> new VillageGovernanceData(
-                                    d.kingdoms, d.events, d.guilds, new ArrayList<>(d.simData.values()))),
+                                    d.kingdoms, d.events, d.guilds,
+                                    new ArrayList<>(d.simData.values()),
+                                    new ArrayList<>(d.frontierCharters))),
                     VillageSocialData.CODEC
                             .fieldOf("socialData")
                             .forGetter(d -> new VillageSocialData(
@@ -575,6 +585,7 @@ public class VillageSavedData extends SavedData implements
         data.events.addAll(governanceData.events());
         data.guilds.addAll(governanceData.guilds());
         governanceData.simSnapshots().forEach(s -> data.simData.put(s.getVillageId(), s));
+        data.frontierCharters.addAll(governanceData.frontierCharters()); // Track V5
 
         // Social
         socialData.households().forEach(h ->
@@ -701,6 +712,9 @@ public class VillageSavedData extends SavedData implements
 
     // Governance
     private final List<Kingdom>           kingdoms          = new ArrayList<>();
+    /** Track V5 -- ownerless frontier settlement charters (doc 16 sec.2). */
+    private final List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            frontierCharters  = new ArrayList<>();
     private final Map<UUID, VillageSimData> simData = new LinkedHashMap<>();
     private final List<VillageEvent>      events            = new ArrayList<>();
     private final List<GuildData>         guilds            = new ArrayList<>();
@@ -1378,6 +1392,82 @@ public class VillageSavedData extends SavedData implements
             }
         }
         return Optional.empty();
+    }
+
+    // =========================================================================
+    // Track V5 — frontier (ownerless) settlement charters
+    // =========================================================================
+
+    /** All persisted frontier (ownerless) charters. */
+    public List<tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter>
+            getFrontierCharters() {
+        return Collections.unmodifiableList(frontierCharters);
+    }
+
+    /** Adds a frontier charter (does not check for duplicates — callers dedup). */
+    public void addFrontierCharter(
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter c) {
+        frontierCharters.add(c);
+        setDirty();
+    }
+
+    /** Replaces a frontier charter by id (e.g. CHARTERED -> REALIZED). */
+    public boolean updateFrontierCharter(
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter updated) {
+        for (int i = 0; i < frontierCharters.size(); i++) {
+            if (frontierCharters.get(i).id().equals(updated.id())) {
+                frontierCharters.set(i, updated);
+                setDirty();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Removes a frontier charter by id. */
+    public boolean removeFrontierCharter(UUID charterId) {
+        boolean removed = frontierCharters.removeIf(c -> c.id().equals(charterId));
+        if (removed) setDirty();
+        return removed;
+    }
+
+    /** True if a frontier charter already covers the given cell (dedup gate). */
+    public boolean hasFrontierCharterForCell(long cellKey) {
+        for (var c : frontierCharters) {
+            if (c.targetCellKey() == cellKey) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Track V5 — ABSORPTION. Moves any frontier charter whose cell {@code k}
+     * now claims into {@code k} (re-stamping its owner via
+     * {@code SettlementCharter.absorbedBy}). This is the order-independent,
+     * dedup-clean reconciliation: because a frontier village sits at the
+     * IDENTICAL candidate the kingdom grid would enumerate (the subset rule),
+     * the kingdom OWNS the already-placed/realized village rather than
+     * creating a duplicate. Run when a kingdom's claim is established or when
+     * the claim-overlay enumerator runs. Returns the number absorbed.
+     *
+     * <p>Cost-tier: pure list/set work over already-persisted charters + the
+     * claim's cell set. No scan, no atlas fill, no V2.
+     */
+    public int absorbFrontierChartersInto(Kingdom k) {
+        var claim = k.getTerritorialClaim().orElse(null);
+        if (claim == null || frontierCharters.isEmpty()) return 0;
+        java.util.Set<Long> claimed =
+                new java.util.HashSet<>(claim.claimedCellKeys());
+        int absorbed = 0;
+        var it = frontierCharters.iterator();
+        while (it.hasNext()) {
+            var fc = it.next();
+            if (!claimed.contains(fc.targetCellKey())) continue;
+            it.remove();
+            k.adoptSettlementCharter(fc.absorbedBy(k.getId()));
+            absorbed++;
+        }
+        if (absorbed > 0) setDirty();
+        return absorbed;
     }
 
     public void removeKingdom(UUID id) {

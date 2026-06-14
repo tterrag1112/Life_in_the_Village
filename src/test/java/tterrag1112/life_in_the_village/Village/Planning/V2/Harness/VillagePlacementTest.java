@@ -241,4 +241,117 @@ public class VillagePlacementTest {
             }
         }
     }
+
+    // =========================================================================
+    // Track V5 -- frontier placement (deterministic subset + absorption)
+    // =========================================================================
+
+    /**
+     * The frontier subset rule is a pure function of (rx, rz) and the
+     * compile-time multiplier: a region is frontier iff floorMod(rx,M)==0 &&
+     * floorMod(rz,M)==0. Symmetric across the origin (floorMod, not %), so
+     * negative regions follow the same rule -- order-independent everywhere.
+     */
+    @Test
+    public void frontierSubsetIsTheEveryMthRegionRule() {
+        int m = VillagePlacement.FRONTIER_SPACING_MULTIPLIER;
+        org.junit.jupiter.api.Assertions.assertTrue(m >= 1, "multiplier must be >= 1");
+        for (int rx = -2 * m; rx <= 2 * m; rx++) {
+            for (int rz = -2 * m; rz <= 2 * m; rz++) {
+                boolean expected = (m <= 1)
+                        || (Math.floorMod(rx, m) == 0 && Math.floorMod(rz, m) == 0);
+                assertEquals(expected, VillagePlacement.isFrontierRegion(rx, rz),
+                        "frontier subset rule wrong at (" + rx + "," + rz + ")");
+            }
+        }
+    }
+
+    /**
+     * Frontier is SPARSER than the kingdom grid: over an all-land area, the
+     * frontier candidate count is 1/M^2 of the dense (kingdom) count
+     * (the subset density invariant Garrett wants).
+     */
+    @Test
+    public void frontierIsSparserThanKingdomGrid() {
+        LongFunction<DigestSample> land = allLand();
+        int m = VillagePlacement.FRONTIER_SPACING_MULTIPLIER;
+        // Use a span that's a clean multiple of M so the ratio is exact.
+        int side = 6 * m;
+        int dense = 0, frontier = 0;
+        for (int rx = 0; rx < side; rx++) {
+            for (int rz = 0; rz < side; rz++) {
+                if (VillagePlacement.evaluateRegion(rx, rz, SEED, land).isPresent())
+                    dense++;
+                if (VillagePlacement.evaluateFrontierRegion(rx, rz, SEED, land).isPresent())
+                    frontier++;
+            }
+        }
+        assertEquals(side * side, dense, "dense grid: one per region on all-land");
+        // Frontier regions on [0,side) with floorMod==0: indices 0,M,2M,... =>
+        // ceil(side/M) per axis = side/M (side is a multiple of M).
+        int perAxis = side / m;
+        assertEquals(perAxis * perAxis, frontier,
+                "frontier must be exactly 1/M^2 of the dense grid");
+        assertTrue(frontier < dense, "frontier must be sparser than kingdoms");
+    }
+
+    /**
+     * ABSORPTION property: the frontier candidate at a frontier region is the
+     * IDENTICAL candidate the kingdom (dense) grid enumerates there -- same
+     * pos, same cell, same role, same band. This is what makes a claimed-later
+     * frontier village absorb with NO reposition and NO duplicate.
+     */
+    @Test
+    public void frontierCandidateIsIdenticalToDenseCandidate() {
+        LongFunction<DigestSample> land = allLand();
+        int m = VillagePlacement.FRONTIER_SPACING_MULTIPLIER;
+        int checked = 0;
+        for (int rx = -m; rx <= 3 * m; rx += m) {
+            for (int rz = -m; rz <= 3 * m; rz += m) {
+                // (rx, rz) are multiples of m -> guaranteed frontier regions.
+                assertTrue(VillagePlacement.isFrontierRegion(rx, rz));
+                Optional<VillageCandidate> dense =
+                        VillagePlacement.evaluateRegion(rx, rz, SEED, land);
+                Optional<VillageCandidate> front =
+                        VillagePlacement.evaluateFrontierRegion(rx, rz, SEED, land);
+                assertEquals(dense, front,
+                        "frontier candidate must equal the dense candidate at ("
+                                + rx + "," + rz + ") -- absorption identity");
+                checked++;
+            }
+        }
+        assertTrue(checked > 0, "expected frontier regions to check");
+    }
+
+    /** Non-frontier regions place NO frontier village even on buildable land. */
+    @Test
+    public void nonFrontierRegionsPlaceNoFrontierVillage() {
+        LongFunction<DigestSample> land = allLand();
+        int m = VillagePlacement.FRONTIER_SPACING_MULTIPLIER;
+        if (m <= 1) return; // every region is frontier; nothing to assert
+        // (1, 0) is non-frontier for any M > 1.
+        assertFalse(VillagePlacement.isFrontierRegion(1, 0));
+        assertTrue(VillagePlacement.evaluateFrontierRegion(1, 0, SEED, land).isEmpty(),
+                "non-frontier region must not place a frontier village");
+        // ...but the dense grid still would place one there.
+        assertTrue(VillagePlacement.evaluateRegion(1, 0, SEED, land).isPresent(),
+                "dense grid still places at a non-frontier region");
+    }
+
+    /** Frontier placement is order-independent (forward == reverse sweep). */
+    @Test
+    public void frontierIsOrderIndependent() {
+        LongFunction<DigestSample> land = allLand();
+        Map<String, BlockPos> forward = new HashMap<>();
+        for (int rx = -4; rx <= 4; rx++)
+            for (int rz = -4; rz <= 4; rz++)
+                VillagePlacement.evaluateFrontierRegion(rx, rz, SEED, land)
+                        .ifPresent(c -> forward.put(rx(c), c.pos()));
+        Map<String, BlockPos> reverse = new HashMap<>();
+        for (int rx = 4; rx >= -4; rx--)
+            for (int rz = 4; rz >= -4; rz--)
+                VillagePlacement.evaluateFrontierRegion(rx, rz, SEED, land)
+                        .ifPresent(c -> reverse.put(rx(c), c.pos()));
+        assertEquals(forward, reverse, "frontier placement must be order-independent");
+    }
 }

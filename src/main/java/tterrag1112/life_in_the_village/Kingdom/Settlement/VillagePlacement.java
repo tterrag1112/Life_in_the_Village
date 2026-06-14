@@ -102,6 +102,37 @@ public final class VillagePlacement {
      */
     public static final long PLACEMENT_SALT = 0x51F4E564C47L;
 
+    /**
+     * Track V5 -- the frontier-density knob. Frontier (unclaimed-land)
+     * villages are placed SPARSER than settled (claimed) land: only every
+     * {@code FRONTIER_SPACING_MULTIPLIER}-th placement region along each axis
+     * is a frontier region. Frontier density is therefore
+     * {@code 1 / (multiplier * multiplier)} of the dense kingdom grid -- at
+     * the default {@code 3} that is one frontier village per 9 dense regions
+     * (Garrett wants frontier less dense than settled land; turn this up for
+     * even sparser frontier, down toward 1 for near-kingdom density).
+     *
+     * <h3>Why a multiplier-against-the-grid, not a separate grid</h3>
+     * This is the order-independence / absorption property (doc 16 sec.2/7).
+     * A frontier region is a deterministic SUBSET of the SAME dense placement
+     * grid V2 enumerates -- see {@link #isFrontierRegion}. The frontier village
+     * at region R lands at the EXACT {@link #evaluateRegion} candidate the
+     * kingdom grid would place there. So when region R later falls inside a
+     * kingdom claim, the kingdom simply OWNS the already-placed candidate
+     * (ownership derived from the claim, culture upgraded from {@code default})
+     * with NO duplicate and NO position change -- the frontier village is
+     * absorbed, not re-placed. A separate frontier grid would risk a different
+     * position on absorption (flicker / dedup bugs); the subset rule makes
+     * absorption an identity.
+     *
+     * <p>Must be {@code >= 1}. {@code 1} = every region is a frontier region
+     * (frontier as dense as kingdoms; useful only for testing).
+     */
+    public static final int FRONTIER_SPACING_MULTIPLIER = 3;
+
+    /** Culture assigned to frontier (unclaimed) villages (doc 16 sec.2/3). */
+    public static final String FRONTIER_CULTURE = "default";
+
     private static final int CHUNK_BLOCKS = 16;
 
     // =========================================================================
@@ -258,6 +289,62 @@ public final class VillagePlacement {
     /** Placement-region Z containing the given world block Z. */
     public static int regionForBlockZ(int blockZ) {
         return Math.floorDiv(blockZ, SPACING_CHUNKS * CHUNK_BLOCKS);
+    }
+
+    // =========================================================================
+    // Track V5 -- frontier placement (the deterministic subset rule)
+    // =========================================================================
+
+    /**
+     * Whether placement region (rx, rz) is a <b>frontier region</b> -- a
+     * deterministic SUBSET of the dense kingdom grid sampled at the sparser
+     * {@link #FRONTIER_SPACING_MULTIPLIER}. A frontier region is every
+     * {@code multiplier}-th region along each axis:
+     * {@code floorMod(rx, M) == 0 && floorMod(rz, M) == 0}.
+     *
+     * <p>This is a PURE function of (rx, rz) and the compile-time constant --
+     * no seed, no digest, no atlas. It is the absorption-clean subset rule
+     * (see {@link #FRONTIER_SPACING_MULTIPLIER}): because frontier regions are
+     * a subset of the same dense grid, the frontier candidate at a region is
+     * the IDENTICAL candidate the kingdom grid enumerates there, so a region
+     * that later falls in a claim absorbs its frontier village with no
+     * duplicate and no reposition.
+     *
+     * <p>{@code floorMod} (not {@code %}) so the subset is symmetric across the
+     * origin into negative regions -- order-independent everywhere.
+     */
+    public static boolean isFrontierRegion(int rx, int rz) {
+        int m = FRONTIER_SPACING_MULTIPLIER;
+        if (m <= 1) return true; // every region is frontier (testing knob)
+        return Math.floorMod(rx, m) == 0 && Math.floorMod(rz, m) == 0;
+    }
+
+    /**
+     * Evaluates a region for a <b>frontier</b> candidate: the V1
+     * {@link #evaluateRegion} candidate, but ONLY when {@link #isFrontierRegion}
+     * holds (the sparser frontier subset). Non-frontier regions return empty
+     * here even on buildable land -- those regions only place a village if a
+     * kingdom claims them (the dense grid). Pure / load-free (Tier-0): same
+     * single injected digest read as {@link #evaluateRegion}.
+     */
+    public static Optional<VillageCandidate> evaluateFrontierRegion(
+            int regionX, int regionZ, long worldSeed,
+            LongFunction<DigestSample> digestSampler) {
+        if (!isFrontierRegion(regionX, regionZ)) return Optional.empty();
+        return evaluateRegion(regionX, regionZ, worldSeed, digestSampler);
+    }
+
+    /**
+     * Production convenience for {@link #evaluateFrontierRegion}: load-free
+     * digest via {@link AtlasSampler#sampleCell} (Tier-0, no chunk load, no
+     * persisted-atlas fill). Used by the V5 frontier enumerator + the on-demand
+     * map.
+     */
+    public static Optional<VillageCandidate> evaluateFrontierRegion(
+            net.minecraft.server.level.ServerLevel level,
+            int regionX, int regionZ) {
+        if (!isFrontierRegion(regionX, regionZ)) return Optional.empty();
+        return evaluateRegion(level, regionX, regionZ);
     }
 
     /**

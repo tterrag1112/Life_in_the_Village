@@ -123,6 +123,7 @@ public final class TickSubsystemRegistry {
         // (at their candidate point) AND legacy planned villages, picking the
         // single nearest per pass. The old VillageRealisationSystem is retired
         // (deleted) so we never run two competing realizers.
+        register(new FrontierEnumerationTickSystem()); // V5 frontier LOD enumeration
         register(new CharterRealizationTickSystem()); // V4 unified realization pass
         register(new TollGateTickSystem());
         register(new BoatCaravanTickSystem());

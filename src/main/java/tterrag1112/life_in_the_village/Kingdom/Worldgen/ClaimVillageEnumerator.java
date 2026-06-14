@@ -74,11 +74,30 @@ public final class ClaimVillageEnumerator {
             return 0;
         }
 
+        // Track V5 -- ABSORPTION FIRST. Any pre-existing FRONTIER charter
+        // whose cell this claim now contains is moved into the kingdom BEFORE
+        // enumeration, re-owned (and its village, if already realized, kept).
+        // Because frontier villages sit at the IDENTICAL candidate the kingdom
+        // grid enumerates (the subset rule), the absorbed charter's cell is in
+        // chartedCells below, so enumeration never issues a duplicate for it.
+        // This is the order-independent, flicker-free reconciliation (doc 16
+        // sec.5/7): the same region yields the same single village whether the
+        // frontier charter or the claim was processed first.
+        tterrag1112.life_in_the_village.Networking.VillageSavedData data =
+                tterrag1112.life_in_the_village.Networking.VillageSavedData.get(level);
+        int absorbed = data.absorbFrontierChartersInto(kingdom);
+        if (absorbed > 0) {
+            progress.accept("ClaimVillageEnumerator: absorbed " + absorbed
+                    + " frontier village(s) into '" + kingdom.getName()
+                    + "' (re-owned in place; culture upgrades to kingdom; no duplicate).");
+        }
+
         // Fast membership set of claimed cells.
         Set<Long> claimedCells = new HashSet<>(claim.claimedCellKeys());
 
         // Cells already charted (the capital cell issued by CapitalGenerator,
-        // plus anything pre-existing) -- never double-charter a cell.
+        // any absorbed frontier charters, plus anything pre-existing) -- never
+        // double-charter a cell.
         Set<Long> chartedCells = new HashSet<>();
         for (SettlementCharter c : kingdom.getSettlementCharters()) {
             chartedCells.add(c.targetCellKey());

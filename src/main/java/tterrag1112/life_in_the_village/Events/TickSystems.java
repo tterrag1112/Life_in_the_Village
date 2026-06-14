@@ -805,6 +805,40 @@ class ParallelismCleanupSystem implements TickSubsystem {
  * V4 realizes CHARTERED→REALIZED on approach only. Global (unclaimed) frontier
  * placement and near-eager / distant-lazy LOD are V5 — not built here.
  */
+// =============================================================================
+// FRONTIER ENUMERATION (Track V5) — interval = 100, priority = 57
+// =============================================================================
+
+/**
+ * Track V5 — the LOD-driven frontier enumeration pass. Charts ownerless
+ * frontier villages in the deterministic frontier subset
+ * ({@link tterrag1112.life_in_the_village.Kingdom.Settlement.VillagePlacement#isFrontierRegion})
+ * within a bounded radius of players, on a 5s cadence. Distant frontier is
+ * never enumerated until a player nears — the near-eager / distant-lazy LOD
+ * (doc 16 §9 V5) that keeps worldgen + memory off the hook for far regions.
+ *
+ * <p>Runs just BEFORE the realization pass (priority 57 < 58) so a freshly
+ * charted frontier village can realize the moment the player is in range, in
+ * the same 1 Hz cadence window. Tier-0/1 — load-free digests + persisted claim
+ * sets only; no scan, no atlas fill, no V2 (see the enumerator class note).
+ */
+class FrontierEnumerationTickSystem implements TickSubsystem {
+    @Override public String name()     { return "frontier_enumeration"; }
+    @Override public int    interval() { return 100; } // every 5s
+    @Override public int    priority() { return 57; }  // just before realization (58)
+
+    @Override
+    public void tick(TickContext ctx) {
+        ServerLevel level = ctx.level();
+        if (level.dimension() != net.minecraft.world.level.Level.OVERWORLD) return;
+        List<? extends ServerPlayer> players = level.players();
+        if (players.isEmpty()) return;
+        tterrag1112.life_in_the_village.Kingdom.Worldgen.FrontierVillageEnumerator
+                .enumerateNearPlayers(level, ctx.villageData(), players,
+                        level.getGameTime(), msg -> System.out.println("  " + msg));
+    }
+}
+
 class CharterRealizationTickSystem implements TickSubsystem {
 
     /** Player must be within this many blocks of the realization point. */
@@ -821,6 +855,9 @@ class CharterRealizationTickSystem implements TickSubsystem {
             new java.util.HashMap<>();
     /** Per-planned-village failure backoff, keyed by planned village id. */
     private final java.util.Map<java.util.UUID, FailureRecord> plannedFailureHistory =
+            new java.util.HashMap<>();
+    /** Track V5 -- per-frontier-charter failure backoff, keyed by charter id. */
+    private final java.util.Map<java.util.UUID, FailureRecord> frontierFailureHistory =
             new java.util.HashMap<>();
 
     private record FailureRecord(int attempts, long nextAttemptTick) {}
@@ -848,6 +885,10 @@ class CharterRealizationTickSystem implements TickSubsystem {
         BlockPos bestCharterPoint = null;
         Village bestPlanned = null;
         BlockPos bestPlannedOrigin = null;
+        // Track V5 -- frontier (ownerless) charters realize through this same
+        // pass; they are just charters with no owning kingdom yet.
+        tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter bestFrontier = null;
+        BlockPos bestFrontierPoint = null;
         double bestDistSq = REALISE_RADIUS_SQ;
 
         // ── Charters ────────────────────────────────────────────────────────
@@ -872,6 +913,7 @@ class CharterRealizationTickSystem implements TickSubsystem {
                         bestDistSq = d;
                         bestKingdom = k; bestCharter = charter; bestCharterPoint = point;
                         bestPlanned = null; bestPlannedOrigin = null;
+                        bestFrontier = null; bestFrontierPoint = null;
                     }
                 }
             }
@@ -899,6 +941,33 @@ class CharterRealizationTickSystem implements TickSubsystem {
                     bestDistSq = d;
                     bestPlanned = v; bestPlannedOrigin = origin;
                     bestKingdom = null; bestCharter = null; bestCharterPoint = null;
+                    bestFrontier = null; bestFrontierPoint = null;
+                }
+            }
+        }
+
+        // ── Frontier (ownerless) charters (Track V5) ──────────────────────────
+        for (var charter : data.getFrontierCharters()) {
+            if (!charter.isUnrealized()) continue;
+
+            FailureRecord fs = frontierFailureHistory.get(charter.id());
+            if (fs != null) {
+                if (fs.attempts() >= MAX_RETRY_ATTEMPTS) continue;
+                if (currentTick < fs.nextAttemptTick()) continue;
+            }
+
+            BlockPos point = charterRealizationPoint(level, charter);
+            if (point == null) continue;
+
+            for (ServerPlayer p : players) {
+                double dx = p.getX() - point.getX();
+                double dz = p.getZ() - point.getZ();
+                double d = dx * dx + dz * dz;
+                if (d < bestDistSq) {
+                    bestDistSq = d;
+                    bestFrontier = charter; bestFrontierPoint = point;
+                    bestKingdom = null; bestCharter = null; bestCharterPoint = null;
+                    bestPlanned = null; bestPlannedOrigin = null;
                 }
             }
         }
@@ -907,6 +976,8 @@ class CharterRealizationTickSystem implements TickSubsystem {
             realizeCharter(level, data, bestKingdom, bestCharter, bestCharterPoint, currentTick);
         } else if (bestPlanned != null) {
             realizePlanned(level, data, bestPlanned, bestPlannedOrigin, currentTick);
+        } else if (bestFrontier != null) {
+            realizeFrontier(level, data, bestFrontier, bestFrontierPoint, currentTick);
         }
     }
 
@@ -1082,6 +1153,95 @@ class CharterRealizationTickSystem implements TickSubsystem {
         kingdomOpt.ifPresent(k -> k.addVillage(spawned.getId()));
         plannedFailureHistory.remove(plannedId);
         data.setDirty();
+    }
+
+    /**
+     * Track V5 -- realize one FRONTIER (ownerless) charter at its deterministic
+     * candidate point via the V2 spawner. Identical to {@link #realizeCharter}
+     * except for ownership: a frontier village has no kingdom, so it is spawned
+     * with the {@code default} culture / no owner.
+     *
+     * <h3>Late-absorption safety net</h3>
+     * Before spawning we re-resolve {@code getKingdomForCell} -- if a kingdom
+     * claimed this cell since the charter was issued, we ABSORB it now (move it
+     * into that kingdom and realize it as an owned village) rather than spawn a
+     * stray ownerless village. This keeps ownership consistent even though the
+     * claim is imperative/order-dependent: position is fixed by seed, ownership
+     * is derived from the current claim at the moment of realization. No
+     * duplicate (the absorbed charter is the same id/cell/candidate).
+     */
+    private void realizeFrontier(
+            ServerLevel level, VillageSavedData data,
+            tterrag1112.life_in_the_village.Kingdom.Settlement.SettlementCharter charter,
+            BlockPos point, long currentTick) {
+
+        // Late-absorption: if a kingdom now claims this cell, hand off to the
+        // owned-charter path so the village is born owned (culture upgraded).
+        var ownerOpt = data.getKingdomForCell(charter.targetCellKey());
+        if (ownerOpt.isPresent()) {
+            Kingdom owner = ownerOpt.get();
+            var absorbed = charter.absorbedBy(owner.getId());
+            data.removeFrontierCharter(charter.id());
+            owner.adoptSettlementCharter(absorbed);
+            data.setDirty();
+            frontierFailureHistory.remove(charter.id());
+            realizeCharter(level, data, owner, absorbed, point, currentTick);
+            return;
+        }
+
+        String type = charter.villageType();
+        String name = charter.name();
+
+        System.out.println("VillageRealization: realizing FRONTIER charter '" + name
+                + "' (" + type + ", default culture, no owner) at " + point.toShortString());
+
+        tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                .beginAttempt();
+        java.util.Optional<Village> spawnedOpt;
+        try {
+            spawnedOpt = tterrag1112.life_in_the_village.Village.VillageSpawner
+                    .spawnVillage(level, point, type, name);
+        } catch (Exception e) {
+            tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder.record(
+                    tterrag1112.life_in_the_village.Kingdom.Placement
+                            .PlacementFailureRecorder.Reason.PLANNER_EXCEPTION,
+                    e.getClass().getSimpleName() + ": " + e.getMessage(), point, type);
+            spawnedOpt = java.util.Optional.empty();
+        }
+        boolean succeeded = spawnedOpt.isPresent();
+        tterrag1112.life_in_the_village.Kingdom.Placement.PlacementFailureRecorder
+                .endAttempt(succeeded, type, point);
+
+        if (!succeeded) {
+            FailureRecord prev = frontierFailureHistory.get(charter.id());
+            int attempts = prev == null ? 1 : prev.attempts() + 1;
+            if (attempts >= MAX_RETRY_ATTEMPTS) {
+                frontierFailureHistory.put(charter.id(), new FailureRecord(attempts, Long.MAX_VALUE));
+                System.out.println("[VillageRealization] WARN frontier charter '" + name
+                        + "' failed to realize after " + attempts
+                        + " attempts -- parked CHARTERED (relocation deferred)");
+            } else {
+                long backoff = BACKOFF_TICKS[attempts - 1];
+                frontierFailureHistory.put(charter.id(),
+                        new FailureRecord(attempts, currentTick + backoff));
+            }
+            return;
+        }
+
+        // Frontier village: no kingdom binding (ownership stays derived-from-claim,
+        // which is currently none). Advance the frontier charter to REALIZED.
+        Village spawned = spawnedOpt.get();
+        boolean updated = data.updateFrontierCharter(charter.realized(spawned.getId()));
+        if (!updated) {
+            System.out.println("[VillageRealization] WARN frontier charter '" + name
+                    + "' not found for stage-advance after spawn -- village kept, charter "
+                    + "stage unchanged");
+        }
+        frontierFailureHistory.remove(charter.id());
+        data.setDirty();
+
+        System.out.println("[VillageRealization] Realized FRONTIER charter '" + name
+                + "' -> village " + spawned.getId() + " (no owner, default culture) -> REALIZED");
     }
 }
 

@@ -90,6 +90,24 @@ public record SettlementCharter(
     /** Reusable role string — the capital role in the kingdomRoles vocab. */
     public static final String ROLE_CAPITAL = "capital";
 
+    /**
+     * Track V5 — the sentinel {@code kingdomId} for a FRONTIER (ownerless)
+     * settlement charter. A frontier village exists outside every kingdom
+     * claim; it has no owning kingdom, so its charter carries this sentinel
+     * instead of a real kingdom id (NO new codec field — the existing
+     * {@code kingdomId} carries the null-owner sentinel, per doc 16 §5 +
+     * the dispatch's "reuse the existing record with a sentinel owner").
+     * Ownership is otherwise DERIVED from the cell-claim
+     * ({@code VillageSavedData.getKingdomForCell}); a frontier charter is
+     * simply one whose cell no claim contains yet. On absorption (its cell
+     * becomes claimed) the charter is re-stamped with the real kingdom id
+     * via {@link #absorbedBy} and moved into that kingdom.
+     */
+    public static final UUID FRONTIER_KINGDOM = new UUID(0L, 0L);
+
+    /** Role label used when a frontier charter's role is unknown. */
+    public static final String ROLE_FRONTIER = "frontier";
+
     public static final Codec<SettlementCharter> CODEC = RecordCodecBuilder.create(i -> i.group(
             UUIDUtil.CODEC.fieldOf("id").forGetter(SettlementCharter::id),
             UUIDUtil.CODEC.fieldOf("kingdomId").forGetter(SettlementCharter::kingdomId),
@@ -133,9 +151,37 @@ public record SettlementCharter(
                 issuedTick);
     }
 
+    /**
+     * Track V5: a brand-new stage-0 FRONTIER charter -- ownerless
+     * ({@link #FRONTIER_KINGDOM}), never capital, {@code default} culture is
+     * implied by its lack of an owning kingdom. {@code villageType} = role
+     * label (type is near-vestigial in V2; the realizer derives the roster
+     * from terrain).
+     */
+    public static SettlementCharter frontier(UUID id, String name,
+                                             long targetCellKey, String role,
+                                             VillageSizeTier sizeBand,
+                                             CharterDigest digest, long issuedTick) {
+        return new SettlementCharter(id, FRONTIER_KINGDOM, name,
+                SettlementCharterStage.CHARTERED,
+                targetCellKey, role, role, sizeBand, false, digest,
+                Optional.empty(), Optional.empty(), Optional.empty(),
+                issuedTick);
+    }
+
     /** True when this charter has not yet realized into a Village. */
     public boolean isUnrealized() {
         return realizedVillageId.isEmpty();
+    }
+
+    /**
+     * Track V5: true when this is a FRONTIER (ownerless) charter -- its
+     * {@code kingdomId} is the {@link #FRONTIER_KINGDOM} sentinel. A frontier
+     * charter is enumerated/persisted outside any claim; it is absorbed (and
+     * loses this status) when its cell becomes claimed (see {@link #absorbedBy}).
+     */
+    public boolean isFrontier() {
+        return FRONTIER_KINGDOM.equals(kingdomId);
     }
 
     /**
@@ -190,6 +236,23 @@ public record SettlementCharter(
                 SettlementCharterStage.REALIZED,
                 targetCellKey, role, villageType, sizeBand, capital, digest,
                 surveyedAnchor, footprintScore, Optional.of(villageId),
+                issuedTick);
+    }
+
+    /**
+     * Track V5 -- ABSORPTION: re-stamp this (frontier) charter with the
+     * kingdom that now claims its cell. Preserves id / cell / candidate role /
+     * stage / survey / realization, so a frontier village that was already
+     * placed (or even realized) is simply re-owned -- NO duplicate, NO
+     * position change (doc 16 §5; the cell + candidate are identical to what
+     * the kingdom grid would have enumerated, the subset rule). The culture
+     * upgrade from {@code default} to the kingdom's is DERIVED -- a realized
+     * village's culture follows its owning kingdom, which now exists. Copy-with.
+     */
+    public SettlementCharter absorbedBy(UUID newKingdomId) {
+        return new SettlementCharter(id, newKingdomId, name, stage,
+                targetCellKey, role, villageType, sizeBand, capital, digest,
+                surveyedAnchor, footprintScore, realizedVillageId,
                 issuedTick);
     }
 }
