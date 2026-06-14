@@ -357,8 +357,26 @@ public final class V2VillageSpawnerAdapter {
         tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
                 densityProfile = tterrag1112.life_in_the_village.Village.Planning.V2
                         .Layer2.DensityProfile.of(fmap, siteCtx.tier());
+        // Market/plaza Y alignment — the MARKET plaza must share the MARKET
+        // building's ground Y or the two offset on slopes (the plaza floor
+        // used the VILLAGE ORIGIN's Y, while the hall's Y is sampled at the
+        // market-square centroid via boundMarketBest). The hall renders its
+        // floor at centre.getY()+1 (centreToPivot's placementY; the survivor
+        // Y is NOT overwritten by TerrainAdapter's targetY — that only grades
+        // the surrounding pad), so the hall's actual floor surface is the
+        // first MARKET survivor's centre.getY()+1. Pass it through so the
+        // market plaza floor matches; absent a MARKET building this stays -1
+        // and buildRealizedLayout keeps the origin-based default.
+        int marketBuildingFloorY = -1;
+        for (PlacedBuilding b : survivors) {
+            if (b.type() == BuildingType.MARKET) {
+                marketBuildingFloorY = b.centre().getY() + 1;
+                break;
+            }
+        }
         RealizedLayout realized = buildRealizedLayout(siteCtx, roads,
-                phased.civicSquare(), phased.marketSquare(), densityProfile);
+                phased.civicSquare(), phased.marketSquare(), densityProfile,
+                marketBuildingFloorY);
         Village village = new Village(villageName, villageType);
         // applyLayout sets center / town square / ring radii / gate
         // positions and the main-gate endpoint from the realised layout.
@@ -991,7 +1009,8 @@ public final class V2VillageSpawnerAdapter {
             tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB civicSquare,
             tterrag1112.life_in_the_village.Utilities.Geometry.Polygon.AABB marketSquare,
             tterrag1112.life_in_the_village.Village.Planning.V2.Layer2.DensityProfile
-                    densityProfile) {
+                    densityProfile,
+            int marketBuildingFloorY) {
         LayoutDensityProfile density = LayoutDensityProfile.forLevel(BUILDING_LEVEL);
         BlockPos anchor = siteCtx.anchor();
 
@@ -1024,7 +1043,20 @@ public final class V2VillageSpawnerAdapter {
                     centroidFormality(densityProfile, civicSquare)));
         }
         if (nonDegenerate(marketSquare)) {
-            plazas.add(squarePlaza(marketSquare, plazaFloorY,
+            // Market plaza floor — align to the MARKET building's floor
+            // (centre.getY()+1, passed in) so the pavement lands flush with
+            // the hall's ground floor instead of offset by the origin-to-
+            // market slope. PlazaPaver paves at floorY-1, so floorY ==
+            // hall floor surface puts the walkable plaza top level with the
+            // hall threshold. Falls back to the civic-square plazaFloorY
+            // (origin Y + 1) when no MARKET building exists (the plaza was
+            // emitted from a stale marketSquare, or no hall survived).
+            // Stalls seed off this same plaza floorY (padY = floorY-1), so
+            // they track the plaza and the hall together.
+            int marketFloorY = marketBuildingFloorY >= 0
+                    ? marketBuildingFloorY
+                    : plazaFloorY;
+            plazas.add(squarePlaza(marketSquare, marketFloorY,
                     tterrag1112.life_in_the_village.Village.Decoration.Plaza
                             .PlazaPurpose.MARKET,
                     centroidFormality(densityProfile, marketSquare)));
