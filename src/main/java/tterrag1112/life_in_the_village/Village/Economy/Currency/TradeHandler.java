@@ -77,16 +77,18 @@ public class TradeHandler {
         List<TradeOffer> buyOffers = new ArrayList<>();
         List<TradeOffer> sellOffers = new ArrayList<>();
 
+        // Resolve once: the merchant's own stall is the single source for both
+        // the displayed price and the displayed stock (merchant-stall-fixes B
+        // — strict per-stall), so what's shown equals what the buy path sells.
+        MarketStall ownStall = data.getStallByOwner(merchant.getUUID()).orElse(null);
         MarketPriceHelper.getAllExplicitPrices().keySet().forEach(item -> {
-            // Pricing stall mirrors the buy-path source (merchant's own stall
-            // only) so the displayed price equals the charged price.
-            MarketStall pricingStall = findOwnedStallWithItem(
-                    data, level, market.getId(), item, merchant.getUUID());
+            MarketStall pricingStall = ownStall;
 
-            // ── BUY list: only items the market actually stocks (across its
-            //    stall chests — the only merchant inventory). Matches the
-            //    buy-path source so the displayed stock equals what's sellable.
-            int stock = tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.countItem(level, market, item);
+            // ── BUY list: only items the MERCHANT'S OWN stall stocks (strict
+            //    per-stall). Matches the buy-path source so the displayed stock
+            //    equals what's sellable.
+            int stock = tterrag1112.life_in_the_village.Village.Markets.Complex
+                    .StallGoods.available(level, market, ownStall, item);
             if (stock > 0) {
                 long sell = MarketPricing.sellPrice(PricingContext.forPlayer(
                         item, level, pricingVillage, data, player, pricingStall));
@@ -330,13 +332,15 @@ public class TradeHandler {
         // =====================================================================
         if (packet.isBuying()) {
 
-            // Prefer merchant's own stall as source, then the market's stalls
-            MarketStall sourceStall = findOwnedStallWithItem(
-                    data, level, market.getId(), item, merchant.getUUID());
+            // Source is the MERCHANT'S OWN STALL only (merchant-stall-fixes B
+            // — strict per-stall, no market-wide pool). Resolve the merchant's
+            // home stall; stock is whatever that one stall holds (0 if it owns
+            // none or it's empty → clean "Out of stock").
+            MarketStall sourceStall =
+                    data.getStallByOwner(merchant.getUUID()).orElse(null);
 
-            int stock = sourceStall != null
-                    ? countInStallChest(level, sourceStall, item)
-                    : tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.countItem(level, market, item);
+            int stock = tterrag1112.life_in_the_village.Village.Markets.Complex
+                    .StallGoods.available(level, market, sourceStall, item);
 
             quantity = Math.min(quantity, stock);
             if (quantity <= 0) {
@@ -362,40 +366,33 @@ public class TradeHandler {
 
             CurrencyValue totalCost = CurrencyValue.of(pricePerItem * quantity);
 
-            // 1. Take item from stall or main chest (goods movement stays
-            //    in the caller for 1b). The source decides the pay endpoint.
-            boolean taken;
-            if (sourceStall != null) {
-                // A failed stall-take still proceeds, crediting the merchant
-                // fallback — matches the pre-1b behaviour exactly.
-                taken = takeFromStallChest(level, sourceStall, item, quantity);
-            } else {
-                taken = tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.takeItem(
-                        level, market, item, quantity);
-                if (!taken) {
-                    // Player not yet charged — abort (net-identical to the
-                    // old pay-then-refund on this branch).
-                    player.displayClientMessage(
-                            Component.literal("Failed to retrieve item."), true);
-                    return;
-                }
+            // 1. Take from the merchant's OWN stall only (strict per-stall).
+            //    quantity was already capped to that stall's stock above.
+            int got = tterrag1112.life_in_the_village.Village.Markets.Complex
+                    .StallGoods.take(level, market, sourceStall, item, quantity);
+            boolean taken = got == quantity;
+            if (!taken) {
+                // Stock shifted between the count and the take (concurrent
+                // sale). Restore the partial take and abort — player not yet
+                // charged.
+                if (got > 0) tterrag1112.life_in_the_village.Village.Markets.Complex
+                        .StallGoods.store(level, market, sourceStall, new ItemStack(item, got));
+                player.displayClientMessage(
+                        Component.literal("Failed to retrieve item."), true);
+                return;
             }
 
             // 2. Settle money via the unified helper: player pays the stall
             //    owner / merchant, village collects the market tax once.
-            SettlementParty endpoint = (sourceStall != null && taken)
-                    ? NpcEconomy.resolveStallEndpoint(level, sourceStall, merchant)
-                    : SettlementParty.npc(merchant);
+            SettlementParty endpoint =
+                    NpcEconomy.resolveStallEndpoint(level, sourceStall, merchant);
             if (!NpcEconomy.settlePurchase(SettlementParty.player(player), endpoint,
                     totalCost, village.orElse(null), level, data)) {
                 // Payment failed (quantity was pre-capped to wealth, so this
-                // is effectively unreachable) — restore the taken goods.
-                if (taken) {
-                    if (sourceStall != null)
-                        returnToStallChest(level, sourceStall, item, quantity);
-                    else tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(
-                            level, market, new ItemStack(item, quantity));
-                }
+                // is effectively unreachable) — restore the taken goods to the
+                // same stall.
+                tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods.store(
+                        level, market, sourceStall, new ItemStack(item, quantity));
                 player.displayClientMessage(
                         Component.literal("Payment failed."), true);
                 return;
@@ -457,21 +454,23 @@ public class TradeHandler {
 
             CurrencyValue totalEarned = CurrencyValue.of(pricePerItem * quantity);
 
-            // 1. Goods land in the market's stall chests (the only merchant
-            //    inventory). Try the deposit FIRST and clean-fail when no
-            //    stall chest can absorb: the player keeps the item, gets one
-            //    in-HUD notice, and is NOT charged/paid. Pre-unification this
-            //    wrote the building via storeExcludingStalls and silently
-            //    dropped the goods when the building had no chest.
+            // 1. Goods land in THIS MERCHANT'S OWN stall only (merchant-stall-
+            //    fixes B — strict per-stall, no spill across stalls, never the
+            //    building). Try the deposit FIRST and clean-fail when the stall
+            //    can't absorb: the player keeps the item, gets one in-HUD
+            //    notice, and is NOT charged/paid.
+            MarketStall sinkStall =
+                    data.getStallByOwner(merchant.getUUID()).orElse(null);
             ItemStack incoming = new ItemStack(item, quantity);
-            if (!tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(level, market, incoming)) {
+            if (!tterrag1112.life_in_the_village.Village.Markets.Complex.StallGoods
+                    .store(level, market, sinkStall, incoming)) {
                 int stored = quantity - incoming.getCount();
                 if (stored <= 0) {
                     player.displayClientMessage(Component.literal(
-                            "This market has no stall space to buy that right now."), true);
+                            "This merchant has no stall space to buy that right now."), true);
                     return;
                 }
-                quantity = stored; // partial: only buy what the stalls absorbed
+                quantity = stored; // partial: only buy what the stall absorbed
                 totalEarned = CurrencyValue.of(pricePerItem * quantity);
             }
 
@@ -617,24 +616,6 @@ public class TradeHandler {
         for (MarketStall stall : data.getStallsForMarket(market.getId())) {
             if (stall.isActive() && stall.getOwnerUUID().equals(ownerUUID)) {
                 return stall;
-            }
-        }
-        return null;
-    }
-
-    private static MarketStall findOwnedStallWithItem(VillageSavedData data,
-                                                      ServerLevel level,
-                                                      UUID marketId,
-                                                      Item item,
-                                                      UUID ownerUUID) {
-        for (MarketStall stall : data.getStallsForMarket(marketId)) {
-            if (!stall.isActive()) continue;
-            if (!stall.getOwnerUUID().equals(ownerUUID)) continue;
-            if (stall.getChestPos().equals(BlockPos.ZERO)) continue;
-            BlockEntity be = level.getBlockEntity(stall.getChestPos());
-            if (!(be instanceof net.minecraft.world.Container chest)) continue;
-            for (int i = 0; i < chest.getContainerSize(); i++) {
-                if (chest.getItem(i).is(item)) return stall;
             }
         }
         return null;

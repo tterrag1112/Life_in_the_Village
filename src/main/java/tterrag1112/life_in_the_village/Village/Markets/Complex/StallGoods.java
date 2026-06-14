@@ -1,99 +1,97 @@
 package tterrag1112.life_in_the_village.Village.Markets.Complex;
 
-import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Economy.Market.MarketStall;
 
 /**
- * Per-stall goods authority (merchant arc Phase 2c). Finishes the
- * "stall-as-endpoint" decision 1b started: 1b made the stall the money
- * endpoint ({@code NpcEconomy.resolveStallEndpoint}); 2c makes the same
- * stall's chest the <b>goods</b> endpoint. The market-building hub is
- * <b>overflow / backstock</b>: a buy draws from the stall first then the
- * hub; a sell fills the stall first then spills to the hub. A stall-less
- * sale (no stall holds the trade) uses the hub directly.
+ * Per-stall goods authority. A merchant reads and writes <b>only its own
+ * assigned stall</b> — no cross-stall draw, no market-wide pool
+ * (merchant-stall-fixes B de-pooled the old "stall first, then overflow
+ * across every stall" behaviour). The market BUILDING's own storage is
+ * never an endpoint either (that part of market-stall-unification stays:
+ * merchant goods live in stalls, never the building). The {@code market}
+ * argument is retained only for call-site symmetry and is no longer read
+ * for goods movement.
  *
- * <p>Consolidates the duplicated take/store-from-chest logic that lived in
- * {@code TradeHandler} (stall chest vs {@code storeExcludingStalls}) and
- * {@code MarketChannel} (hub-only via {@code BuildingStorageAccess}).
- * Goods movement only — money is the 1b settle's job, and the two line up
- * on the same stall.
+ * <p>Container resolution uses {@link MarketInventory#stallContainers}, the
+ * canonical single-stall footprint scan, so a stall's BARRELS (the stall
+ * templates place barrels, not chests) are all covered — not just the one
+ * block at {@code getChestPos()}.
+ *
+ * <p>Goods movement only — money is the settle's job
+ * ({@code NpcEconomy.resolveStallEndpoint}), and the two line up on the
+ * same stall.
  */
 public final class StallGoods {
 
     private StallGoods() {}
 
     /**
-     * Goods available for a trade: the merchant's own stall chest plus every
-     * other active stall chest at the market. The market BUILDING's own
-     * storage is NEVER counted (market-stall-unification: stalls are the only
-     * merchant inventory).
+     * Goods available for a trade: the total of {@code item} across the
+     * merchant's OWN stall containers only (merchant-stall-fixes B — no
+     * cross-stall pool). {@code market} is unused.
      */
     public static int available(ServerLevel level, Building market,
                                 MarketStall stall, Item item) {
-        // The whole market's stall inventory already includes this stall's
-        // chest, so a separate stall count would double-count it.
-        if (market != null) return MarketInventory.countItem(level, market, item);
-        return countIn(stallContainer(level, stall), item);
+        int total = 0;
+        for (Container c : stallContainers(level, stall)) {
+            total += countIn(c, item);
+        }
+        return total;
     }
 
     /**
-     * Takes up to {@code qty} of {@code item} for a trade — stall chest
-     * first, then the hub backstock. Returns the number actually taken.
+     * Takes up to {@code qty} of {@code item} for a trade — from the
+     * merchant's OWN stall containers only (merchant-stall-fixes B — no
+     * overflow across other stalls). Returns the number actually taken.
+     * {@code market} is unused.
      */
     public static int take(ServerLevel level, Building market, MarketStall stall,
                            Item item, int qty) {
         int remaining = qty;
-        Container sc = stallContainer(level, stall);
-        if (sc != null) remaining -= takeFrom(sc, item, remaining);
-        // Overflow draws from the market's OTHER stall chests, never the
-        // building's own storage (market-stall-unification).
-        if (remaining > 0 && market != null) {
-            remaining -= MarketInventory.takeUpTo(level, market, item, remaining);
+        for (Container c : stallContainers(level, stall)) {
+            if (remaining <= 0) break;
+            remaining -= takeFrom(c, item, remaining);
         }
         return qty - remaining;
     }
 
     /**
-     * Stores {@code stack} for a trade — into the stall chest first,
-     * overflowing to the hub only when the stall is full. A {@code null}
-     * stall stores straight to the hub (stall-less sale).
-     */
-    /**
-     * Stores {@code stack} for a trade — into the merchant's own stall chest
-     * first, overflowing to the market's OTHER stall chests when it is full.
-     * The market BUILDING's storage is NEVER a sink. A {@code null} stall
-     * stores straight across the market's stalls.
+     * Stores {@code stack} for a trade — into the merchant's OWN stall
+     * containers only (merchant-stall-fixes B — no overflow to other stalls,
+     * and never the market BUILDING). Mutates {@code stack} as it lands.
+     * {@code market} is unused.
      *
-     * @return {@code true} when the whole stack landed in a stall chest;
-     *         {@code false} (stack left with the remainder) when no stall
-     *         chest had room — the caller must keep the goods, never drop
-     *         them (market-stall-unification clean-fail contract).
+     * @return {@code true} when the whole stack landed in this stall's
+     *         containers; {@code false} (stack left with the remainder) when
+     *         this stall had no room — the caller must keep the goods, never
+     *         drop them (clean-fail contract). A {@code null}/uninitialised
+     *         stall (no containers) also returns {@code false} with the stack
+     *         intact.
      */
     public static boolean store(ServerLevel level, Building market, MarketStall stall,
                                 ItemStack stack) {
         if (stack == null || stack.isEmpty()) return true;
-        Container sc = stallContainer(level, stall);
-        if (sc != null) storeInto(sc, stack);
-        if (!stack.isEmpty() && market != null) {
-            return MarketInventory.store(level, market, stack);
+        for (Container c : stallContainers(level, stall)) {
+            storeInto(c, stack);
+            if (stack.isEmpty()) return true;
         }
         return stack.isEmpty();
     }
 
     // ── Internals ──────────────────────────────────────────────────────────
 
-    private static Container stallContainer(ServerLevel level, MarketStall stall) {
-        if (stall == null) return null;
-        BlockPos cp = stall.getChestPos();
-        if (cp == null || cp.equals(BlockPos.ZERO)) return null;
-        BlockEntity be = level.getBlockEntity(cp);
-        return be instanceof Container c ? c : null;
+    /** The merchant's own stall containers (footprint scan, barrels included)
+     *  via the canonical single-stall resolver. Empty list for a null stall
+     *  or one with no discoverable containers. */
+    private static java.util.List<Container> stallContainers(ServerLevel level,
+                                                             MarketStall stall) {
+        if (stall == null) return java.util.List.of();
+        return MarketInventory.stallContainers(level, stall);
     }
 
     private static int countIn(Container c, Item item) {
