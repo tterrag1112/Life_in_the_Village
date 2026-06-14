@@ -138,8 +138,7 @@ public class SellToMarketBehavior extends Behavior<TownspersonMob> {
         if (market == null) return;
 
         Map<Item, Integer> toSell = computeSurplus(level, entity, workBuilding);
-        AbstractProductionBehavior.executeSellForWorkshop(
-                level, entity, workBuilding, market, toSell);
+        WorkshopVending.executeSell(level, entity, workBuilding, market, toSell);
     }
 
     private static ItemStack pickRepresentativeCargo(ServerLevel level, TownspersonMob entity) {

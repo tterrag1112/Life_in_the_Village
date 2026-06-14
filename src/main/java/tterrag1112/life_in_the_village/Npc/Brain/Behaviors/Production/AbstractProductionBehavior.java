@@ -10,7 +10,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.world.Container;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.SimpleContainer;
 import net.minecraft.world.entity.ai.behavior.Behavior;
@@ -33,13 +32,10 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.GreetPlayerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.WorkPhase;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
-import tterrag1112.life_in_the_village.Profession.WorkplaceAssignmentManager;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Economy.CraftingOrder;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
-import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionStep;
@@ -121,12 +117,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     private boolean loggedRecipeStart       = false;
     private boolean loggedFirstProduction   = false;
     private boolean loggedDepositTarget     = false;
-    // Phase 6.3.4.3.1 — executeBuy diagnostic flags
-    private boolean loggedBuyEntry          = false;
-    private boolean loggedBuyAccepted       = false;
-    private boolean loggedBuyNoQuote        = false;
-    private boolean loggedBuyAffordFail     = false;
-    private boolean loggedBuyExecuteFail    = false;
+    // E-S1 — buy diagnostic flags delegated to WorkshopProcurement.DiagFlags so
+    // WorkshopProcurement.buy() carries identical one-shot semantics.
+    private final WorkshopProcurement.DiagFlags buyDiagFlags = new WorkshopProcurement.DiagFlags();
 
     protected Building workBuilding;
     protected Building market;
@@ -195,10 +188,9 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
      * to preserve the trait-driven variance.</p>
      */
     protected float productionSpeedMultiplier() {
-        if (entity == null) return 1.0f;
-        float industry = entity.getTraitVector()
-                .get(tterrag1112.life_in_the_village.Npc.Traits.TraitAxis.INDUSTRY);
-        return 1.0f - (industry * 0.15f);
+        // E-S1 — delegates to WorkshopMultipliers; subclasses that override
+        // should call super.productionSpeedMultiplier() and multiply.
+        return WorkshopMultipliers.industrySpeedMultiplier(entity);
     }
     protected boolean canStartProduction(ServerLevel level, ProductionRecipe recipe) { return true; }
 
@@ -310,21 +302,20 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     // Novice/Journeyman/Expert/Master/Grandmaster numbers.
     // =========================================================================
 
-    /** Production-step ticks are divided by this — higher = faster. */
+    /**
+     * Production-step ticks are divided by this — higher = faster.
+     * E-S1 — delegates to {@link WorkshopMultipliers#craftingSpeedMultiplier}.
+     */
     protected static float craftingSpeedMultiplier(TownspersonMob npc) {
-        int level = npc.getSkills().getLevel(Skill.CRAFTING);
-        if (level >= 85) return 1.55f;
-        if (level >= 60) return 1.35f;
-        if (level >= 30) return 1.15f;
-        return 1.0f;
+        return WorkshopMultipliers.craftingSpeedMultiplier(npc);
     }
 
-    /** Probability (0-1) of producing one bonus output item per cycle. */
+    /**
+     * Probability (0–1) of producing one bonus output item per cycle.
+     * E-S1 — delegates to {@link WorkshopMultipliers#craftingQualityChance}.
+     */
     protected static float craftingQualityChance(TownspersonMob npc) {
-        int level = npc.getSkills().getLevel(Skill.CRAFTING);
-        if (level >= 85) return 0.25f;
-        if (level >= 60) return 0.10f;
-        return 0.0f;
+        return WorkshopMultipliers.craftingQualityChance(npc);
     }
 
     // =========================================================================
@@ -773,220 +764,46 @@ public abstract class AbstractProductionBehavior extends Behavior<TownspersonMob
     }
 
     Map<Item, Integer> computeSurplusToSell(ServerLevel level) {
-        List<Item> outputs = sellableOutputs();
-        if (outputs.isEmpty()) return Map.of();
-        Building dest = outputBuilding(level);
-        if (dest == null) return Map.of();
-        Map<Item, Integer> quotas = stockQuotas();
-        Map<Item, Integer> result = new LinkedHashMap<>();
-        for (Item item : outputs) {
-            int stock = BuildingStorageAccess.countItem(level, dest, item);
-            int keep = quotas.getOrDefault(item, sellSurplusThreshold());
-            if (stock > keep) result.put(item, stock - keep);
-        }
-        return result;
+        // E-S1 — delegates to WorkshopVending.computeSurplus; resolves
+        // overrideable hooks here so the helper stays stateless.
+        return WorkshopVending.computeSurplus(
+                level, outputBuilding(level),
+                sellableOutputs(), stockQuotas(), sellSurplusThreshold());
     }
 
     private boolean isSellTime(long gameTime) {
-        long dayTime = gameTime % 24000;
-        long todayBase = gameTime - dayTime;
-        return dayTime >= sellWindowDayTick()
-                && lastDailySellTick < todayBase
-                && (gameTime - lastDailySellTick) >= MIN_SELL_INTERVAL;
+        // E-S1 — delegates to WorkshopVending.isSellTime; passes
+        // lastDailySellTick by value (field stays instance-owned here).
+        return WorkshopVending.isSellTime(
+                gameTime, lastDailySellTick, sellWindowDayTick(), MIN_SELL_INTERVAL);
     }
 
     // =========================================================================
-    // ChannelRouter procurement (extracted from Goal's executeBuy)
+    // ChannelRouter procurement — delegated to WorkshopProcurement (E-S1)
     // =========================================================================
     private void executeBuy(ServerLevel level, Map<Item, Integer> toBuy) {
-        UUID buildingId = entity.getAssignedBuildingId().orElse(null);
-        if (buildingId == null) return;
-        VillageSavedData data = VillageSavedData.get(level);
-        tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy bEconomy =
-                data.getOrCreateBuildingEconomy(buildingId);
-        Village village = entity.getAssignedVillageName()
-                .flatMap(data::getVillageByName).orElse(null);
-        if (village == null) return;
-
-        if (!loggedBuyEntry) {
-            LOGGER.debug("[{}] {} executeBuy: needs={} treasury={}br wallet={}br village={}",
-                    getClass().getSimpleName(), entity.getNpcName(),
-                    toBuy, bEconomy.getTreasury(),
-                    entity.getWallet().toBronze(), village.getName());
-            loggedBuyEntry = true;
-        }
-
-        for (Map.Entry<Item, Integer> entry : toBuy.entrySet()) {
-            Item item = entry.getKey();
-            int wanted = entry.getValue();
-            if (wanted <= 0) continue;
-            long perUnitCeiling = Math.max(1L, getItemBuyPrice(level, item));
-            tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent intent =
-                    tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeIntent.buy(
-                            item, wanted, entity.getUUID(), buildingId,
-                            village.getId(), perUnitCeiling,
-                            tterrag1112.life_in_the_village.Npc.Economy.Channels.Urgency.NORMAL,
-                            java.util.Set.of());
-            var quote = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
-                    .findBestChannel(intent, village, data, level).orElse(null);
-            if (quote == null) {
-                if (!loggedBuyNoQuote) {
-                    LOGGER.debug("[{}] {} executeBuy: NO QUOTE for {}x{} " +
-                            "(perUnitCeiling={}br). All channels declined; " +
-                            "see per-channel diagnostic flags for reasons.",
-                            getClass().getSimpleName(), entity.getNpcName(),
-                            wanted, item, perUnitCeiling);
-                    loggedBuyNoQuote = true;
-                }
-                continue;
-            }
-
-            // Phase 6.3.4.7 — partial-fill: cap qty to combined treasury
-            // + wallet budget. Building treasury is drained first; the
-            // proprietor's wallet covers the shortfall (per the 6.3.4.4.4
-            // workshop business design: "proprietor's wallet stays the
-            // income source until commerce flows through the Business").
-            // 0.9 safety margin for tax/rounding so we don't overshoot
-            // on the channel's tax-inclusive total.
-            long pricePerUnit = quote.pricePerUnit();
-            long combinedBudget = bEconomy.getTreasury() + entity.getWallet().toBronze();
-            long maxAffordableUnits = (long)((combinedBudget * 0.9) / pricePerUnit);
-            int affordableQty = (int) Math.min(quote.availableQuantity(),
-                    Math.max(0L, maxAffordableUnits));
-            if (affordableQty <= 0) {
-                if (!loggedBuyAffordFail) {
-                    LOGGER.debug("[{}] {} executeBuy: AFFORD FAIL for {}x{} " +
-                            "from channel={} (price={}br/unit, treasury={}br, " +
-                            "wallet={}br — combined budget insufficient for " +
-                            "even 1 unit)",
-                            getClass().getSimpleName(), entity.getNpcName(),
-                            wanted, item, quote.channel(), pricePerUnit,
-                            bEconomy.getTreasury(), entity.getWallet().toBronze());
-                    loggedBuyAffordFail = true;
-                }
-                continue;
-            }
-
-            // Build a partial quote so channel.execute clamps to
-            // affordableQty rather than the original full ask.
-            var partialQuote = new tterrag1112.life_in_the_village.Npc.Economy.Channels
-                    .ChannelQuote(quote.channel(), quote.intent(), pricePerUnit,
-                            affordableQty, quote.travelTimeTicks(),
-                            quote.quoteValidUntilTick(), quote.location());
-            long total = pricePerUnit * affordableQty;
-
-            // Two-source funding: drain treasury first (up to total),
-            // top up wallet from that portion so channel.execute (which
-            // spends from wallet) sees the full amount. Wallet's
-            // pre-existing balance covers any remainder.
-            long fromTreasury = Math.min(total, bEconomy.getTreasury());
-            if (fromTreasury > 0) {
-                bEconomy.withdraw(fromTreasury);
-                entity.getWallet().receive(CurrencyValue.of(fromTreasury));
-            }
-
-            var channel = tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter
-                    .registeredChannels().stream()
-                    .filter(c -> c.type() == partialQuote.channel())
-                    .findFirst().orElse(null);
-            var result = channel == null
-                    ? tterrag1112.life_in_the_village.Npc.Economy.Channels.TradeResult.fail("channel missing")
-                    : channel.execute(partialQuote, intent, level);
-            if (!result.success()) {
-                if (!loggedBuyExecuteFail) {
-                    LOGGER.debug("[{}] {} executeBuy: EXECUTE FAIL for {}x{} " +
-                            "from channel={} reason='{}'",
-                            getClass().getSimpleName(), entity.getNpcName(),
-                            affordableQty, item, partialQuote.channel(),
-                            result.failureReason());
-                    loggedBuyExecuteFail = true;
-                }
-                // Refund the treasury portion. Wallet's own contribution
-                // was never spent by the channel, so it stays put.
-                if (fromTreasury > 0) {
-                    entity.getWallet().spend(CurrencyValue.of(fromTreasury));
-                    bEconomy.depositRevenue(fromTreasury);
-                }
-                continue;
-            }
-            long actualSpent = result.totalBronze();
-            long leftover = total - actualSpent;
-            if (leftover > 0) {
-                // Channel spent less than expected (partial fill). Refund
-                // up to the treasury portion first, the rest stays in
-                // wallet for the next buy attempt.
-                long refundToTreasury = Math.min(leftover, fromTreasury);
-                if (refundToTreasury > 0) {
-                    entity.getWallet().spend(CurrencyValue.of(refundToTreasury));
-                    bEconomy.depositRevenue(refundToTreasury);
-                }
-            }
-            BuildingStorageAccess.storeItem(level, workBuilding,
-                    new ItemStack(item, result.quantityTraded()));
-            data.setDirty();
-            if (!loggedBuyAccepted) {
-                LOGGER.debug("[{}] {} executeBuy: ACCEPTED {}x{} from channel={} " +
-                        "at {}br/unit (total={}br, fromTreasury={}br, fromWallet={}br)",
-                        getClass().getSimpleName(), entity.getNpcName(),
-                        result.quantityTraded(), item, partialQuote.channel(),
-                        pricePerUnit, actualSpent, fromTreasury,
-                        Math.max(0L, actualSpent - fromTreasury));
-                loggedBuyAccepted = true;
-            }
-        }
+        // E-S1 — all buy logic lives in WorkshopProcurement.buy(); the
+        // buyDiagFlags field carries the same one-shot semantics as the
+        // five private booleans it replaced.
+        WorkshopProcurement.buy(entity, workBuilding, toBuy, level,
+                buyDiagFlags, getClass().getSimpleName());
     }
 
     // =========================================================================
-    // Static sell helper — used by SellToMarketBehavior to execute the trip.
-    // Lifted from the Goal's executeSell so the logic stays in one place.
+    // Static sell helper — forwarding stub (E-S1: logic moved to WorkshopVending)
     // =========================================================================
+    /**
+     * Execute the workshop sell trip.  E-S1: logic moved to
+     * {@link WorkshopVending#executeSell}; this stub is kept so any
+     * existing callers (including {@link SellToMarketBehavior}) continue
+     * to compile without change.
+     *
+     * @deprecated Prefer calling {@link WorkshopVending#executeSell} directly.
+     */
     public static long executeSellForWorkshop(ServerLevel level, TownspersonMob entity,
                                               Building outputBuilding, Building market,
                                               Map<Item, Integer> toSell) {
-        if (toSell.isEmpty()) return 0L;
-        if (outputBuilding == null || market == null) return 0L;
-
-        VillageSavedData data = VillageSavedData.get(level);
-        long totalRevenue = 0;
-
-        for (Map.Entry<Item, Integer> entry : toSell.entrySet()) {
-            Item item = entry.getKey();
-            int qty = entry.getValue();
-            if (!BuildingStorageAccess.takeItem(level, outputBuilding, item, qty)) continue;
-            // Goods go to the seller's own stall first, else across the
-            // market's other stall chests. The market BUILDING is never a sink
-            // (market-stall-unification). Clean-fail: if no stall chest can
-            // absorb, return the goods to the workshop and skip this item — no
-            // revenue is credited for goods that didn't actually land.
-            // MarketInventory.store deposits across the market's active stall
-            // chests (the seller's own stall included) and never the building.
-            ItemStack toMarket = new ItemStack(item, qty);
-            tterrag1112.life_in_the_village.Village.Markets.Complex.MarketInventory.store(level, market, toMarket);
-            int stored = qty - toMarket.getCount();
-            if (stored < qty) {
-                // Return the unsold remainder to the workshop — never destroyed.
-                BuildingStorageAccess.storeItem(level, outputBuilding,
-                        new ItemStack(item, qty - stored));
-            }
-            if (stored <= 0) continue;
-            final int soldQty = stored;
-            totalRevenue += Math.max(1L, Math.round(VillageEconomy.getBasePrice(item) * 0.8)) * soldQty;
-            entity.getAssignedVillageName()
-                    .flatMap(data::getVillageByName)
-                    .ifPresent(v -> VillageEconomy.postListing(
-                            level, v.getId(), entity, item, soldQty, level.getGameTime()));
-        }
-
-        if (totalRevenue > 0) {
-            CurrencyValue earnings = CurrencyValue.of(totalRevenue);
-            List<Container> containers = BuildingStorageAccess.findInventories(level, outputBuilding);
-            if (!containers.isEmpty() && containers.get(0) instanceof SimpleContainer sc) {
-                CoinHelper.giveCoins(sc, earnings);
-            }
-            WorkplaceAssignmentManager.onWorkplaceSale(
-                    level, outputBuilding.getId(), (int) totalRevenue);
-        }
-        return totalRevenue;
+        return WorkshopVending.executeSell(level, entity, outputBuilding, market, toSell);
     }
 
     // =========================================================================
