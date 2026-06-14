@@ -250,7 +250,15 @@ public final class V2FeatureMap {
 
     private static boolean isWaterFluid(BlockState state) {
         if (state.is(Blocks.WATER)) return true;
-        return state.getFluidState().is(FluidTags.WATER);
+        if (state.getFluidState().is(FluidTags.WATER)) return true;
+        // Ice variants: MOTION_BLOCKING_NO_LEAVES treats ice as solid, so
+        // frozen lakes/rivers surface as ice blocks rather than water.
+        // Classify all ice forms as water so buildings and internal roads
+        // are not placed on frozen water bodies.
+        return state.is(Blocks.ICE)
+                || state.is(Blocks.PACKED_ICE)
+                || state.is(Blocks.BLUE_ICE)
+                || state.is(Blocks.FROSTED_ICE);
     }
 
     private static boolean isStructureBlock(BlockState state) {
