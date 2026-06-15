@@ -110,16 +110,34 @@ public sealed interface Objective
      * keyed to a specific record (e.g. the SCRIBE's task carries the
      * {@code commissionId} so the fulfillment can resolve the
      * client/content/recipient from the workshop's {@code CommissionQueue}).
+     *
+     * <p>{@code at} is an optional target position for location-bound
+     * services (harvest a plot, consecrate a building, perform a rite at a
+     * location). Empty for the current call sites; populated by future
+     * world-state/authority task sources that know the target at issue time.
+     * An executor that needs a walk target reads {@code at()} and falls back
+     * to its own resolution if empty.</p>
      */
-    record PerformService(String kind, java.util.Optional<String> ref) implements Objective {
-        /** Stateless-service convenience: no subject ref. */
-        public PerformService(String kind) { this(kind, java.util.Optional.empty()); }
+    record PerformService(String kind, java.util.Optional<String> ref,
+                          java.util.Optional<GlobalPos> at) implements Objective {
+        /** Stateless-service convenience: no subject ref, no target position. */
+        public PerformService(String kind) {
+            this(kind, java.util.Optional.empty(), java.util.Optional.empty());
+        }
+
+        /** Ref-only convenience: no target position (used by all current call sites). */
+        public PerformService(String kind, java.util.Optional<String> ref) {
+            this(kind, ref, java.util.Optional.empty());
+        }
 
         public static final MapCodec<PerformService> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
                 Codec.STRING.fieldOf("kind").forGetter(PerformService::kind),
-                Codec.STRING.optionalFieldOf("ref", "").forGetter(p -> p.ref().orElse(""))
-        ).apply(i, (kind, ref) -> new PerformService(
-                kind, ref.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(ref))));
+                Codec.STRING.optionalFieldOf("ref", "").forGetter(p -> p.ref().orElse("")),
+                GlobalPos.CODEC.optionalFieldOf("at").forGetter(PerformService::at)
+        ).apply(i, (kind, ref, at) -> new PerformService(
+                kind,
+                ref.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(ref),
+                at)));
 
         @Override public Type type() { return Type.PERFORM_SERVICE; }
     }
