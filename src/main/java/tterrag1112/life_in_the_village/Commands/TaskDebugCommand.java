@@ -38,6 +38,11 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProductionTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProductionTaskSpec;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeCommissionTaskSource;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmTaskSource;
+import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmRole;
+import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -375,8 +380,150 @@ public final class TaskDebugCommand {
             }
         }
 
+        // Farm
+        if (prof == Profession.FARMER) {
+            anySource = true;
+            sb.append("§7[Farm]§r\n");
+            // Resolve assigned building to explain any forNpc failure
+            Optional<UUID> assignedId = npc.getAssignedBuildingId();
+            Building assignedBuilding = assignedId
+                    .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
+                    .orElse(null);
+            if (assignedId.isEmpty()) {
+                sb.append("  §cassigned building id: (none) — FARMHOUSE not assigned§r\n");
+            } else if (assignedBuilding == null) {
+                sb.append("  §cassigned building id: ").append(shortId(assignedId.get()))
+                  .append(" — NOT FOUND in VillageSavedData§r\n");
+            } else if (assignedBuilding.getType() != BuildingType.FARMHOUSE) {
+                sb.append("  §cassigned building: ").append(shortId(assignedBuilding.getId()))
+                  .append(" type=").append(assignedBuilding.getType().name())
+                  .append(" — expected FARMHOUSE§r\n");
+            }
+            Optional<FarmTaskSource> farmSrc = FarmTaskSource.forNpc(level, npc);
+            if (farmSrc.isEmpty()) {
+                sb.append("  §cFarmTaskSource.forNpc → empty§r "
+                        + "(not a FARMER or no assigned FARMHOUSE)\n");
+            } else {
+                sb.append("  farmhouse §afound§r (")
+                  .append(assignedBuilding != null ? shortId(assignedBuilding.getId()) : "?")
+                  .append(")\n");
+
+                // Plot breakdown
+                VillageSavedData vsd = VillageSavedData.get(level);
+                java.util.UUID fhId = assignedBuilding.getId();
+                java.util.List<FarmPlot> allFarmPlots = vsd.getFarmPlotsForFarmhouse(fhId);
+                java.util.List<FarmPlot> cropPlots    = allFarmPlots.stream()
+                        .filter(p -> p.getSubtype() == FarmPlot.PlotSubtype.CROP_FIELD)
+                        .collect(java.util.stream.Collectors.toList());
+                long now2 = level.getGameTime();
+                java.util.List<FarmPlot> activePlots = cropPlots.stream()
+                        .filter(p -> !p.isFallow())
+                        .collect(java.util.stream.Collectors.toList());
+                sb.append("  plots: total=").append(allFarmPlots.size())
+                  .append(" CROP_FIELD=").append(cropPlots.size())
+                  .append(" non-fallow=").append(activePlots.size()).append("\n");
+
+                // Role
+                FarmRole role = ProfessionRoleManager.getRole(npc, FarmRole.class);
+                boolean specBiasAnimal = (role == FarmRole.GENERALIST)
+                        && npc.getSpecializationComponent().currentId()
+                                .map(id -> id.equals(
+                                        tterrag1112.life_in_the_village.Npc.Specialization
+                                                .NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name()))
+                                .orElse(false);
+                // Matches generate() exactly: ANIMAL_SPECIALIST | ANIMAL_TENDER | specBiasAnimal.
+                // SHEPHERD / BEEKEEPER are NOT gated as animalRole in generate().
+                boolean animalRole = role == FarmRole.ANIMAL_SPECIALIST
+                        || role == FarmRole.ANIMAL_TENDER
+                        || specBiasAnimal;
+                boolean shepherdOrBeekeeper = role == FarmRole.SHEPHERD
+                        || role == FarmRole.BEEKEEPER;
+                boolean isFertilizer = role == FarmRole.FERTILIZER;
+                // Mirrors canHarvest(role) / canPlant(role) in generate() exactly.
+                // APPRENTICE is NOT in either set — generate() never included it.
+                boolean canHarvest2 = !animalRole && (role == null || role == FarmRole.GENERALIST
+                        || role == FarmRole.CROP_SPECIALIST || role == FarmRole.HARVESTER);
+                // FERTILIZER override: generate() forces canHarvest=false, canPlant=false.
+                if (isFertilizer) canHarvest2 = false;
+                boolean canPlant2 = !animalRole && !isFertilizer && (role == null
+                        || role == FarmRole.GENERALIST || role == FarmRole.CROP_SPECIALIST
+                        || role == FarmRole.PLANTER);
+                String roleStr = role != null ? role.name() : "(null=GENERALIST-equivalent)";
+                String roleVerdict;
+                if (animalRole) {
+                    roleVerdict = "§c→ ANIMAL role — zero crop tasks§r";
+                } else if (isFertilizer) {
+                    roleVerdict = "§7→ FERTILIZER — compost only (no harvest/plant/till)§r";
+                } else {
+                    roleVerdict = "§a→ harvest=" + canHarvest2 + " plant/till=" + canPlant2 + "§r";
+                }
+                sb.append("  role=").append(roleStr).append(" ").append(roleVerdict).append("\n");
+                // Advisory: SHEPHERD/BEEKEEPER are not gated as animal in generate() — they
+                // fall through to crop-capable logic just like GENERALIST would.
+                if (shepherdOrBeekeeper) {
+                    sb.append("  §e[advisory] role=").append(role.name())
+                      .append(" is NOT gated as animalRole in generate() —")
+                      .append(" treated as crop-capable (WOULD-emit counts reflect this)§r\n");
+                }
+
+                // Apprentice plot restriction — detected via EmploymentTier, NOT FarmRole.APPRENTICE.
+                boolean isApprentice2 = FarmTaskSource.isApprenticeTierFor(
+                        level, assignedBuilding, npc);
+                if (isApprentice2) {
+                    Optional<java.util.UUID> assignedPlot = npc.getAssignedPlotId();
+                    if (assignedPlot.isEmpty()) {
+                        sb.append("  §cAPPRENTICE with no assignedPlotId — zero tasks§r\n");
+                    } else {
+                        final java.util.UUID pid2 = assignedPlot.get();
+                        activePlots = activePlots.stream()
+                                .filter(p -> p.getId().equals(pid2))
+                                .collect(java.util.stream.Collectors.toList());
+                        sb.append("  apprentice assignedPlot=").append(shortId(pid2))
+                          .append(" → ").append(activePlots.size())
+                          .append(" matching active plot(s)\n");
+                    }
+                }
+
+                // Per-plot eligibility (capped at 8)
+                int plotCap = 8;
+                if (!activePlots.isEmpty() && !animalRole) {
+                    sb.append("  per-plot eligibility (mature/emptyFarmland/seeds/tillable/compost):\n");
+                    int harvest2 = 0, replant2 = 0, till2 = 0, compost2 = 0;
+                    int shown2 = 0;
+                    for (FarmPlot fp : activePlots) {
+                        FarmTaskSource.PlotEligibility elig =
+                                FarmTaskSource.plotEligibilityFor(
+                                        level, assignedBuilding, npc, fp, now2);
+                        if (shown2 < plotCap) {
+                            sb.append("    plot ").append(shortId(fp.getId()))
+                              .append(" mature=").append(elig.mature() ? "§ay§r" : "§7n§r")
+                              .append(" empty=").append(elig.emptyFarmland() ? "§ay§r" : "§7n§r")
+                              .append(" seeds=").append(elig.seedsAvailable() ? "§ay§r" : "§7n§r")
+                              .append(" tillable=").append(elig.tillable() ? "§ay§r" : "§7n§r")
+                              .append(" compost=").append(elig.compostEligible() ? "§ay§r" : "§7n§r")
+                              .append("\n");
+                        }
+                        shown2++;
+                        if (canHarvest2 && elig.mature())                          harvest2++;
+                        if (canPlant2   && elig.emptyFarmland() && elig.seedsAvailable()) replant2++;
+                        if (canPlant2   && elig.tillable())                        till2++;
+                        if (isFertilizer && !isApprentice2 && elig.compostEligible()) compost2++;
+                    }
+                    if (shown2 > plotCap) {
+                        sb.append("    ... (+").append(shown2 - plotCap).append(" more)\n");
+                    }
+                    sb.append("  FarmTaskSource WOULD emit: harvest=").append(harvest2)
+                      .append(" replant=").append(replant2)
+                      .append(" till=").append(till2)
+                      .append(" compost=").append(compost2).append(" tasks\n");
+                } else if (activePlots.isEmpty() && !animalRole) {
+                    sb.append("  §7(no non-fallow CROP_FIELD plots — zero farm tasks)§r\n");
+                }
+            }
+        }
+
         if (!anySource) {
-            sb.append("  §7NPC is not a producer/scribe and has no household"
+            sb.append("  §7NPC is not a producer/scribe/farm and has no household"
                     + " — no task sources apply.§r\n");
         }
 
@@ -394,6 +541,7 @@ public final class TaskDebugCommand {
         ProducerSpecs.generateAll(level, npc, ctx);
         ScribeCommissionTaskSource.generateFor(level, npc, ctx);
         HouseholdTaskSource.generateFor(level, npc, ctx);
+        FarmTaskSource.generateFor(level, npc, ctx);
 
         // ── Post-gen board dump ───────────────────────────────────────────────
         sb.append("\n§e--- Post-gen board state ---§r\n");
@@ -480,6 +628,19 @@ public final class TaskDebugCommand {
                     .isPresent();
             if (!hasWorkshop) return "SCRIBE_WORKSHOP not assigned";
             return "CommissionQueue has no PENDING commissions";
+        }
+
+        // Farmer with no farmhouse or no eligible plots?
+        if (prof == Profession.FARMER) {
+            if (FarmTaskSource.forNpc(level, npc).isEmpty()) {
+                return "FARMHOUSE not assigned (or assigned building is wrong type)";
+            }
+            FarmRole role = ProfessionRoleManager.getRole(npc, FarmRole.class);
+            if (role == FarmRole.ANIMAL_SPECIALIST || role == FarmRole.ANIMAL_TENDER
+                    || role == FarmRole.SHEPHERD || role == FarmRole.BEEKEEPER) {
+                return "role=" + role.name() + " → animal worker, no crop tasks";
+            }
+            return "no eligible crop plots (all fallow, or wrong role, or no mature/empty/tillable blocks)";
         }
 
         // Household with missing building?
@@ -605,7 +766,7 @@ public final class TaskDebugCommand {
         FulfillmentRegistry reg = Fulfillments.shared();
 
         appendScopeWhy(sb, level, actor, ctx2, data, reg,
-                TaskScope.WORK_PROFESSION, "WORK scope (producer/scribe)", migrated);
+                TaskScope.WORK_PROFESSION, "WORK scope (producer/scribe/farm)", migrated);
         if (hasHousehold) {
             appendScopeWhy(sb, level, actor, ctx2, data, reg,
                     TaskScope.HOUSEHOLD, "HOUSEHOLD scope", true);

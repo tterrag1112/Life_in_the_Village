@@ -128,6 +128,68 @@ public final class FarmTaskSource implements TaskSource {
 
     public IssuerRef issuer() { return issuer; }
 
+    // ── Diagnostic helper (read-only, used by TaskDebugCommand) ─────────────
+
+    /**
+     * Per-plot eligibility snapshot used by {@code TaskDebugCommand}'s farm
+     * disposition block.  Read-only — mirrors the verb-eligibility checks in
+     * {@link #generate} without mutating any board state.
+     *
+     * @param level     server level (for block lookups and storage counts)
+     * @param farmhouse the resolved FARMHOUSE building (for seed + bone-meal stock)
+     * @param farmer    the farmer NPC (for personal-inventory seed check)
+     * @param plot      the non-fallow CROP_FIELD plot to inspect
+     * @param now       current game tick (for compost-cooldown check)
+     */
+    public static PlotEligibility plotEligibilityFor(
+            ServerLevel level, Building farmhouse, TownspersonMob farmer,
+            FarmPlot plot, long now) {
+        boolean mature        = hasMatureCrop(level, plot);
+        boolean emptyFarmland = hasEmptyFarmland(level, plot);
+        // Seed check requires no instance — farmhouse and farmer already resolved.
+        boolean seedsAvail = false;
+        if (emptyFarmland) {
+            Item seedItem = plot.getCropType().resolveSeedItem();
+            int personal  = countSeedsStatic(farmer, seedItem);
+            int storage   = BuildingStorageAccess.countItem(level, farmhouse, seedItem);
+            seedsAvail    = (personal + storage) > 0;
+        }
+        boolean tillable = !plot.getTillableSurfaces(level).isEmpty();
+        boolean compost  = plot.getSoilQuality() < FarmPlot.SOIL_FALLOW_EXIT
+                && (now - plot.getLastCompostedTick()) >= COMPOST_PLOT_COOLDOWN
+                && BuildingStorageAccess.countItem(level, farmhouse, Items.BONE_MEAL) > 0;
+        return new PlotEligibility(mature, emptyFarmland, seedsAvail, tillable, compost);
+    }
+
+    /** Static seed-count helper used by {@link #plotEligibilityFor}; avoids
+     *  needing a FarmTaskSource instance for the diagnostic path. */
+    private static int countSeedsStatic(TownspersonMob farmer, Item seedItem) {
+        int total = 0;
+        net.minecraft.world.SimpleContainer inv = farmer.getPersonalInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack stack = inv.getItem(i);
+            if (!stack.isEmpty() && stack.getItem() == seedItem) total += stack.getCount();
+        }
+        return total;
+    }
+
+    /**
+     * Read-only per-plot eligibility snapshot returned by
+     * {@link #plotEligibilityFor}.
+     *
+     * @param mature         at least one CropBlock at max age in the plot
+     * @param emptyFarmland  at least one farmland block with air above
+     * @param seedsAvailable seeds for the plot's crop type exist (personal inv or farmhouse storage)
+     * @param tillable       at least one dirt/grass surface that can be tilled
+     * @param compostEligible soil below SOIL_FALLOW_EXIT, bone-meal available, past cooldown
+     */
+    public record PlotEligibility(
+            boolean mature,
+            boolean emptyFarmland,
+            boolean seedsAvailable,
+            boolean tillable,
+            boolean compostEligible) {}
+
     @Override
     public void generate(TaskContext ctx) {
         ServerLevel level = ctx.level();
@@ -372,6 +434,17 @@ public final class FarmTaskSource implements TaskSource {
 
     /** Mirrors {@code FarmerBehavior.isApprenticeTier()}. */
     private boolean isApprenticeTier(ServerLevel level) {
+        return isApprenticeTierFor(level, farmhouse, farmer);
+    }
+
+    /**
+     * Read-only apprentice check used by both {@link #generate} and
+     * {@code TaskDebugCommand}'s farm diagnostic.  Checks the
+     * {@link EmploymentTier} of {@code farmer} within the business that owns
+     * {@code farmhouse} — NOT {@code FarmRole.APPRENTICE}.
+     */
+    public static boolean isApprenticeTierFor(
+            ServerLevel level, Building farmhouse, TownspersonMob farmer) {
         BusinessSavedData bdata = BusinessSavedData.get(level);
         for (var business : bdata.getAllBusinesses()) {
             if (!business.getBuildingIds().contains(farmhouse.getId())) continue;
