@@ -24,7 +24,17 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
 
         // Spec-listed entries
         m.put(Profession.FARMER,           new ProfessionSkills(Skill.FARMING,  Skill.SURVIVAL));
-        m.put(Profession.BLACKSMITH,       new ProfessionSkills(Skill.CRAFTING, Skill.COMMERCE));
+        // Blacksmith-skill-fix — primary moves CRAFTING -> BLACKSMITHING so a
+        // spawned smith seeds the gated sub-skill (BLACKSMITHING 15-35),
+        // matching the four production professions below (CANDLEMAKING /
+        // WEAVING / CARPENTRY / MASONRY) whose primary IS the gated axis.
+        // Pre-fix the smith seeded CRAFTING 15-35 but the recipe gate was on
+        // the unseeded specialty/BLACKSMITHING -> every recipe rejected -> idle.
+        // BLACKSMITHING cascades 25% -> CRAFTING, so the parent still accrues.
+        // No other profession uses BLACKSMITHING as primary, so apprenticeship
+        // / childhood reverse-lookups gain a clean BLACKSMITHING -> BLACKSMITH
+        // mapping (was NONE). Secondary stays COMMERCE.
+        m.put(Profession.BLACKSMITH,       new ProfessionSkills(Skill.BLACKSMITHING, Skill.COMMERCE));
         m.put(Profession.GUARD,            new ProfessionSkills(Skill.COMBAT,   Skill.SURVIVAL));
         m.put(Profession.MERCHANT,         new ProfessionSkills(Skill.COMMERCE, Skill.SOCIAL));
         m.put(Profession.SCHOLAR,          new ProfessionSkills(Skill.LITERACY, Skill.MEDICINE));

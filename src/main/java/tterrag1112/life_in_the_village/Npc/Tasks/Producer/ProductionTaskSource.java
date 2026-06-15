@@ -97,12 +97,27 @@ public final class ProductionTaskSource implements TaskSource {
         TaskBoard board = data.board(issuer);
 
         // ── Primary: one ProvideItem(final) per under-quota final, NORMAL ────
+        // Skill-aware (Blacksmith-skill-fix): only emit a ProvideItem for a
+        // final the worker can actually make right now (skill gate only — the
+        // lazy-Acquire path still handles missing inputs). The board therefore
+        // EXPANDS as the worker levels up rather than carrying permanently
+        // unfulfillable tasks. Default meetsSkillFor=true makes this a no-op
+        // for specs whose finals are not skill-gated. (npc is always present
+        // for an NPC-backed source; the null-guard preserves old behavior for
+        // any future player-backed context.)
+        TownspersonMob actor = ctx.npc().orElse(null);
         for (Item out : spec.finalOutputs()) {
             int need = spec.quota(out);
             if (need <= 0) continue;
+            TaskId id = ProductionTaskIds.stable(issuer, "provide:" + ProductionTaskIds.key(out));
+            if (actor != null && !spec.meetsSkillFor(level, actor, out)) {
+                // Under-skilled for this final right now — drop the task (unless
+                // claimed / in flight) so the board reflects what's makeable.
+                removeIfUnclaimed(board, id, data);
+                continue;
+            }
             int stock = BuildingStorageAccess.countItem(level, workBuilding, out);
             int deficit = need - stock;
-            TaskId id = ProductionTaskIds.stable(issuer, "provide:" + ProductionTaskIds.key(out));
             if (deficit <= 0) {
                 removeIfUnclaimed(board, id, data);
                 continue;

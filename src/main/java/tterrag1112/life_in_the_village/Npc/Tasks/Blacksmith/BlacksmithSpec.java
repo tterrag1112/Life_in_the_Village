@@ -98,6 +98,20 @@ public final class BlacksmithSpec implements ProductionTaskSpec {
         return craftRecipeFor(output, npc).map(ProductionRecipe::inputs).orElse(Map.of());
     }
 
+    /**
+     * Skill-aware generation hook: true iff {@code npc} meets the skill gate of
+     * a crafting recipe for {@code output}. {@link #craftRecipeFor} already
+     * applies {@link BlacksmithCrafts#meetsSkillGate} with NO input check, so
+     * this is a pure skill test &mdash; the producer board only lists finals the
+     * smith can forge now and expands as the specialty (cascading to
+     * BLACKSMITHING) levels up. Smelt intermediates are unaffected (their
+     * MaintainStock reserve is governed separately and gated at low/zero skill).
+     */
+    @Override
+    public boolean meetsSkillFor(ServerLevel level, TownspersonMob npc, Item output) {
+        return craftRecipeFor(output, npc).isPresent();
+    }
+
     // ── Plan builders (folded in from the pilot's BlacksmithPlans) ───────────
 
     /** Build a craft plan for {@code output} (anvil, category-skill XP with the

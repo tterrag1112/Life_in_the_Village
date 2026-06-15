@@ -131,4 +131,22 @@ public interface ProductionTaskSpec {
 
     /** Day-tick after which surplus may be sold (the sell window opens). */
     int sellWindowDayTick();
+
+    /**
+     * Whether {@code npc} currently meets the <b>skill gate</b> for producing
+     * {@code output} (skill only &mdash; NOT inputs; the lazy-Acquire path
+     * still handles missing inputs). Drives skill-aware task generation in
+     * {@link ProductionTaskSource}: a {@code ProvideItem(final)} is only
+     * emitted for finals the worker can actually make right now, and the board
+     * naturally EXPANDS as the worker levels up &mdash; no permanently
+     * unfulfillable tasks.
+     *
+     * <p>Default {@code true}: a spec with no skill-gated finals is unchanged
+     * (every final is always emitted). Override only where finals carry a
+     * skill gate (e.g. {@link tterrag1112.life_in_the_village.Npc.Tasks
+     * .Blacksmith.BlacksmithSpec}).</p>
+     */
+    default boolean meetsSkillFor(ServerLevel level, TownspersonMob npc, Item output) {
+        return true;
+    }
 }

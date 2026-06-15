@@ -10,7 +10,6 @@ import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.item.Item;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tterrag1112.life_in_the_village.Entities.Goals.Profession.Blacksmith.BlacksmithSpecialization;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 
@@ -39,8 +38,9 @@ public class BlacksmithRecipeRegistry extends
         // instances directly. Per the 6.6.5 sign-off (Option A1 hybrid),
         // JSON files retain the single-input schema; multi-input
         // masterpieces live inline in BlacksmithProductionBehavior.
-        // Skill gating via .withSkillRequirement; skill axis inferred
-        // from output via BlacksmithSpecialization.categorize.
+        // Skill gating via .withSkillRequirement on the GENERAL
+        // BLACKSMITHING axis (Blacksmith-skill-fix); XP routing to the
+        // specialty is set later in BlacksmithSpec.craftPlan.
         List<ProductionRecipe> smelting = new ArrayList<>();
         List<ProductionRecipe> crafting = new ArrayList<>();
 
@@ -59,8 +59,13 @@ public class BlacksmithRecipeRegistry extends
                                 r.get("count").getAsInt(),
                                 r.get("ticks").getAsInt());
                         if (minSkill > 0) {
-                            Skill axis = BlacksmithSpecialization.categorize(output);
-                            recipe = recipe.withSkillRequirement(axis, minSkill);
+                            // Blacksmith-skill-fix — gate on the GENERAL
+                            // BLACKSMITHING axis (the seeded skill), not the
+                            // per-output specialty. XP ROUTING is unchanged:
+                            // it lives in BlacksmithSpec.craftPlan /
+                            // intermediatePlan (categorize -> specialty / SMELTING),
+                            // which still cascades up to BLACKSMITHING.
+                            recipe = recipe.withSkillRequirement(Skill.BLACKSMITHING, minSkill);
                         }
                         smelting.add(recipe);
                     }
@@ -83,8 +88,13 @@ public class BlacksmithRecipeRegistry extends
                                 r.get("count").getAsInt(),
                                 r.get("ticks").getAsInt());
                         if (minSkill > 0) {
-                            Skill axis = BlacksmithSpecialization.categorize(output);
-                            recipe = recipe.withSkillRequirement(axis, minSkill);
+                            // Blacksmith-skill-fix — gate on the GENERAL
+                            // BLACKSMITHING axis (the seeded skill), not the
+                            // per-output specialty. XP ROUTING is unchanged:
+                            // BlacksmithSpec.craftPlan sets the plan skill to
+                            // categorize(output) (TOOLSMITHING / WEAPONSMITHING /
+                            // ARMORSMITHING), which cascades 25% -> BLACKSMITHING.
+                            recipe = recipe.withSkillRequirement(Skill.BLACKSMITHING, minSkill);
                         }
                         crafting.add(recipe);
                     }

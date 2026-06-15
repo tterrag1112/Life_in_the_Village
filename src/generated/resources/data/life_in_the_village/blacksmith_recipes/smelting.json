@@ -21,14 +21,14 @@
     {
       "count": 1,
       "input": "minecraft:raw_gold",
-      "min_skill_level": 15,
+      "min_skill_level": 10,
       "output": "minecraft:gold_ingot",
       "ticks": 200
     },
     {
       "count": 1,
       "input": "minecraft:gold_ore",
-      "min_skill_level": 15,
+      "min_skill_level": 10,
       "output": "minecraft:gold_ingot",
       "ticks": 200
     }
