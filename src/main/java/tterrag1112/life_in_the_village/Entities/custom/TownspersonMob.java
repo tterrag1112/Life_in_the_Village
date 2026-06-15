@@ -1785,20 +1785,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
-        // Task System T2 — HOUSEHOLD-scope dispatcher, FLAG-GATED. Mirrors the
-        // WORK dispatcher's flag-gated registration: ONLY added when
-        // TaskSystemConfig.ENABLED, so with the flag off (the default) the IDLE
-        // activity is byte-identical to pre-Task-System main and HomeProduction
-        // runs the legacy baking. When on, this HOUSEHOLD-scope DoTaskBehavior
-        // drives the household food need (bake-vs-buy), and HomeProduction
-        // yields (TaskMigration.ownsHousehold). Added at IDLE priority 0 (the
-        // slot HomeProductionBehavior occupies), scoped to the HOUSEHOLD board
-        // only so it never grabs profession (WORK) tasks.
-        if (tterrag1112.life_in_the_village.Npc.Tasks.TaskSystemConfig.ENABLED) {
-            brain.addActivity(Activity.IDLE, 0, ImmutableList.of(
-                    new tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior(
-                            tterrag1112.life_in_the_village.Npc.Tasks.TaskScope.HOUSEHOLD)));
-        }
+        // Task System T2 — HOUSEHOLD-scope dispatcher, always registered.
+        // This DoTaskBehavior instance runs in the IDLE activity at priority 0
+        // (the slot HomeProductionBehavior occupies). It is scoped to the
+        // HOUSEHOLD board only so it never grabs profession (WORK) tasks.
+        // Its scopeGateOpen check (TaskMigration.ownsHousehold, always true)
+        // and HomeProductionBehavior's yield gate ensure consistent ownership.
+        brain.addActivity(Activity.IDLE, 0, ImmutableList.of(
+                new tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior(
+                        tterrag1112.life_in_the_village.Npc.Tasks.TaskScope.HOUSEHOLD)));
 
         // SOCIAL — Phase 6.2.d.5 ordering (Visitor universal, ChildBirth
         // universal urgent placement):
@@ -1890,19 +1885,15 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 1, workBehaviors);
 
-        // Task System T0 — universal dispatcher, FLAG-GATED. Added at the
-        // same WORK priority (1) as the other universal entries, but ONLY
-        // when TaskSystemConfig.ENABLED. With the flag off (the default)
-        // this block never runs, so the brain is byte-identical to
-        // pre-Task-System main. When on, DoTaskBehavior gathers the NPC's
-        // eligible tasks across its boards, ranks, and dispatches; with
-        // empty boards/registry (T0) it simply sets NO_ACTIONABLE_WORK and
-        // yields, like the production behaviors' idle path.
-        if (tterrag1112.life_in_the_village.Npc.Tasks.TaskSystemConfig.ENABLED) {
-            brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
-                    .WORK.get(), 1, ImmutableList.of(
-                            new tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior()));
-        }
+        // Task System — WORK-scope dispatcher, always registered. Added at
+        // WORK priority 1 alongside the other universal entries. DoTaskBehavior
+        // self-gates via scopeGateOpen (TaskMigration.isMigrated) so it only
+        // acts for migrated professions; every other profession continues to
+        // run its legacy WORK@0 behavior. With empty boards/registry it sets
+        // NO_ACTIONABLE_WORK and yields, matching the legacy idle path.
+        brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                .WORK.get(), 1, ImmutableList.of(
+                        new tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior()));
 
         // Greet customers during WORK — priority 0 so it pre-empts the manning/
         // production behavior when a player enters the workplace. GREET_TARGET-

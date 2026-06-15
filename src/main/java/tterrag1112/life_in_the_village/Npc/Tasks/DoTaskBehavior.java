@@ -15,10 +15,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The universal Task-System dispatcher. Wired into the WORK activity at
- * priority 1, but ONLY when {@link TaskSystemConfig#ENABLED} (see
- * {@code TownspersonMob.makeBrain}) — with the flag off it is never added
- * to the brain, so it has zero effect.
+ * The universal Task-System dispatcher. Wired unconditionally into the WORK
+ * activity at priority 1 (see {@code TownspersonMob.makeBrain}). The runtime
+ * gate is {@link #scopeGateOpen}: for WORK_PROFESSION it checks
+ * {@link TaskMigration#isMigrated}; for HOUSEHOLD it delegates to
+ * {@link TaskMigration#ownsHousehold}. No static flag involved.
  *
  * <h3>T1 — migration gating</h3>
  * The dispatcher only acts for a profession in {@link TaskMigration}

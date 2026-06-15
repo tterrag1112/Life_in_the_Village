@@ -27,7 +27,6 @@ import tterrag1112.life_in_the_village.Npc.Tasks.TaskBoard;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskContext;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskSavedData;
-import tterrag1112.life_in_the_village.Npc.Tasks.TaskSystemConfig;
 import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdFood;
 import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
@@ -46,18 +45,11 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * {@code /litv tasks ...} — runtime toggle and visibility for the Task System.
+ * {@code /litv tasks ...} — visibility and diagnostics for the Task System.
  *
  * <ul>
- *   <li>{@code /litv tasks enable} / {@code disable} — calls
- *       {@link TaskSystemConfig#setEnabled} and reports the new state.
- *       Because {@link DoTaskBehavior} is added to an NPC's brain at
- *       construction time (gated by {@link TaskSystemConfig#ENABLED}),
- *       toggling at runtime only affects NPCs spawned <em>after</em> the
- *       toggle — already-loaded NPCs keep their current brain until they
- *       are reloaded (relog or kill+respawn).</li>
- *   <li>{@code /litv tasks status} — prints the current flag value and
- *       the set of migrated professions.</li>
+ *   <li>{@code /litv tasks status} — prints the migrated profession set and
+ *       confirms households are always task-owned.</li>
  *   <li>{@code /litv tasks inspect} — finds the nearest {@link TownspersonMob}
  *       within 16 blocks of the source; prints its profession, migration
  *       status, claimed task (if any), and the ranked eligible tasks from
@@ -65,12 +57,11 @@ import java.util.UUID;
  *       separate {@code board} subcommand is not needed because the NPC's
  *       membership refs give direct board access.</li>
  *   <li>{@code /litv tasks gen} — force-runs the task sources for the
- *       nearest NPC RIGHT NOW, bypassing the flag, the work-schedule
- *       activity, and the 100-tick refresh throttle. Prints pre-gen
- *       diagnostics (why zero tasks might be produced), executes the
- *       generation, then dumps the resulting board state. Useful for
- *       definitively separating "generation is broken" from "the brain
- *       or schedule is never letting the dispatcher run".</li>
+ *       nearest NPC RIGHT NOW, bypassing the work-schedule activity and the
+ *       100-tick refresh throttle. Prints pre-gen diagnostics (why zero tasks
+ *       might be produced), executes the generation, then dumps the resulting
+ *       board state. Useful for definitively separating "generation is broken"
+ *       from "the brain or schedule is never letting the dispatcher run".</li>
  * </ul>
  *
  * <p>Debug-only: no change to task selection, scoring, or execution logic.</p>
@@ -85,10 +76,6 @@ public final class TaskDebugCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(Commands.literal("litv")
                 .then(Commands.literal("tasks")
-                        .then(Commands.literal("enable")
-                                .executes(TaskDebugCommand::handleEnable))
-                        .then(Commands.literal("disable")
-                                .executes(TaskDebugCommand::handleDisable))
                         .then(Commands.literal("status")
                                 .executes(TaskDebugCommand::handleStatus))
                         .then(Commands.literal("inspect")
@@ -97,41 +84,15 @@ public final class TaskDebugCommand {
                                 .executes(TaskDebugCommand::handleGen))));
     }
 
-    // ── /litv tasks enable ────────────────────────────────────────────────────
-
-    private static int handleEnable(CommandContext<CommandSourceStack> ctx) {
-        TaskSystemConfig.setEnabled(true);
-        ctx.getSource().sendSuccess(() -> Component.literal(
-                "§aTask system ENABLED.§r\n"
-                + "§7Note: already-loaded NPCs retain their current brain. "
-                + "Relog or kill+respawn an NPC to pick up DoTaskBehavior."), false);
-        return 1;
-    }
-
-    // ── /litv tasks disable ───────────────────────────────────────────────────
-
-    private static int handleDisable(CommandContext<CommandSourceStack> ctx) {
-        TaskSystemConfig.setEnabled(false);
-        ctx.getSource().sendSuccess(() -> Component.literal(
-                "§cTask system DISABLED.§r\n"
-                + "§7Note: already-loaded NPCs retain their current brain. "
-                + "Relog or kill+respawn an NPC to remove DoTaskBehavior."), false);
-        return 1;
-    }
-
     // ── /litv tasks status ────────────────────────────────────────────────────
 
     private static int handleStatus(CommandContext<CommandSourceStack> ctx) {
-        boolean on = TaskSystemConfig.isEnabled();
-        String flag = on ? "§aENABLED§r" : "§cDISABLED§r";
         Set<tterrag1112.life_in_the_village.Profession.Profession> migrated =
                 TaskMigration.migrated();
         StringBuilder sb = new StringBuilder();
         sb.append("§e=== Task System Status ===\n");
-        sb.append("  flag      = ").append(flag).append("\n");
-        sb.append("  migrated  = ").append(migrated).append("\n");
-        sb.append("  JVM prop  = ").append(
-                System.getProperty(TaskSystemConfig.SYSTEM_PROPERTY, "(not set)"));
+        sb.append("  migrated   = ").append(migrated).append("\n");
+        sb.append("  households = §atask-owned (always)§r");
         ctx.getSource().sendSuccess(() -> Component.literal(sb.toString()), false);
         return 1;
     }
@@ -159,18 +120,12 @@ public final class TaskDebugCommand {
         boolean migrated = TaskMigration.isMigrated(prof);
         // T2 — a household member's food tasks live on its HOUSEHOLD board even
         // when its profession isn't migrated, so show boards for either path.
-        boolean householdMigrated = TaskMigration.ownsHousehold() && npc.getHouseId().isPresent();
-        boolean flagOn   = TaskSystemConfig.isEnabled();
+        boolean householdMigrated = npc.getHouseId().isPresent();
 
         sb.append("§e=== Task inspect: §f").append(npc.getNpcName())
           .append("§e (").append(shortId(npc.getUUID())).append(")§e ===\n");
         sb.append("  profession = §f").append(prof.name()).append("§r\n");
         sb.append("  migrated   = ").append(migrated ? "§ayes§r" : "§cno§r").append("\n");
-        sb.append("  flag       = ").append(flagOn ? "§aON§r" : "§cOFF§r");
-        if (!flagOn) {
-            sb.append(" §7(DoTaskBehavior inactive — enable with /litv tasks enable)§r");
-        }
-        sb.append("\n");
 
         sb.append("  household  = ")
           .append(householdMigrated ? "§atask-owned§r" : "§7n/a§r").append("\n");
@@ -206,10 +161,8 @@ public final class TaskDebugCommand {
                 sb.append("  score      = §f")
                   .append(String.format(Locale.ROOT, "%.3f", score)).append("§r\n");
             }
-        } else if (flagOn) {
-            sb.append("§7(none — DoTaskBehavior not running this tick)§r\n");
         } else {
-            sb.append("§7(flag off — DoTaskBehavior not in brain)§r\n");
+            sb.append("§7(none — DoTaskBehavior not running this tick)§r\n");
         }
 
         // ── Board dump: ranked eligible tasks across all boards ──────────────
@@ -281,7 +234,6 @@ public final class TaskDebugCommand {
     private static void appendGen(StringBuilder sb, ServerLevel level, TownspersonMob npc) {
         Profession prof = npc.getProfession();
         boolean migrated = TaskMigration.isMigrated(prof);
-        boolean flagOn   = TaskSystemConfig.isEnabled();
         TaskContext ctx  = new TaskContext(level, npc);
 
         // ── Header ────────────────────────────────────────────────────────────
@@ -290,11 +242,6 @@ public final class TaskDebugCommand {
         sb.append("  profession = §f").append(prof.name()).append("§r\n");
         sb.append("  uuid       = §f").append(npc.getUUID()).append("§r\n");
         sb.append("  migrated?  = ").append(migrated ? "§ayes§r" : "§cno§r").append("\n");
-        sb.append("  flag       = ").append(flagOn ? "§aON§r" : "§cOFF§r");
-        if (!flagOn) {
-            sb.append(" §7(tasks will be written but dispatcher won't consume them until ON)§r");
-        }
-        sb.append("\n");
 
         // memberships
         sb.append("  memberships:\n");
@@ -490,10 +437,6 @@ public final class TaskDebugCommand {
             String reason = inferReason(level, npc, matchedSpec);
             sb.append("§cNo tasks generated.§r See pre-gen diagnostics above.\n")
               .append("  Likely reason: §f").append(reason).append("§r");
-        }
-        if (!flagOn) {
-            sb.append("\n§7  (flag OFF — dispatcher will not consume these tasks"
-                    + " until /litv tasks enable is run)§r");
         }
     }
 

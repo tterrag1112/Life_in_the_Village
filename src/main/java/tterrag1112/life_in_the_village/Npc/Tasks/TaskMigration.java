@@ -6,10 +6,9 @@ import java.util.EnumSet;
 import java.util.Set;
 
 /**
- * T1 — the one-profession-at-a-time migration gate. A profession in this
- * set drives its work through the Task System (when
- * {@link TaskSystemConfig#ENABLED}); every other profession keeps its
- * legacy production behavior untouched.
+ * The per-profession migration gate. A profession in this set drives its
+ * work through the Task System; every other profession keeps its legacy
+ * production behavior untouched.
  *
  * <p>Two consumers:
  * <ul>
@@ -17,15 +16,14 @@ import java.util.Set;
  *       for a migrated profession (else it declines so the legacy WORK@0
  *       behavior runs).</li>
  *   <li>The legacy production behavior of a migrated profession yields
- *       when {@code ENABLED && isMigrated(profession)}, falling through
- *       from WORK@0 to {@link DoTaskBehavior} at WORK@1.</li>
+ *       when {@code isMigrated(profession)}, falling through from WORK@0
+ *       to {@link DoTaskBehavior} at WORK@1.</li>
  * </ul>
  *
- * <p>T2 sweeps CANDLEMAKER, WEAVER, CARPENTER, and STONEMASON onto the
- * Task System alongside the existing BLACKSMITH. The set is intentionally
- * NOT flag-gated itself — the {@link TaskSystemConfig#ENABLED} flag is the
- * master switch; this set is the per-profession selector consulted only when
- * the flag is on.</p>
+ * <p>There is no master feature flag: the migration set is the sole gate.
+ * Professions in the set are task-driven on every load without any
+ * flag/respawn required; professions not in the set run legacy behavior
+ * exactly as before.</p>
  */
 public final class TaskMigration {
 
@@ -44,29 +42,28 @@ public final class TaskMigration {
         return profession != null && MIGRATED.contains(profession);
     }
 
-    /** True if the Task System should own {@code profession}'s work right
-     *  now: master flag on AND the profession is migrated. The single
-     *  predicate both the dispatcher gate and the legacy-yield gate use. */
+    /**
+     * True if the Task System should own {@code profession}'s work: the
+     * profession is in the migrated set. The single predicate both the
+     * dispatcher gate and the legacy-yield gate use. No flag involved.
+     */
     public static boolean ownsWork(Profession profession) {
-        return TaskSystemConfig.ENABLED && isMigrated(profession);
+        return isMigrated(profession);
     }
 
     /**
-     * T2 — whether the Task System owns HOUSEHOLD-scope chores (food upkeep)
-     * right now. The household migration is <b>non-profession</b>: for the
-     * pilot every household is task-migrated when the master flag is on (no
-     * per-profession or per-household selector). The two consumers mirror the
-     * profession path:
+     * T2 — whether the Task System owns HOUSEHOLD-scope chores (food upkeep).
+     * Household migration is non-profession: every household is always
+     * task-migrated. Always returns {@code true}. The two consumers mirror
+     * the profession path:
      * <ul>
      *   <li>the HOUSEHOLD-scope {@code DoTaskBehavior} (IDLE) gates on this;</li>
      *   <li>{@code HomeProductionBehavior.selectPlan} yields when this is true,
      *       so the legacy IDLE baking stands down for the household dispatcher.</li>
      * </ul>
-     * Flag off &rarr; false &rarr; no IDLE dispatcher acts and HomeProduction
-     * runs exactly as today.
      */
     public static boolean ownsHousehold() {
-        return TaskSystemConfig.ENABLED;
+        return true;
     }
 
     /** Snapshot of the migrated set (defensive copy). */
