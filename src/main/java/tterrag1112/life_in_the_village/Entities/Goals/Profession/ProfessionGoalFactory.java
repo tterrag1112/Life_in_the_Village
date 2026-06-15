@@ -266,8 +266,8 @@ public final class ProfessionGoalFactory {
 
         // Phase 6.2.d.3 — scribal + healer service cluster all migrated
         // to per-profession behaviors via ProfessionBrainFactory at WORK @0.
-        // SCRIBE keeps its 6.2.b postal SOCIAL @7 entry; the work-phase
-        // ScribeWorkBehavior layers in at WORK @0.
+        // SCRIBE keeps its 6.2.b postal SOCIAL @7 entry (PostalBehavior);
+        // ScribeWorkBehavior retired T7 — DoTaskBehavior covers WORK.
         REGISTRARS.put(Profession.SCRIBE, npc -> {});
         REGISTRARS.put(Profession.LIBRARIAN, npc -> {});
         REGISTRARS.put(Profession.SCHOLAR, npc -> {});

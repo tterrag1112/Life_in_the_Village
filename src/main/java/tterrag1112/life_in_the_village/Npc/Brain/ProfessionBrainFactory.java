@@ -12,13 +12,9 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.GuardScanForHos
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.KingdomRulerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Civic.VillageLeaderBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BakerProductionBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BlacksmithProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderMaintenanceBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderRepaintBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CandlemakerProductionBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.CarpenterProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerLivestockVisitBehavior;
@@ -26,12 +22,8 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ShepherdBe
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BeekeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MillerProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MinerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScholarBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScribeWorkBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.StonemasonProductionBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WeaverProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.CaravanMerchantBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.BusinessWorkerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.GuildWorkerBehavior;
@@ -67,40 +59,18 @@ public final class ProfessionBrainFactory {
             new EnumMap<>(Profession.class);
 
     static {
-        // SCRIBE: postal delivery during SOCIAL (Phase 6.2.b) + work-phase
-        // commission processing during WORK (Phase 6.2.d.3).
-        REGISTRARS.put(Profession.SCRIBE, (npc, brain) -> {
-            brain.addActivity(NpcActivities.SOCIAL.get(), 7,
-                    ImmutableList.of(new PostalBehavior()));
-            brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new ScribeWorkBehavior()));
-        });
+        // SCRIBE: postal delivery during SOCIAL (Phase 6.2.b).
+        // ScribeWorkBehavior (WORK@0) retired T7 — DoTaskBehavior (universal WORK@1)
+        // drives scribe task execution via ScribeService.
+        REGISTRARS.put(Profession.SCRIBE, (npc, brain) ->
+                brain.addActivity(NpcActivities.SOCIAL.get(), 7,
+                        ImmutableList.of(new PostalBehavior())));
 
-        // Phase 6.2.d.1 — workshop family: each profession adds its
-        // ProductionBehavior to WORK @ 0. AbstractProductionBehavior writes
-        // CARGO_DESTINATION when surplus accumulates, which SellToMarketBehavior
-        // (universal, also in WORK) consumes to do the market trip.
-        REGISTRARS.put(Profession.BAKER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new BakerProductionBehavior())));
-        REGISTRARS.put(Profession.BLACKSMITH, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new BlacksmithProductionBehavior())));
-        REGISTRARS.put(Profession.CANDLEMAKER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new CandlemakerProductionBehavior())));
-        REGISTRARS.put(Profession.CARPENTER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new CarpenterProductionBehavior())));
-        REGISTRARS.put(Profession.MILLER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new MillerProductionBehavior())));
-        REGISTRARS.put(Profession.STONEMASON, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new StonemasonProductionBehavior())));
-        REGISTRARS.put(Profession.WEAVER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new WeaverProductionBehavior())));
+        // T7: BAKER, BLACKSMITH, CANDLEMAKER, CARPENTER, MILLER, STONEMASON,
+        // WEAVER — legacy *ProductionBehavior registrar entries retired.
+        // DoTaskBehavior (universal WORK@1 in TownspersonMob.makeBrain) drives
+        // all 7 professions via the task system; no per-profession WORK@0 entry
+        // is needed. SellToMarketBehavior (universal WORK@0) handles surplus sales.
 
         // Phase 6.2.d.2 — outdoor work cluster.
         // BUILDER: 3 behaviors. Primary build-queue at WORK @ 0;
