@@ -4,10 +4,15 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.phys.AABB;
 import tterrag1112.life_in_the_village.Entities.HouseholdData;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
@@ -89,7 +94,9 @@ public final class TaskDebugCommand {
                         .then(Commands.literal("gen")
                                 .executes(TaskDebugCommand::handleGen))
                         .then(Commands.literal("why")
-                                .executes(TaskDebugCommand::handleWhy))));
+                                .executes(TaskDebugCommand::handleWhy))
+                        .then(Commands.literal("storage")
+                                .executes(TaskDebugCommand::handleStorage))));
     }
 
     // ── /litv tasks status ────────────────────────────────────────────────────
@@ -757,6 +764,229 @@ public final class TaskDebugCommand {
             sb.append("  building storage, wrong building type assigned, or an intermediate\n");
             sb.append("  Acquire dep unsatisfied. See fulfillment detail in dry-run above.\n");
         }
+    }
+
+
+    // ── /litv tasks storage ───────────────────────────────────────────────────
+
+    private static final int STORAGE_SCAN_RADIUS = 12;
+    /** Interesting items to summarise explicitly. */
+    private static final List<Item> KEY_ITEMS = List.of(
+            Items.RAW_IRON, Items.RAW_COPPER, Items.COAL, Items.CHARCOAL, Items.IRON_INGOT);
+    private static final int MAX_DISTINCT_ITEMS = 30;
+
+    private static int handleStorage(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (!(src.getLevel() instanceof ServerLevel level)) {
+            src.sendFailure(Component.literal("/litv tasks storage must be run server-side."));
+            return 0;
+        }
+        TownspersonMob npc = findNearestNpc(src, level);
+        if (npc == null) return 0;
+
+        StringBuilder sb = new StringBuilder();
+        appendStorage(sb, level, npc);
+        src.sendSuccess(() -> Component.literal(sb.toString()), false);
+        return 1;
+    }
+
+    private static void appendStorage(StringBuilder sb, ServerLevel level, TownspersonMob npc) {
+        // ── 1. Header ──────────────────────────────────────────────────────────
+        sb.append("§e=== /litv tasks storage: §f").append(npc.getNpcName())
+          .append("§e (§f").append(npc.getUUID()).append("§e)\n");
+        sb.append("  profession = §f").append(npc.getProfession().name()).append("§r\n");
+
+        // ── 2. Resolve building (exactly as fulfillments do) ──────────────────
+        Building building = null;
+        BuildingType resolvedType = null;
+
+        // Producer path: find matching spec → use spec.buildingType()
+        for (ProductionTaskSpec spec : ProducerSpecs.ALL) {
+            if (npc.getProfession() != spec.profession()) continue;
+            resolvedType = spec.buildingType();
+            building = ProductionHelpers.findAssignedBuilding(npc, level, resolvedType)
+                    .orElse(null);
+            break;
+        }
+
+        // Non-producer fallback: raw assigned building (no type filter)
+        if (resolvedType == null) {
+            building = npc.getAssignedBuildingId()
+                    .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
+                    .orElse(null);
+            if (building != null) resolvedType = building.getType();
+        }
+
+        if (building == null) {
+            String typeLabel = resolvedType != null ? resolvedType.name() : "(none)";
+            sb.append("§cno production building resolved");
+            if (resolvedType != null) sb.append(" (findAssignedBuilding(").append(typeLabel).append(") empty)");
+            sb.append("§r\n");
+            sb.append("  → This itself is the finding: the NPC has no assigned building of the expected type.\n");
+            return;
+        }
+
+        Building.BuildingShape shape = building.getShape();
+        BlockPos origin = shape.getOrigin();
+        BlockPos min    = shape.getMin();
+        BlockPos max    = shape.getMax();
+        int dx = max.getX() - min.getX() + 1;
+        int dy = max.getY() - min.getY() + 1;
+        int dz = max.getZ() - min.getZ() + 1;
+
+        sb.append("§e--- Resolved building ---§r\n");
+        sb.append("  type   = §f").append(building.getType().name()).append("§r\n");
+        sb.append("  id     = §f").append(shortId(building.getId())).append("§r\n");
+        sb.append("  origin = §f").append(fmtPos(origin)).append("§r\n");
+        sb.append("  min    = §f").append(fmtPos(min)).append("§r\n");
+        sb.append("  max    = §f").append(fmtPos(max)).append("§r\n");
+        sb.append("  size   = §f").append(dx).append("×").append(dy).append("×").append(dz).append("§r\n");
+
+        // ── 3. In-bounds containers (exactly as findInventories does) ─────────
+        List<Container> inBound = BuildingStorageAccess.findInventories(level, building);
+
+        sb.append("\n§e--- In-bounds containers (building box) ---§r\n");
+        sb.append("  count = §f").append(inBound.size()).append("§r\n");
+
+        // Key-item totals across all in-bound containers
+        java.util.Map<Item, Integer> inKeyTotals = new java.util.LinkedHashMap<>();
+        for (Item key : KEY_ITEMS) inKeyTotals.put(key, 0);
+        java.util.Map<Item, Integer> inAllTotals = new java.util.LinkedHashMap<>();
+
+        for (Container inv : inBound) {
+            // Position: Container block entities implement BlockEntity; cast when possible
+            String posLabel = (inv instanceof BlockEntity be)
+                    ? fmtPos(be.getBlockPos()) : "(non-BE container)";
+            sb.append("  ").append(posLabel)
+              .append(" slots=").append(inv.getContainerSize()).append("\n");
+
+            for (int s = 0; s < inv.getContainerSize(); s++) {
+                ItemStack stack = inv.getItem(s);
+                if (stack.isEmpty()) continue;
+                Item item = stack.getItem();
+                int cnt  = stack.getCount();
+                inAllTotals.merge(item, cnt, Integer::sum);
+                if (inKeyTotals.containsKey(item)) {
+                    inKeyTotals.merge(item, cnt, Integer::sum);
+                }
+            }
+        }
+
+        sb.append("  key-item totals (in-bounds):\n");
+        for (Item key : KEY_ITEMS) {
+            int cnt = inKeyTotals.getOrDefault(key, 0);
+            sb.append("    ").append(itemName(key)).append(" = ")
+              .append(cnt > 0 ? "§a" : "§7").append(cnt).append("§r\n");
+        }
+
+        if (!inAllTotals.isEmpty()) {
+            sb.append("  all distinct items (in-bounds, capped at ").append(MAX_DISTINCT_ITEMS).append("):\n");
+            int shown = 0;
+            for (var entry : inAllTotals.entrySet()) {
+                if (shown >= MAX_DISTINCT_ITEMS) {
+                    sb.append("    ... (").append(inAllTotals.size() - shown).append(" more)\n");
+                    break;
+                }
+                sb.append("    ").append(itemName(entry.getKey()))
+                  .append(" ×").append(entry.getValue()).append("\n");
+                shown++;
+            }
+        } else {
+            sb.append("  §7(no items found in-bounds)§r\n");
+        }
+
+        // ── 4. Out-of-bounds nearby containers ───────────────────────────────
+        sb.append("\n§e--- Out-of-bounds nearby containers (radius ").append(STORAGE_SCAN_RADIUS).append(") ---§r\n");
+        BlockPos npcPos = npc.blockPosition();
+        BlockPos scanMin = npcPos.offset(-STORAGE_SCAN_RADIUS, -STORAGE_SCAN_RADIUS, -STORAGE_SCAN_RADIUS);
+        BlockPos scanMax = npcPos.offset( STORAGE_SCAN_RADIUS,  STORAGE_SCAN_RADIUS,  STORAGE_SCAN_RADIUS);
+
+        int outCount = 0;
+        int outWithMaterials = 0;
+        StringBuilder outSb = new StringBuilder();
+
+        for (BlockPos pos : BlockPos.betweenClosed(scanMin, scanMax)) {
+            if (shape.contains(pos)) continue;          // in-bounds → skip
+            BlockEntity be = level.getBlockEntity(pos);
+            if (!(be instanceof Container inv)) continue;
+
+            BlockPos immPos = pos.immutable();
+            int rawIron  = countInContainer(inv, Items.RAW_IRON);
+            int rawCopper= countInContainer(inv, Items.RAW_COPPER);
+            int coal     = countInContainer(inv, Items.COAL);
+            int charcoal = countInContainer(inv, Items.CHARCOAL);
+            int ingot    = countInContainer(inv, Items.IRON_INGOT);
+
+            boolean hasMaterials = rawIron > 0 || rawCopper > 0 || coal > 0 || charcoal > 0 || ingot > 0;
+            if (hasMaterials) outWithMaterials++;
+            outCount++;
+
+            outSb.append("  §c").append(fmtPos(immPos)).append("§r")
+              .append(" [").append(be.getClass().getSimpleName()).append("]")
+              .append(" raw_iron=").append(rawIron)
+              .append(" raw_copper=").append(rawCopper)
+              .append(" coal=").append(coal)
+              .append(" charcoal=").append(charcoal)
+              .append(" iron_ingot=").append(ingot);
+            if (hasMaterials) outSb.append(" §c← HAS MATERIALS§r");
+            outSb.append("\n");
+        }
+
+        if (outCount == 0) {
+            sb.append("  §a(none — all nearby containers are inside the box)§r\n");
+        } else {
+            sb.append("  ").append(outCount).append(" out-of-bounds container(s) found;")
+              .append(" ").append(outWithMaterials).append(" with key materials:\n");
+            sb.append(outSb);
+        }
+
+        // ── 5. Bottom line ───────────────────────────────────────────────────
+        sb.append("\n§e--- Bottom line ---§r\n");
+        int inRawIron = inKeyTotals.getOrDefault(Items.RAW_IRON, 0);
+        int inCoal    = inKeyTotals.getOrDefault(Items.COAL, 0)
+                      + inKeyTotals.getOrDefault(Items.CHARCOAL, 0);
+        int inIngot   = inKeyTotals.getOrDefault(Items.IRON_INGOT, 0);
+
+        sb.append("  Building box ").append(dx).append("×").append(dy).append("×").append(dz)
+          .append(" at ").append(fmtPos(origin)).append("; findInventories sees §f")
+          .append(inBound.size()).append("§r container(s).\n");
+        sb.append("  raw_iron=").append(inRawIron)
+          .append(" fuel(coal+charcoal)=").append(inCoal)
+          .append(" iron_ingot=").append(inIngot).append(" in-bounds.\n");
+
+        if (outWithMaterials > 0) {
+            sb.append("§c  ").append(outWithMaterials)
+              .append(" container(s) with key materials are OUTSIDE the box\n");
+            sb.append("  → footprint doesn't cover them — this is the likely bug.§r\n");
+            sb.append("  Fix: rebuild/re-place the building so its footprint covers the chests,\n");
+            sb.append("  or move the chests inside the recorded building bounds.\n");
+        } else if (inBound.isEmpty()) {
+            sb.append("§c  No containers inside the box at all.\n");
+            sb.append("  → Storage system sees nothing; fulfillments will decline.§r\n");
+        } else if (inRawIron == 0 && inCoal == 0 && inIngot == 0) {
+            sb.append("§7  Storage IS visible (").append(inBound.size()).append(" container(s) in-bounds)\n");
+            sb.append("  but key smelting/crafting items are absent.\n");
+            sb.append("  → Stock the workshop chests with raw_iron + coal, or\n");
+            sb.append("    place an iron_ingot purchase via the market.§r\n");
+        } else {
+            sb.append("§a  raw_iron/coal/ingot ARE visible in-bounds.\n");
+            sb.append("  → Storage access is fine; fulfillment decline is elsewhere.\n");
+            sb.append("  → Check: amenity present? (FURNACE/ANVIL), skill XP, market for buying.§r\n");
+        }
+    }
+
+    /** Count occurrences of {@code item} in a single {@link Container}. */
+    private static int countInContainer(Container inv, Item item) {
+        int total = 0;
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.is(item)) total += s.getCount();
+        }
+        return total;
+    }
+
+    private static String fmtPos(BlockPos pos) {
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
     }
 
     // ── Activity label helpers ───────────────────────────────────────────────────────────────
