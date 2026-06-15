@@ -404,6 +404,9 @@ public class ModModEvents {
         CultureDebugCommand.register(event.getDispatcher());
         EventDebugCommand.register(event.getDispatcher());
         AppearanceDebugCommand.register(event.getDispatcher());
+        // Task System debug: /litv tasks enable|disable|status|inspect
+        tterrag1112.life_in_the_village.Commands.TaskDebugCommand
+                .register(event.getDispatcher());
 
     }
 

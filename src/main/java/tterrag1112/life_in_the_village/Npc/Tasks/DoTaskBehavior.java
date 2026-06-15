@@ -3,10 +3,12 @@ package tterrag1112.life_in_the_village.Npc.Tasks;
 import com.google.common.collect.ImmutableMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.behavior.Behavior;
+import tterrag1112.life_in_the_village.Entities.ActivityState;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -92,6 +94,12 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         this.activeTask = top;
         this.activeExecutor = best.executor();
         entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+        // Brain-visibility label: shown on the nameplate and in /litv npc brain.
+        // Only set here (once per run-start), not per-tick. Cleared in stop().
+        entity.setActivityState(ActivityState.of("Task",
+                tterrag1112.life_in_the_village.Commands.TaskDebugCommand
+                        .objectiveSummary(top.objective())
+                        + " → " + best.executor().getClass().getSimpleName()));
         return true;
     }
 
@@ -131,7 +139,30 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
             activeTask.assignment().release(entity.getUUID());
             TaskSavedData.get(level).markChanged();
         }
+        if (activeTask != null) {
+            entity.setActivityState(ActivityState.IDLE);
+        }
         finishRun();
+    }
+
+    // ── Debug-only read-only accessors (used by TaskDebugCommand) ──────────────
+
+    /**
+     * The task currently claimed by this behavior, or {@code null} when idle.
+     * Read-only: callers must not mutate the returned task.
+     */
+    @Nullable
+    public Task activeTask() {
+        return activeTask;
+    }
+
+    /**
+     * Simple class name of the currently active executor strategy, or
+     * {@code "(none)"} when idle. Used by the inspect command to show the
+     * chosen fulfillment without exposing the executor itself.
+     */
+    public String activeExecutorName() {
+        return activeExecutor == null ? "(none)" : activeExecutor.getClass().getSimpleName();
     }
 
     private void finishRun() {
