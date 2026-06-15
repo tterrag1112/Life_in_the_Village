@@ -21,18 +21,22 @@ import java.util.Set;
  *       from WORK@0 to {@link DoTaskBehavior} at WORK@1.</li>
  * </ul>
  *
- * <p>T1 ships exactly {@code { BLACKSMITH }}. Adding a profession to the
- * set is the entire opt-in for migrating it (plus its task source +
- * fulfillments). The set is intentionally NOT flag-gated itself — the
- * {@link TaskSystemConfig#ENABLED} flag is the master switch; this set is
- * the per-profession selector consulted only when the flag is on.</p>
+ * <p>T2 sweeps CANDLEMAKER, WEAVER, CARPENTER, and STONEMASON onto the
+ * Task System alongside the existing BLACKSMITH. The set is intentionally
+ * NOT flag-gated itself — the {@link TaskSystemConfig#ENABLED} flag is the
+ * master switch; this set is the per-profession selector consulted only when
+ * the flag is on.</p>
  */
 public final class TaskMigration {
 
     private TaskMigration() {}
 
     private static final Set<Profession> MIGRATED =
-            EnumSet.of(Profession.BLACKSMITH);
+            EnumSet.of(Profession.BLACKSMITH,
+                       Profession.CANDLEMAKER,
+                       Profession.WEAVER,
+                       Profession.CARPENTER,
+                       Profession.STONEMASON);
 
     /** True if {@code profession} drives work through the Task System. */
     public static boolean isMigrated(Profession profession) {

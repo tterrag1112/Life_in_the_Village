@@ -8,6 +8,7 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.Worksh
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Workshop.WorkshopRoleAssigner;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.GreetPlayerBehavior;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Homestead.ContextProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
@@ -64,6 +65,9 @@ public class CandlemakerProductionBehavior extends ContextProductionBehavior {
 
     @Override
     protected boolean checkContextGate(ServerLevel level, TownspersonMob entity) {
+        // T2 — when the Task System owns this profession (flag on + migrated),
+        // yield so the brain falls through from WORK@0 to DoTaskBehavior at WORK@1.
+        if (TaskMigration.ownsWork(entity.getProfession())) return false;
         // Order mirrors AbstractProductionBehavior.checkExtraStartConditions
         // (role → work-time → work-blocked → greet → building); the not-child
         // and nav gates already ran in the primitive.
