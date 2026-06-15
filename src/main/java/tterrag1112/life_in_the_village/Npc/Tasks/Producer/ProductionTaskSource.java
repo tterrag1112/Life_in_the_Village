@@ -16,12 +16,15 @@ import tterrag1112.life_in_the_village.Npc.Tasks.TaskFilter;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskId;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskSavedData;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskSource;
+import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -32,18 +35,24 @@ import java.util.UUID;
  *
  * <h3>What it generates, on the dispatcher's lazy refresh cadence</h3>
  * <ul>
- *   <li><b>Finals</b> &mdash; one {@code ProvideItem(output, quota)} per final
- *       output under its quota, NORMAL tier, urgency from the deficit. These
- *       outrank the intermediate reserve so production is primary.</li>
+ *   <li><b>Finals</b> &mdash; one {@code ProvideItem(output, target)} per final
+ *       output under its target, NORMAL tier, urgency from the deficit. The
+ *       target is the village demand figure for that item (from
+ *       {@link VillageDemand#targetsFor}) when the item is tracked, or the
+ *       spec's hardcoded {@link ProductionTaskSpec#quota} when it is not.
+ *       These outrank the intermediate reserve so production is primary.</li>
  *   <li><b>Intermediates</b> &mdash; one {@code MaintainStock(item, quota,
  *       buffer)} per self-produced intermediate that has dropped below its
- *       refill trigger (quota &minus; buffer), LOW tier. Otherwise iron-style
- *       intermediates are obtained lazily as a dependency of a final
- *       (see {@link CraftOutputFulfillment}), so the reserve never gates
- *       production.</li>
+ *       refill trigger (quota &minus; buffer), LOW tier. Intermediates are
+ *       not tracked by village demand and always use the spec's hardcoded
+ *       quota. Otherwise iron-style intermediates are obtained lazily as a
+ *       dependency of a final (see {@link CraftOutputFulfillment}), so the
+ *       reserve never gates production.</li>
  *   <li><b>Surplus</b> &mdash; one {@code SellSurplus(item)} per sellable output
- *       whose stock exceeds quota + buffer, LOW tier with the lowest urgency,
- *       so selling only runs once production + acquisition are satisfied.</li>
+ *       whose stock exceeds the spec quota + buffer, LOW tier with the lowest
+ *       urgency, so selling only runs once production + acquisition are
+ *       satisfied. Surplus headroom is relative to the hardcoded spec quota,
+ *       not demand, so the sell window is stable.</li>
  * </ul>
  *
  * <p>All tasks use STABLE ids ({@link ProductionTaskIds}) so a refresh updates
@@ -93,10 +102,29 @@ public final class ProductionTaskSource implements TaskSource {
     @Override
     public void generate(TaskContext ctx) {
         ServerLevel level = ctx.level();
-        TaskSavedData data = TaskSavedData.get(level);
-        TaskBoard board = data.board(issuer);
+        TaskSavedData taskData = TaskSavedData.get(level);
+        TaskBoard board = taskData.board(issuer);
 
-        // ── Primary: one ProvideItem(final) per under-quota final, NORMAL ────
+        // ── Resolve village demand targets for finals (T5a) ───────────────────
+        // Resolve the acting NPC's village once, before the finals loop.
+        // Primary: assignedVillageName → getVillageByName.
+        // Fallback: getVillageAt(blockPosition).
+        // If no village resolves, demandTargets is empty and every final falls
+        // back to its hardcoded spec quota — identical to pre-T5a behaviour.
+        TownspersonMob actor = ctx.npc().orElse(null);
+        Map<Item, Integer> demandTargets = Map.of();
+        if (actor != null) {
+            VillageSavedData vdata = VillageSavedData.get(level);
+            Village village = actor.getAssignedVillageName()
+                    .flatMap(vdata::getVillageByName)
+                    .or(() -> vdata.getVillageAt(actor.blockPosition()))
+                    .orElse(null);
+            if (village != null) {
+                demandTargets = VillageDemand.targetsFor(level, village, vdata);
+            }
+        }
+
+        // ── Primary: one ProvideItem(final) per under-target final, NORMAL ────
         // Skill-aware (Blacksmith-skill-fix): only emit a ProvideItem for a
         // final the worker can actually make right now (skill gate only — the
         // lazy-Acquire path still handles missing inputs). The board therefore
@@ -105,29 +133,38 @@ public final class ProductionTaskSource implements TaskSource {
         // for specs whose finals are not skill-gated. (npc is always present
         // for an NPC-backed source; the null-guard preserves old behavior for
         // any future player-backed context.)
-        TownspersonMob actor = ctx.npc().orElse(null);
+        //
+        // T5a: the target for each final is:
+        //   demand map value  — when the item is tracked by VillageDemand
+        //   spec.quota(out)   — fallback for items not in the demand map
+        // This means food staples, building materials, seeds, and profession-
+        // driven tools (iron_sword/pickaxe/hoe) get population-scaled targets;
+        // everything else (armor, candles, carpets, …) keeps its hardcoded quota.
         for (Item out : spec.finalOutputs()) {
-            int need = spec.quota(out);
-            if (need <= 0) continue;
+            int demandVal = demandTargets.getOrDefault(out, -1);
+            int target = (demandVal >= 0) ? demandVal : spec.quota(out);
+            if (target <= 0) continue;
             TaskId id = ProductionTaskIds.stable(issuer, "provide:" + ProductionTaskIds.key(out));
             if (actor != null && !spec.meetsSkillFor(level, actor, out)) {
                 // Under-skilled for this final right now — drop the task (unless
                 // claimed / in flight) so the board reflects what's makeable.
-                removeIfUnclaimed(board, id, data);
+                removeIfUnclaimed(board, id, taskData);
                 continue;
             }
             int stock = BuildingStorageAccess.countItem(level, workBuilding, out);
-            int deficit = need - stock;
+            int deficit = target - stock;
             if (deficit <= 0) {
-                removeIfUnclaimed(board, id, data);
+                removeIfUnclaimed(board, id, taskData);
                 continue;
             }
-            float urgency = Mth.clamp((float) deficit / need, 0f, 1f);
-            upsert(board, data, id, new Objective.ProvideItem(out, need),
+            float urgency = Mth.clamp((float) deficit / target, 0f, 1f);
+            upsert(board, taskData, id, new Objective.ProvideItem(out, target),
                     new Priority(TaskPriority.NORMAL, urgency));
         }
 
         // ── Reserve: MaintainStock(intermediate), LOW (never a gate) ─────────
+        // Intermediates (iron ingots, flour, wax, …) are not tracked by village
+        // demand; they always use the spec's hardcoded quota.
         for (Item inter : spec.intermediateOutputs()) {
             int target = spec.quota(inter);
             if (target <= 0) continue;
@@ -136,14 +173,16 @@ public final class ProductionTaskSource implements TaskSource {
             int stock = BuildingStorageAccess.countItem(level, workBuilding, inter);
             if (stock < target - buffer) {
                 float urgency = Mth.clamp((float) (target - stock) / target, 0f, 1f);
-                upsert(board, data, id, new Objective.MaintainStock(inter, target, buffer),
+                upsert(board, taskData, id, new Objective.MaintainStock(inter, target, buffer),
                         new Priority(TaskPriority.LOW, urgency));
             } else {
-                removeIfUnclaimed(board, id, data);
+                removeIfUnclaimed(board, id, taskData);
             }
         }
 
         // ── Surplus: SellSurplus(item) per output over quota+buffer, lowest ──
+        // Surplus headroom is relative to the hardcoded spec quota (not demand)
+        // so the sell window is stable and doesn't balloon with population.
         for (Item out : spec.sellableOutputs()) {
             int quota = spec.quota(out);
             int keep = quota + Math.max(0, spec.buffer(out));
@@ -153,10 +192,10 @@ public final class ProductionTaskSource implements TaskSource {
                 // LOW tier, urgency 0 so it sorts below every production /
                 // acquisition task: surplus is sold only once everything else
                 // is satisfied ("if all tasks are done, sell the extra").
-                upsert(board, data, id, new Objective.SellSurplus(out),
+                upsert(board, taskData, id, new Objective.SellSurplus(out),
                         new Priority(TaskPriority.LOW, 0f));
             } else {
-                removeIfUnclaimed(board, id, data);
+                removeIfUnclaimed(board, id, taskData);
             }
         }
     }
