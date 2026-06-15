@@ -122,7 +122,17 @@ public enum Skill {
      *  primary skill axis. Earned from candle (honeycomb+string) and
      *  torch (stick+coal) recipes. No dedicated workstation — the
      *  craft happens at the building origin. */
-    CANDLEMAKING(CRAFTING, 0.25);
+    CANDLEMAKING(CRAFTING, 0.25),
+
+    // ── Tier 1 (Task System T0 addition — smelting) ────────────────────────
+    /** Smelting / ore-processing sub-skill. Cascades 25% → CRAFTING.
+     *  Seeded by Task System T0 ahead of the production migration that
+     *  binds it to furnace ore→ingot recipes (T1). No recipe consumes it
+     *  yet; the value is added cleanly so SMELTING-filtered tasks can be
+     *  expressed once T1 wires the recipes. Parent CRAFTING per the
+     *  resolved decision (smelting is a CRAFTING-family processing
+     *  activity, sibling to MILLING / BAKING). */
+    SMELTING(CRAFTING, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;

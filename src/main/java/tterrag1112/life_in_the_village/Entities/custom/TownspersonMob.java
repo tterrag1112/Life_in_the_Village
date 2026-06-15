@@ -1875,6 +1875,20 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
         brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
                 .WORK.get(), 1, workBehaviors);
 
+        // Task System T0 — universal dispatcher, FLAG-GATED. Added at the
+        // same WORK priority (1) as the other universal entries, but ONLY
+        // when TaskSystemConfig.ENABLED. With the flag off (the default)
+        // this block never runs, so the brain is byte-identical to
+        // pre-Task-System main. When on, DoTaskBehavior gathers the NPC's
+        // eligible tasks across its boards, ranks, and dispatches; with
+        // empty boards/registry (T0) it simply sets NO_ACTIONABLE_WORK and
+        // yields, like the production behaviors' idle path.
+        if (tterrag1112.life_in_the_village.Npc.Tasks.TaskSystemConfig.ENABLED) {
+            brain.addActivity(tterrag1112.life_in_the_village.Npc.Brain.NpcActivities
+                    .WORK.get(), 1, ImmutableList.of(
+                            new tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior()));
+        }
+
         // Greet customers during WORK — priority 0 so it pre-empts the manning/
         // production behavior when a player enters the workplace. GREET_TARGET-
         // gated (GreeterAssignment seats it), so inert otherwise; it owns
