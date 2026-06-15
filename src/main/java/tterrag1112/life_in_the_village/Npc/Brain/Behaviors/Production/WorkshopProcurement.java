@@ -16,6 +16,7 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.BuildingEconomy;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CommerceModifier;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.MarketPriceHelper;
 import tterrag1112.life_in_the_village.Village.Village;
 
@@ -121,7 +122,9 @@ public final class WorkshopProcurement {
             int wanted = entry.getValue();
             if (wanted <= 0) continue;
 
-            long perUnitCeiling = Math.max(1L, getDynamicBuyPrice(level, village, item));
+            long perUnitCeiling = Math.max(1L,
+                    Math.round(getDynamicBuyPrice(level, village, item)
+                            * CommerceModifier.buyMultiplier(entity)));
             TradeIntent intent = TradeIntent.buy(
                     item, wanted, entity.getUUID(), buildingId,
                     village.getId(), perUnitCeiling,
@@ -227,6 +230,8 @@ public final class WorkshopProcurement {
                         Math.max(0L, actualSpent - fromTreasury));
                 flags.loggedBuyAccepted = true;
             }
+            // T6 — award COMMERCE XP scaled to actual bronze spent.
+            CommerceModifier.awardForTrade(entity, actualSpent, level.getGameTime());
         }
     }
 

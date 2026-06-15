@@ -16,6 +16,7 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Currency.CommerceModifier;
 import tterrag1112.life_in_the_village.Village.Economy.VillageEconomy;
 
 import java.util.LinkedHashMap;
@@ -200,7 +201,8 @@ public final class WorkshopVending {
 
             final int soldQty = stored;
             totalRevenue += Math.max(1L,
-                    Math.round(VillageEconomy.getBasePrice(item) * 0.8)) * soldQty;
+                    Math.round(VillageEconomy.getBasePrice(item) * 0.8
+                            * CommerceModifier.sellMultiplier(entity))) * soldQty;
             entity.getAssignedVillageName()
                     .flatMap(data::getVillageByName)
                     .ifPresent(v -> VillageEconomy.postListing(
@@ -215,6 +217,8 @@ public final class WorkshopVending {
             }
             WorkplaceAssignmentManager.onWorkplaceSale(
                     level, outputBuilding.getId(), (int) totalRevenue);
+            // T6 — award COMMERCE XP scaled to total bronze earned.
+            CommerceModifier.awardForTrade(entity, totalRevenue, level.getGameTime());
         }
         return totalRevenue;
     }

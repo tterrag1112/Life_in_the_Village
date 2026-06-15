@@ -10,6 +10,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Fulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.AcquireObjectives;
 import tterrag1112.life_in_the_village.Npc.Tasks.Task;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskActor;
+import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskContext;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskExecutor;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -55,7 +56,11 @@ public final class BuyIngotFulfillment implements Fulfillment {
         boolean hasCoal = BuildingStorageAccess.countItem(level, building, Items.COAL)
                 >= BlacksmithCrafts.SMELT_FUEL.getOrDefault(Items.COAL, 2);
         boolean hasOre = hasAnyIronOre(level, building, npc);
-        return (!hasOre || !hasCoal) ? 6.0 : 1.0;
+        // T6 — when smelting is viable, a more commercial smith is
+        // slightly more willing to buy ingots (max +2.0 at COMMERCE 100;
+        // SmeltFulfillment still wins at 5.0 for any low-COMMERCE smith).
+        double buyBias = ctx.skillLevel(Skill.COMMERCE) * 0.02;
+        return (!hasOre || !hasCoal) ? 6.0 : 1.0 + buyBias;
     }
 
     @Override
