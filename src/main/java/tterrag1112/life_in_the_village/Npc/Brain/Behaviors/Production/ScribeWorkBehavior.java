@@ -20,6 +20,7 @@ import tterrag1112.life_in_the_village.Npc.Scribal.CommissionStatus;
 import tterrag1112.life_in_the_village.Npc.Scribal.ScribalItems;
 import tterrag1112.life_in_the_village.Npc.Scribal.ScribeCommission;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 
@@ -61,6 +62,11 @@ public class ScribeWorkBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
+        // T3 — when the Task System owns the SCRIBE (flag on + migrated), the
+        // legacy path yields so the brain falls through from WORK@0 to the
+        // DoTaskBehavior dispatcher at WORK@1. Flag off OR not migrated => false,
+        // so this behavior runs exactly as before (byte-identical).
+        if (TaskMigration.ownsWork(entity.getProfession())) return false;
         if (!BrainNavGuard.canSteerNavigation(entity)) return false;
         if (!entity.isWorkTime()) return false;
 

@@ -269,7 +269,8 @@ public final class TaskDebugCommand {
             case Objective.Staff st ->
                 "staff role=" + st.roleId();
             case Objective.PerformService ps ->
-                "service=" + ps.kind();
+                "service=" + ps.kind()
+                    + ps.ref().map(r -> "(" + r + ")").orElse("");
         };
     }
 

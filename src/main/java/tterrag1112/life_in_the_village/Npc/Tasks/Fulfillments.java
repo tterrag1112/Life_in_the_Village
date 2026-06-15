@@ -3,6 +3,8 @@ package tterrag1112.life_in_the_village.Npc.Tasks;
 import tterrag1112.life_in_the_village.Npc.Tasks.Blacksmith.BlacksmithFulfillments;
 import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdFulfillments;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
+import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeWriteFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -43,5 +45,8 @@ public final class Fulfillments {
         // T2 — household food (bake-vs-buy) strategies for the household-scope
         // MaintainStock(BREAD) task.
         HouseholdFulfillments.register(SHARED);
+        // T3 — the scribe's scribal-commission service strategy (the only
+        // PerformService strategy; it self-filters to scribal PerformService).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new ScribeWriteFulfillment());
     }
 }

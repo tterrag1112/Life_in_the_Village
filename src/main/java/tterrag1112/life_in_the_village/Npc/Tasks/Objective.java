@@ -103,11 +103,23 @@ public sealed interface Objective
         @Override public Type type() { return Type.SELL_SURPLUS; }
     }
 
-    /** Perform a non-production service identified by {@code kind} (open extension point). */
-    record PerformService(String kind) implements Objective {
+    /**
+     * Perform a non-production service identified by {@code kind} (open
+     * extension point). {@code ref} is an optional service-specific
+     * subject id — empty for stateless services, present for a service
+     * keyed to a specific record (e.g. the SCRIBE's task carries the
+     * {@code commissionId} so the fulfillment can resolve the
+     * client/content/recipient from the workshop's {@code CommissionQueue}).
+     */
+    record PerformService(String kind, java.util.Optional<String> ref) implements Objective {
+        /** Stateless-service convenience: no subject ref. */
+        public PerformService(String kind) { this(kind, java.util.Optional.empty()); }
+
         public static final MapCodec<PerformService> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
-                Codec.STRING.fieldOf("kind").forGetter(PerformService::kind)
-        ).apply(i, PerformService::new));
+                Codec.STRING.fieldOf("kind").forGetter(PerformService::kind),
+                Codec.STRING.optionalFieldOf("ref", "").forGetter(p -> p.ref().orElse(""))
+        ).apply(i, (kind, ref) -> new PerformService(
+                kind, ref.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(ref))));
 
         @Override public Type type() { return Type.PERFORM_SERVICE; }
     }
