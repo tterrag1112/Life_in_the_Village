@@ -334,7 +334,17 @@ public class Business {
                     tterrag1112.life_in_the_village.Guilds.Companies.Roles
                             .BusinessRoleAssignment.CODEC.listOf()
                             .optionalFieldOf("roleAssignments", new ArrayList<>())
-                            .forGetter(c -> new ArrayList<>(c.roleAssignments))
+                            .forGetter(c -> new ArrayList<>(c.roleAssignments)),
+                    // ── T5b-1 — guild affiliation ────────────
+                    // Optional link to the village guild this business is
+                    // registered with. Empty on v1 / pre-feature saves;
+                    // filled in by the periodic registration pass in
+                    // BusinessGuildRegistrar. Added directly to the main
+                    // group (15th field — under DFU's 16-field cap)
+                    // rather than the OwnershipInfo sub-record, since guild
+                    // affiliation is orthogonal to ownership/succession.
+                    UUIDUtil.CODEC.optionalFieldOf("guildId")
+                            .forGetter(Business::getGuildId)
             ).apply(i, Business::fromCodec));
 
     private static Business fromCodec(UUID businessId, String name,
@@ -345,7 +355,8 @@ public class Business {
                                      java.util.Optional<tterrag1112.life_in_the_village.Npc.Office.OfficeState> offices,
                                      OwnershipInfo ownership,
                                      java.util.Optional<UUID> managerIdOpt,
-                                     List<tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleAssignment> roleList) {
+                                     List<tterrag1112.life_in_the_village.Guilds.Companies.Roles.BusinessRoleAssignment> roleList,
+                                     java.util.Optional<UUID> guildIdOpt) {
         Business c = new Business(businessId, name, ownerPlayerId,
                 homeVillageId, schedule);
         c.buildingIds.addAll(buildingIds);
@@ -419,6 +430,9 @@ public class Business {
                 c.offices.remove(legacyId);
             }
         }
+        // T5b-1 — guild affiliation. Absent on v1 saves; the
+        // BusinessGuildRegistrar pass fills it in on the next tick.
+        guildIdOpt.ifPresent(id -> c.guildId = id);
         return c;
     }
 
@@ -466,6 +480,20 @@ public class Business {
      * empty (the OWNER-as-default-MANAGER pattern is the v1 reality).
      */
     private UUID managerId;
+
+    /**
+     * T5b-1 — guild affiliation. The village guild this business is
+     * registered with (one per craft cluster). Empty until the
+     * {@link BusinessGuildRegistrar} periodic pass derives the craft
+     * Profession from the business's building type(s) and binds it to
+     * the matching {@link tterrag1112.life_in_the_village.Guilds.Common.GuildType}
+     * guild in its home village. {@code null} means unregistered.
+     *
+     * <p>Foundation only — no request/cascade behavior reads this yet
+     * (that is T5b-2/3); the link + {@link BusinessSavedData#forGuild}
+     * query are the deliverable.</p>
+     */
+    private UUID guildId;
 
     /**
      * Phase 6.3.3.c.3 — business-internal role assignments. Absorbs the
@@ -867,6 +895,27 @@ public class Business {
 
     public void setManager(UUID npcId)  { this.managerId = npcId; }
     public void clearManager()          { this.managerId = null; }
+
+    // ── T5b-1 — guild affiliation API ─────────────────────────────────
+
+    /** The guild this business is registered with, if any. */
+    public java.util.Optional<UUID> getGuildId() {
+        return java.util.Optional.ofNullable(guildId);
+    }
+
+    /** True when registered with {@code guildId}. */
+    public boolean isRegisteredWith(UUID guildId) {
+        return guildId != null && guildId.equals(this.guildId);
+    }
+
+    /** Sets the guild affiliation. {@code null} clears it. */
+    public void setGuildId(UUID guildId) { this.guildId = guildId; }
+
+    /** Registers this business with {@code guildId}. Idempotent. */
+    public void registerWithGuild(UUID guildId) { this.guildId = guildId; }
+
+    /** Removes the guild affiliation. */
+    public void clearGuildId() { this.guildId = null; }
 
     /**
      * Phase 6.3.3.c.2 — every NPC actively operating this business:

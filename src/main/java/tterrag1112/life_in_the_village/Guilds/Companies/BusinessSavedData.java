@@ -111,6 +111,19 @@ public class BusinessSavedData extends SavedData {
         return Collections.unmodifiableCollection(businesses.values());
     }
 
+    /**
+     * T5b-1 — all businesses registered with {@code guildId}. The
+     * reverse of {@link Business#registerWithGuild}; the guild → business
+     * → NPC request cascade (T5b-2/3) will use this, optionally further
+     * filtering by the business's craft Profession.
+     */
+    public List<Business> forGuild(UUID guildId) {
+        if (guildId == null) return List.of();
+        return businesses.values().stream()
+                .filter(b -> b.getGuildId().map(guildId::equals).orElse(false))
+                .toList();
+    }
+
     /** Exposes dirty marking to external systems (e.g. SupplyContractManager). */
     public void markDirty() { setDirty(); }
 
@@ -171,6 +184,8 @@ public class BusinessSavedData extends SavedData {
 
     private static final long TICK_INTERVAL      = 20L;
     private static final long BUILDING_TAX_INTERVAL = 24000L * 7; // weekly
+    // T5b-1 — guild registration sweep cadence (once per in-game day).
+    private static final long GUILD_REGISTER_INTERVAL = 24000L;
 
     // =========================================================================
     // Main server tick
@@ -197,6 +212,14 @@ public class BusinessSavedData extends SavedData {
             if (business.getWorkSchedule().isWorkTime(currentTick)) {
                 tickWorkerProduction(level, business, currentTick, villageData);
             }
+        }
+
+        // ── Guild registration ─────────────────────────────────────────────────
+        // T5b-1 — throttled daily sweep binding each business to its
+        // village guild (derived from building-type craft). Idempotent:
+        // makes no changes when affiliations are already correct.
+        if (currentTick % GUILD_REGISTER_INTERVAL == 0) {
+            BusinessGuildRegistrar.registerAll(level, this, villageData);
         }
 
         // ── Building tax ──────────────────────────────────────────────────────
