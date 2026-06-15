@@ -6,6 +6,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.DeliverFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeWriteFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmCropFulfillment;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -52,5 +53,7 @@ public final class Fulfillments {
         // T5b-3 — the producer-carries delivery strategy for cascaded CRAFT
         // requests (Objective.Deliver). Nothing else handles DELIVER.
         SHARED.register(Objective.Type.DELIVER, new DeliverFulfillment());
+        // G1 — farm crop service tasks (harvest/replant/till/compost for FARMER).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new FarmCropFulfillment());
     }
 }

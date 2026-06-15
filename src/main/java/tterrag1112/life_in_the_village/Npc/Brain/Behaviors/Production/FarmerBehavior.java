@@ -28,6 +28,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
@@ -230,6 +231,13 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
         this.entity = entity;
+        // G1 — kill-switch: when FARMER is in the Task System migration set,
+        // this legacy crop behavior yields so DoTaskBehavior@WORK1 drives crop
+        // work. Remove FARMER from TaskMigration.MIGRATED to roll back to the
+        // legacy behavior instantly. ShepherdBehavior / BeekeeperBehavior are
+        // NOT gated here — they check their own role/profession conditions and
+        // run independently of this guard (see their hasActionableWork() probes).
+        if (TaskMigration.isMigrated(Profession.FARMER)) return false;
         // Phase 6.3.3.o.3 — per-gate one-shot diagnostic logging. Each
         // early-exit point names itself in the LOG so a stuck FARMER
         // can be diagnosed without an attach-debugger pass. Gates are
@@ -1686,7 +1694,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
     public static final float HOE_PRODUCTIVITY_NETHERITE  = 1.10f;
 
     /** Predicate identifying farming hoes (wood/stone/iron/diamond/netherite). */
-    static boolean isHoe(ItemStack s) {
+    public static boolean isHoe(ItemStack s) {
         return s.is(Items.WOODEN_HOE) || s.is(Items.STONE_HOE)
                 || s.is(Items.IRON_HOE) || s.is(Items.GOLDEN_HOE)
                 || s.is(Items.DIAMOND_HOE) || s.is(Items.NETHERITE_HOE);
@@ -1699,7 +1707,7 @@ public class FarmerBehavior extends Behavior<TownspersonMob> {
      * the highest tier present in the entity's inventory. Golden hoes
      * score as iron-tier (same operational tier, worse durability).
      */
-    static double hoeProductivityMultiplier(ItemStack s) {
+    public static double hoeProductivityMultiplier(ItemStack s) {
         if (s.is(Items.NETHERITE_HOE)) return HOE_PRODUCTIVITY_NETHERITE;
         if (s.is(Items.DIAMOND_HOE))   return HOE_PRODUCTIVITY_DIAMOND;
         if (s.is(Items.IRON_HOE)
