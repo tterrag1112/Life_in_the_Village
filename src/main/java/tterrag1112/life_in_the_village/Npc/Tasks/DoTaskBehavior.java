@@ -7,6 +7,7 @@ import tterrag1112.life_in_the_village.Entities.ActivityState;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
+import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdTaskSource;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -39,6 +40,10 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
     /** Shared, mod-wide registry (populated at mod init). */
     private final FulfillmentRegistry registry;
 
+    /** Which scope this dispatcher serves (T2). Controls the eligibility
+     *  gate, the source refreshed, and which boards are scanned. */
+    private final TaskScope scope;
+
     private static final int MAX_RUN = 24000;
 
     /** Per-NPC source-refresh throttle (ticks). One day = 24000; refresh
@@ -51,19 +56,30 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
     private TaskExecutor activeExecutor;
     private TaskActor actor;
 
+    /** Default WORK-profession dispatcher over the shared registry —
+     *  byte-identical to the pre-T2 no-arg behaviour. */
     public DoTaskBehavior() {
-        this(Fulfillments.shared());
+        this(Fulfillments.shared(), TaskScope.WORK_PROFESSION);
     }
 
-    public DoTaskBehavior(FulfillmentRegistry registry) {
+    /** Scoped dispatcher over the shared registry (T2: a second instance is
+     *  registered in IDLE with {@link TaskScope#HOUSEHOLD}). */
+    public DoTaskBehavior(TaskScope scope) {
+        this(Fulfillments.shared(), scope);
+    }
+
+    public DoTaskBehavior(FulfillmentRegistry registry, TaskScope scope) {
         super(ImmutableMap.of(), MAX_RUN);
         this.registry = registry;
+        this.scope = scope;
     }
 
     @Override
     protected boolean checkExtraStartConditions(ServerLevel level, TownspersonMob entity) {
-        // Migration gate: only migrated professions drive work via tasks.
-        if (!TaskMigration.isMigrated(entity.getProfession())) {
+        // Migration gate (scope-specific):
+        //  - WORK_PROFESSION: only migrated professions drive work via tasks.
+        //  - HOUSEHOLD: every household is task-migrated when the flag is on.
+        if (!scopeGateOpen(entity)) {
             return false;
         }
 
@@ -73,14 +89,14 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         this.actor = new NpcActor(entity.getUUID());
         Task top = pickTop(level, actor, ctx);
         if (top == null) {
-            entity.getBrain().setMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
+            signalNoActionableWork(entity, true);
             return false;
         }
 
         // Choose the best-scoring applicable fulfillment for the top task.
         Fulfillment best = bestFulfillment(top, actor, ctx);
         if (best == null) {
-            entity.getBrain().setMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
+            signalNoActionableWork(entity, true);
             return false;
         }
 
@@ -93,7 +109,7 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
 
         this.activeTask = top;
         this.activeExecutor = best.executor();
-        entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+        signalNoActionableWork(entity, false);
         // Brain-visibility label: shown on the nameplate and in /litv npc brain.
         // Only set here (once per run-start), not per-tick. Cleared in stop().
         entity.setActivityState(ActivityState.of("Task",
@@ -170,13 +186,40 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         activeExecutor = null;
     }
 
+    /**
+     * Write/clear the WORK-channel {@code NO_ACTIONABLE_WORK} work-satisfied
+     * signal — but ONLY for the WORK_PROFESSION scope. The HOUSEHOLD-scope
+     * dispatcher runs in IDLE and must not touch this WORK-channel memory
+     * (doing so would spuriously gate the WORK idle director / hobby), so it
+     * is a no-op there.
+     */
+    private void signalNoActionableWork(TownspersonMob entity, boolean present) {
+        if (scope != TaskScope.WORK_PROFESSION) return;
+        if (present) {
+            entity.getBrain().setMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get(), Boolean.TRUE);
+        } else {
+            entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get());
+        }
+    }
+
+    /** The scope's eligibility gate (see {@link TaskScope}). */
+    private boolean scopeGateOpen(TownspersonMob entity) {
+        return switch (scope) {
+            case WORK_PROFESSION -> TaskMigration.isMigrated(entity.getProfession());
+            case HOUSEHOLD       -> TaskMigration.ownsHousehold();
+        };
+    }
+
     // ── Source refresh (spec-driven; this phase: blacksmith) ─────────────────
 
     private void refreshSources(ServerLevel level, TownspersonMob entity, TaskContext ctx) {
         long now = level.getGameTime();
         if (now - lastRefreshTick < REFRESH_INTERVAL) return;
         lastRefreshTick = now;
-        ProducerSpecs.generateAll(level, entity, ctx);
+        switch (scope) {
+            case WORK_PROFESSION -> ProducerSpecs.generateAll(level, entity, ctx);
+            case HOUSEHOLD       -> HouseholdTaskSource.generateFor(level, entity, ctx);
+        }
     }
 
     // ── Ranking + selection ──────────────────────────────────────────────────
@@ -185,6 +228,7 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         TaskSavedData data = TaskSavedData.get(level);
         List<Task> candidates = new ArrayList<>();
         for (IssuerRef ref : ctx.memberships()) {
+            if (!scope.includes(ref)) continue; // scope isolation
             data.boardIfPresent(ref).ifPresent(board ->
                     candidates.addAll(board.rankedEligibleFor(actor, ctx)));
         }
@@ -202,6 +246,7 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         if (task.dependencies().isEmpty()) return true;
         TaskSavedData data = TaskSavedData.get(level);
         for (IssuerRef ref : ctx.memberships()) {
+            if (!scope.includes(ref)) continue; // scope isolation
             var board = data.boardIfPresent(ref).orElse(null);
             if (board == null) continue;
             for (TaskId dep : task.dependencies()) {

@@ -50,6 +50,12 @@ public final class BuyFulfillment implements Fulfillment {
         if (target == null) return false;
         TownspersonMob npc = ctx.npc().orElse(null);
         if (npc == null || npc.getProfession() != spec.profession()) return false;
+        // Only handle items this spec actually procures (intermediateOutputs ∪
+        // all finalRecipeInputs via intermediateInputsOf). Without this guard the
+        // strategy would match ANY Acquire/MaintainStock(item) — including the T2
+        // household MaintainStock(BREAD) task, which a producer must never buy
+        // into its workshop.
+        if (!spec.acquirableInputs(npc).contains(target)) return false;
         return building(ctx.level(), npc).isPresent();
     }
 

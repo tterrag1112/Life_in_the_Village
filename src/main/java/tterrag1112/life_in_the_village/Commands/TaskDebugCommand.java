@@ -148,6 +148,9 @@ public final class TaskDebugCommand {
     private static void appendInspect(StringBuilder sb, ServerLevel level, TownspersonMob npc) {
         var prof = npc.getProfession();
         boolean migrated = TaskMigration.isMigrated(prof);
+        // T2 — a household member's food tasks live on its HOUSEHOLD board even
+        // when its profession isn't migrated, so show boards for either path.
+        boolean householdMigrated = TaskMigration.ownsHousehold() && npc.getHouseId().isPresent();
         boolean flagOn   = TaskSystemConfig.isEnabled();
 
         sb.append("§e=== Task inspect: §f").append(npc.getNpcName())
@@ -160,8 +163,12 @@ public final class TaskDebugCommand {
         }
         sb.append("\n");
 
-        if (!migrated) {
-            sb.append("§7  (profession not migrated — no task boards)\n");
+        sb.append("  household  = ")
+          .append(householdMigrated ? "§atask-owned§r" : "§7n/a§r").append("\n");
+
+        if (!migrated && !householdMigrated) {
+            sb.append("§7  (profession not migrated and no task-owned household — "
+                    + "no task boards)\n");
             return;
         }
 

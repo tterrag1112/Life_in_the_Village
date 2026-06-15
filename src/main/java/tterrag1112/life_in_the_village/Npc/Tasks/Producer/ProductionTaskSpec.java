@@ -8,9 +8,11 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Profession.Profession;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The per-profession <b>data contract</b> that drives the generalized
@@ -102,6 +104,26 @@ public interface ProductionTaskSpec {
         return finalRecipeInputs(output, npc).keySet().stream()
                 .filter(inter::contains)
                 .toList();
+    }
+
+    /**
+     * The complete set of items this spec will buy via {@link BuyFulfillment}:
+     * {@link #intermediateOutputs()} (self-produced intermediates the smith
+     * smelts <em>or</em> buys) plus, for every final output, all of
+     * {@link #intermediateInputsOf} (recipe inputs the four buy-only professions
+     * purchase directly).
+     *
+     * <p>Used by {@link BuyFulfillment#canFulfill} to gate which
+     * {@code Acquire}/{@code MaintainStock} tasks this spec's fulfillment will
+     * accept — ensuring a producer never matches the household
+     * {@code MaintainStock(BREAD)} task or any other unrelated acquisition.</p>
+     */
+    default Set<Item> acquirableInputs(TownspersonMob npc) {
+        Set<Item> result = new LinkedHashSet<>(intermediateOutputs());
+        for (Item final_ : finalOutputs()) {
+            result.addAll(intermediateInputsOf(final_, npc));
+        }
+        return result;
     }
 
     /** Items eligible for surplus sale (typically finals ++ intermediates). */

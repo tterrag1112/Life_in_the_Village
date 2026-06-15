@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Tasks;
 
 import tterrag1112.life_in_the_village.Npc.Tasks.Blacksmith.BlacksmithFulfillments;
+import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdFulfillments;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 
 /**
@@ -39,5 +40,8 @@ public final class Fulfillments {
         // Profession-specific intermediate acquisition (the smith's
         // smelt-own-ore / buy-ingots strategies).
         BlacksmithFulfillments.register(SHARED);
+        // T2 — household food (bake-vs-buy) strategies for the household-scope
+        // MaintainStock(BREAD) task.
+        HouseholdFulfillments.register(SHARED);
     }
 }

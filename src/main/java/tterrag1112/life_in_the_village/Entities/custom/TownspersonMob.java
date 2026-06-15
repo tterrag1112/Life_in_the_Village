@@ -1785,6 +1785,21 @@ public class TownspersonMob extends PathfinderMob implements RangedAttackMob {
                 );
         brain.addActivity(Activity.IDLE, 0, idleBehaviors);
 
+        // Task System T2 — HOUSEHOLD-scope dispatcher, FLAG-GATED. Mirrors the
+        // WORK dispatcher's flag-gated registration: ONLY added when
+        // TaskSystemConfig.ENABLED, so with the flag off (the default) the IDLE
+        // activity is byte-identical to pre-Task-System main and HomeProduction
+        // runs the legacy baking. When on, this HOUSEHOLD-scope DoTaskBehavior
+        // drives the household food need (bake-vs-buy), and HomeProduction
+        // yields (TaskMigration.ownsHousehold). Added at IDLE priority 0 (the
+        // slot HomeProductionBehavior occupies), scoped to the HOUSEHOLD board
+        // only so it never grabs profession (WORK) tasks.
+        if (tterrag1112.life_in_the_village.Npc.Tasks.TaskSystemConfig.ENABLED) {
+            brain.addActivity(Activity.IDLE, 0, ImmutableList.of(
+                    new tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior(
+                            tterrag1112.life_in_the_village.Npc.Tasks.TaskScope.HOUSEHOLD)));
+        }
+
         // SOCIAL — Phase 6.2.d.5 ordering (Visitor universal, ChildBirth
         // universal urgent placement):
         // 0=GreetPlayer, 1=Shelter, 2=ChildBirth, 3=Visitor, 4=SeekHouse,

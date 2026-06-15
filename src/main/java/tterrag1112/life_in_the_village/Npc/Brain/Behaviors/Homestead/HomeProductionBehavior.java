@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Npc.Hobby.NpcHobbyPreference;
 import tterrag1112.life_in_the_village.Npc.Schedule.DayPhase;
 import tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Village.AmenityType;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -60,6 +61,11 @@ public class HomeProductionBehavior extends ContextProductionBehavior {
 
     @Override
     protected Optional<Plan> selectPlan(ServerLevel level, TownspersonMob entity) {
+        // T2 — household food is migrated onto the Task System. When the flag is
+        // on, yield so the HOUSEHOLD-scope DoTaskBehavior (IDLE) drives the
+        // bake-vs-buy food upkeep (mirrors the blacksmith's legacy-yield). Flag
+        // off -> false -> this legacy IDLE baking runs exactly as today.
+        if (TaskMigration.ownsHousehold()) return Optional.empty();
         VillageSavedData data = VillageSavedData.get(level);
         Building h = entity.getHouseId().flatMap(data::getBuildingById).orElse(null);
         if (h == null) return Optional.empty();

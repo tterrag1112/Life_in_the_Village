@@ -50,6 +50,24 @@ public final class TaskMigration {
         return TaskSystemConfig.ENABLED && isMigrated(profession);
     }
 
+    /**
+     * T2 — whether the Task System owns HOUSEHOLD-scope chores (food upkeep)
+     * right now. The household migration is <b>non-profession</b>: for the
+     * pilot every household is task-migrated when the master flag is on (no
+     * per-profession or per-household selector). The two consumers mirror the
+     * profession path:
+     * <ul>
+     *   <li>the HOUSEHOLD-scope {@code DoTaskBehavior} (IDLE) gates on this;</li>
+     *   <li>{@code HomeProductionBehavior.selectPlan} yields when this is true,
+     *       so the legacy IDLE baking stands down for the household dispatcher.</li>
+     * </ul>
+     * Flag off &rarr; false &rarr; no IDLE dispatcher acts and HomeProduction
+     * runs exactly as today.
+     */
+    public static boolean ownsHousehold() {
+        return TaskSystemConfig.ENABLED;
+    }
+
     /** Snapshot of the migrated set (defensive copy). */
     public static Set<Profession> migrated() {
         return EnumSet.copyOf(MIGRATED);
