@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.GreetPlayerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Homestead.ContextProductionBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Village.AmenityType;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
@@ -68,6 +69,13 @@ public class BlacksmithProductionBehavior extends ContextProductionBehavior {
 
     @Override
     protected boolean checkContextGate(ServerLevel level, TownspersonMob entity) {
+        // T1 — when the Task System owns the BLACKSMITH (flag on + migrated),
+        // the legacy path yields so the brain falls through from WORK@0 to the
+        // DoTaskBehavior dispatcher at WORK@1. Flag off OR not migrated ⇒ this
+        // is false and the legacy path runs exactly as before (byte-identical).
+        if (TaskMigration.ownsWork(entity.getProfession())) {
+            return false;
+        }
         if (ProfessionRoleManager.isMarketSeller(entity)) {
             entity.setActivityState(BLOCKED_ROLE);
             return false;

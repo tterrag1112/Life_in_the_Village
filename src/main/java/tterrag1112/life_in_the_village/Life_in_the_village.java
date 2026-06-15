@@ -108,6 +108,11 @@ public class Life_in_the_village {
 
         // Phase 10 — register placeholder road events when -Dlitv.testEvents=true
         PlaceholderEvents.registerIfEnabled();
+
+        // Task System T1 — populate the single shared FulfillmentRegistry once.
+        // Harmless when TaskSystemConfig.ENABLED is off (DoTaskBehavior is never
+        // added to any brain, so the registry is simply never consulted).
+        tterrag1112.life_in_the_village.Npc.Tasks.Fulfillments.install();
     }
 
     @SubscribeEvent
