@@ -37,6 +37,12 @@ import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import net.minecraft.world.entity.schedule.Activity;
+import tterrag1112.life_in_the_village.Npc.Brain.NpcActivities;
+import tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules;
+import tterrag1112.life_in_the_village.Npc.Schedule.DayPhase;
+import tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskScope;
 
 import java.util.List;
 import java.util.Locale;
@@ -81,7 +87,9 @@ public final class TaskDebugCommand {
                         .then(Commands.literal("inspect")
                                 .executes(TaskDebugCommand::handleInspect))
                         .then(Commands.literal("gen")
-                                .executes(TaskDebugCommand::handleGen))));
+                                .executes(TaskDebugCommand::handleGen))
+                        .then(Commands.literal("why")
+                                .executes(TaskDebugCommand::handleWhy))));
     }
 
     // ── /litv tasks status ────────────────────────────────────────────────────
@@ -487,6 +495,284 @@ public final class TaskDebugCommand {
                 .filter(b -> b.getType() == type)
                 .orElse(null);
     }
+
+
+
+    // ── /litv tasks why ────────────────────────────────────────────
+
+    private static int handleWhy(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        if (!(src.getLevel() instanceof ServerLevel level)) {
+            src.sendFailure(Component.literal("/litv tasks why must be run server-side."));
+            return 0;
+        }
+        TownspersonMob npc = findNearestNpc(src, level);
+        if (npc == null) return 0;
+
+        StringBuilder sb = new StringBuilder();
+        appendWhy(sb, level, npc);
+        src.sendSuccess(() -> Component.literal(sb.toString()), false);
+        return 1;
+    }
+
+    /**
+     * Diagnostic that answers: (a) is the DoTaskBehavior dispatcher even being
+     * polled right now? and (b) if polled, why is it declining every task?
+     *
+     * <p><b>Side-effect caveat (also printed in output):</b>
+     * {@link tterrag1112.life_in_the_village.Npc.Tasks.Producer.CraftOutputFulfillment#canFulfill}
+     * lazily spawns an {@code Acquire(intermediate)} task when a final output is
+     * blocked on a missing intermediate (idempotent — skips if one already exists).
+     * This mirrors what the live dispatcher does; the command does not amplify it.</p>
+     */
+    private static void appendWhy(StringBuilder sb, ServerLevel level, TownspersonMob npc) {
+        Profession prof       = npc.getProfession();
+        boolean migrated      = TaskMigration.isMigrated(prof);
+        boolean hasHousehold  = npc.getHouseId().isPresent();
+
+        // ── 1. Header ──────────────────────────────────────────────────────────
+        sb.append("§e=== /litv tasks why: §f").append(npc.getNpcName())
+          .append("§e (§f").append(npc.getUUID()).append("§e) ===\n");
+        sb.append("  profession = §f").append(prof.name()).append("§r\n");
+        sb.append("  migrated?  = ").append(migrated ? "§ayes§r" : "§cno§r").append("\n");
+        sb.append("  household? = ");
+        if (hasHousehold) {
+            sb.append("§ayes§r (houseId=").append(shortId(npc.getHouseId().get())).append(")");
+        } else {
+            sb.append("§7no§r");
+        }
+        sb.append("\n");
+
+        // ── 2. Activity state ───────────────────────────────────────────────
+        sb.append("\n§e--- Activity state ---§r\n");
+        var brain = npc.getBrain();
+        long gameTick = level.getGameTime();
+
+        Activity[] probeActivities = {
+            Activity.CORE,
+            Activity.IDLE,
+            NpcActivities.WORK.get(),
+            NpcActivities.SOCIAL.get(),
+            NpcActivities.REST.get()
+        };
+        for (Activity act : probeActivities) {
+            boolean active = brain.isActive(act);
+            sb.append("  ").append(activityLabel(act))
+              .append(" = ").append(active ? "§aACTIVE§r" : "§7inactive§r").append("\n");
+        }
+
+        boolean workActive = brain.isActive(NpcActivities.WORK.get());
+        sb.append("  isWorkTime() = ")
+          .append(npc.isWorkTime() ? "§atrue§r" : "§cfalse§r").append("\n");
+
+        DayPhase currentPhase = ScheduleResolver.phaseAt(npc, gameTick);
+        Activity expectedAct  = NpcSchedules.activityFor(currentPhase);
+        sb.append("  schedule phase = §f").append(currentPhase.name())
+          .append("§r → expected activity: §f").append(activityLabel(expectedAct)).append("§r\n");
+
+        sb.append("  §7[interpretation]§r ");
+        if (workActive) {
+            sb.append("§aWORK active → WORK_PROFESSION dispatcher SHOULD be polled§r\n");
+        } else {
+            sb.append("§cWORK not active → WORK_PROFESSION dispatcher will NOT run now\n");
+            sb.append("    (phase=").append(currentPhase.name())
+              .append(", active=").append(currentActivityName(brain, probeActivities))
+              .append(")§r\n");
+        }
+
+        // ── 3. Scope gates ────────────────────────────────────────────────────────────
+        sb.append("\n§e--- Scope gates ---§r\n");
+        sb.append("  WORK_PROFESSION (isMigrated):   ")
+          .append(migrated ? "§aOPEN§r" : "§cCLOSED§r").append("\n");
+        sb.append("  HOUSEHOLD       (ownsHousehold): ")
+          .append(TaskMigration.ownsHousehold() ? "§aOPEN§r" : "§cCLOSED§r").append("\n");
+
+        // ── 4. Selection dry-run ──────────────────────────────────────────────────────
+        sb.append("\n§e--- Selection dry-run ---§r\n");
+        sb.append("§7NOTE: CraftOutputFulfillment.canFulfill may lazily spawn an Acquire task")
+          .append(" (idempotent — mirrors live dispatcher).§r\n");
+
+        TaskContext ctx2   = new TaskContext(level, npc);
+        TaskActor actor    = new NpcActor(npc.getUUID());
+        TaskSavedData data = TaskSavedData.get(level);
+        FulfillmentRegistry reg = Fulfillments.shared();
+
+        appendScopeWhy(sb, level, actor, ctx2, data, reg,
+                TaskScope.WORK_PROFESSION, "WORK scope (producer/scribe)", migrated);
+        if (hasHousehold) {
+            appendScopeWhy(sb, level, actor, ctx2, data, reg,
+                    TaskScope.HOUSEHOLD, "HOUSEHOLD scope", true);
+        }
+
+        // ── 5. Bottom line ───────────────────────────────────────────────────────────────
+        sb.append("\n§e--- Bottom line ---§r\n");
+        appendBottomLine(sb, level, actor, ctx2, data, reg, workActive, migrated, hasHousehold);
+    }
+
+    private static void appendScopeWhy(StringBuilder sb, ServerLevel level,
+                                        TaskActor actor, TaskContext ctx,
+                                        TaskSavedData data, FulfillmentRegistry reg,
+                                        TaskScope scope, String scopeLabel, boolean gateOpen) {
+        sb.append("\n  §e[").append(scopeLabel).append("]§r\n");
+        if (!gateOpen) {
+            sb.append("    §cScope gate CLOSED — skipping dry-run§r\n");
+            return;
+        }
+
+        java.util.List<Task> candidates = new java.util.ArrayList<>();
+        for (IssuerRef ref : ctx.memberships()) {
+            if (!scope.includes(ref)) continue;
+            data.boardIfPresent(ref).ifPresent(board ->
+                    candidates.addAll(board.rankedEligibleFor(actor, ctx)));
+        }
+        if (candidates.isEmpty()) {
+            sb.append("    §7(no eligible tasks on any board in this scope)§r\n");
+            return;
+        }
+
+        candidates.sort(TaskBoard.RANKING);
+
+        Task wouldClaim = null;
+        for (Task task : candidates) {
+            ServerLevel lvl = ctx.level();
+            boolean depsSatisfied = DoTaskBehavior.checkDependenciesSatisfied(lvl, ctx, scope, task);
+            sb.append("    [").append(task.priority().tier().name().charAt(0)).append("] ")
+              .append(objectiveSummary(task.objective()))
+              .append(" urgency=").append(String.format(Locale.ROOT, "%.2f", task.priority().urgency()))
+              .append(" status=").append(task.assignment().status().name())
+              .append(" claimants=").append(task.assignment().claimants().size())
+              .append("/").append(task.assignment().maxClaimants())
+              .append(" deps=").append(depsSatisfied ? "§aOK§r" : "§cunsatisfied§r")
+              .append("\n");
+
+            List<Fulfillment> strategies = reg.strategiesFor(task.objective());
+            if (strategies.isEmpty()) {
+                sb.append("      §7(no fulfillments registered for ")
+                  .append(task.objective().type().name()).append(")§r\n");
+            } else {
+                for (Fulfillment f : strategies) {
+                    boolean can = f.canFulfill(task, actor, ctx);
+                    sb.append("      ").append(f.getClass().getSimpleName())
+                      .append(": canFulfill=").append(can ? "§atrue§r" : "§cfalse§r");
+                    if (can) {
+                        double sc = f.score(task, actor, ctx);
+                        sb.append(" score=").append(String.format(Locale.ROOT, "%.2f", sc));
+                    }
+                    sb.append("\n");
+                }
+            }
+
+            if (wouldClaim == null && depsSatisfied) {
+                boolean anyCanFulfill = strategies.stream()
+                        .anyMatch(f -> f.canFulfill(task, actor, ctx));
+                if (anyCanFulfill) {
+                    wouldClaim = task;
+                }
+            }
+        }
+
+        if (wouldClaim != null) {
+            sb.append("    §apickTop → WOULD claim: ")
+              .append(objectiveSummary(wouldClaim.objective())).append("§r\n");
+        } else {
+            String reason = inferPickTopFailure(ctx, reg, actor, scope, candidates);
+            sb.append("    §cpickTop → none§r (").append(reason).append(")\n");
+        }
+    }
+
+    private static String inferPickTopFailure(TaskContext ctx,
+                                               FulfillmentRegistry reg,
+                                               TaskActor actor, TaskScope scope,
+                                               java.util.List<Task> candidates) {
+        if (candidates.isEmpty()) return "no tasks on boards";
+        ServerLevel level = ctx.level();
+        int depsUnsatisfied = 0;
+        int noFulfillment   = 0;
+        for (Task task : candidates) {
+            if (!DoTaskBehavior.checkDependenciesSatisfied(level, ctx, scope, task)) {
+                depsUnsatisfied++;
+                continue;
+            }
+            boolean anyCanFulfill = reg.strategiesFor(task.objective()).stream()
+                    .anyMatch(f -> f.canFulfill(task, actor, ctx));
+            if (!anyCanFulfill) noFulfillment++;
+        }
+        int total = candidates.size();
+        if (depsUnsatisfied == total) {
+            return "all " + total + " task(s) have unsatisfied deps";
+        }
+        if (noFulfillment > 0 && depsUnsatisfied + noFulfillment == total) {
+            return "all dep-satisfied task(s) declined by all fulfillments "
+                    + "(check building/amenity/inputs)";
+        }
+        return depsUnsatisfied + " unsatisfied deps, " + noFulfillment + " fulfillment(s) decline";
+    }
+
+    private static void appendBottomLine(StringBuilder sb, ServerLevel level,
+                                          TaskActor actor, TaskContext ctx, TaskSavedData data,
+                                          FulfillmentRegistry reg, boolean workActive,
+                                          boolean migrated, boolean hasHousehold) {
+        if (!workActive && !migrated && !hasHousehold) {
+            sb.append("§cWORK not active + not migrated + no household "
+                    + "→ task dispatcher never runs§r\n");
+            return;
+        }
+        if (!workActive) {
+            sb.append("§cWORK not active → it is simply not work time for this NPC.\n");
+            sb.append("  Wait for the work phase, or re-run /litv tasks why then.§r\n");
+            return;
+        }
+        if (!migrated) {
+            sb.append("§cWORK_PROFESSION gate CLOSED (profession not migrated)\n");
+            sb.append("  → legacy WORK behavior runs instead; task dispatcher is skipped.§r\n");
+            return;
+        }
+        // WORK active + migrated: replicate pickTop to give a single verdict
+        java.util.List<Task> workCandidates = new java.util.ArrayList<>();
+        for (IssuerRef ref : ctx.memberships()) {
+            if (!TaskScope.WORK_PROFESSION.includes(ref)) continue;
+            data.boardIfPresent(ref).ifPresent(board ->
+                    workCandidates.addAll(board.rankedEligibleFor(actor, ctx)));
+        }
+        workCandidates.sort(TaskBoard.RANKING);
+        Task pick = null;
+        for (Task task : workCandidates) {
+            if (!DoTaskBehavior.checkDependenciesSatisfied(level, ctx, TaskScope.WORK_PROFESSION, task)) continue;
+            boolean any = reg.strategiesFor(task.objective()).stream()
+                    .anyMatch(f -> f.canFulfill(task, actor, ctx));
+            if (any) { pick = task; break; }
+        }
+        if (pick != null) {
+            sb.append("§aWORK active + pickTop WOULD claim '§f")
+              .append(objectiveSummary(pick.objective())).append("§a'§r\n");
+            sb.append("  → If still not running, investigate makeBrain:\n");
+            sb.append("    confirm DoTaskBehavior() is registered in WORK at priority 1\n");
+            sb.append("    and the legacy WORK@0 behavior is yielding for migrated professions.\n");
+        } else if (workCandidates.isEmpty()) {
+            sb.append("§cpickTop → none: no eligible tasks on WORK-scope boards§r\n");
+            sb.append("  → Run /litv tasks gen to force-generate, then re-run /litv tasks why.\n");
+        } else {
+            sb.append("§cpickTop → none: tasks exist but all fulfillments decline§r\n");
+            sb.append("  Common causes: FURNACE/ANVIL amenity missing, inputs absent from\n");
+            sb.append("  building storage, wrong building type assigned, or an intermediate\n");
+            sb.append("  Acquire dep unsatisfied. See fulfillment detail in dry-run above.\n");
+        }
+    }
+
+    // ── Activity label helpers ───────────────────────────────────────────────────────────────
+
+    private static String activityLabel(Activity act) {
+        return act.getName().toUpperCase(Locale.ROOT);
+    }
+
+    private static String currentActivityName(net.minecraft.world.entity.ai.Brain<?> brain,
+                                               Activity[] candidates) {
+        for (Activity act : candidates) {
+            if (brain.isActive(act)) return activityLabel(act);
+        }
+        return "unknown";
+    }
+
 
     // ── Shared NPC resolution ─────────────────────────────────────────────────
 

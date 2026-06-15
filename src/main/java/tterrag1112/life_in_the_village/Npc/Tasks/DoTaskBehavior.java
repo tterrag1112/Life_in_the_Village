@@ -250,10 +250,21 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
 
     /** A task whose dependencies aren't all DONE is not runnable yet. */
     private boolean dependenciesSatisfied(ServerLevel level, TaskContext ctx, Task task) {
+        return checkDependenciesSatisfied(level, ctx, scope, task);
+    }
+
+    /**
+     * Read-only, static variant of the dependency check — exposed for the
+     * {@code /litv tasks why} diagnostic command. Zero behavior change:
+     * identical logic to the private instance method, parameterised on
+     * {@code scope} instead of {@code this.scope}.
+     */
+    public static boolean checkDependenciesSatisfied(ServerLevel level, TaskContext ctx,
+                                              TaskScope scope, Task task) {
         if (task.dependencies().isEmpty()) return true;
         TaskSavedData data = TaskSavedData.get(level);
         for (IssuerRef ref : ctx.memberships()) {
-            if (!scope.includes(ref)) continue; // scope isolation
+            if (!scope.includes(ref)) continue;
             var board = data.boardIfPresent(ref).orElse(null);
             if (board == null) continue;
             for (TaskId dep : task.dependencies()) {
