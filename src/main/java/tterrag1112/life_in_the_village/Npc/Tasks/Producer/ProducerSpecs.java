@@ -36,12 +36,14 @@ public final class ProducerSpecs {
             CandleSpec.INSTANCE,
             WeaverSpec.INSTANCE,
             CarpenterSpec.INSTANCE,
-            StonemasonSpec.INSTANCE
+            StonemasonSpec.INSTANCE,
+            BakerSpec.INSTANCE,
+            MillerSpec.INSTANCE
     );
 
     /**
      * Specs that use the generic {@link BuyFulfillment} for input acquisition.
-     * The blacksmith is excluded here — it uses its own bespoke
+     * The blacksmith is excluded here -- it uses its own bespoke
      * {@code BuyIngotFulfillment} with smelt-vs-buy scoring registered by
      * {@code BlacksmithFulfillments}.
      */
@@ -49,7 +51,9 @@ public final class ProducerSpecs {
             CandleSpec.INSTANCE,
             WeaverSpec.INSTANCE,
             CarpenterSpec.INSTANCE,
-            StonemasonSpec.INSTANCE
+            StonemasonSpec.INSTANCE,
+            BakerSpec.INSTANCE,
+            MillerSpec.INSTANCE
     );
 
     /** Refresh the board for whichever spec matches {@code npc}, if any. */

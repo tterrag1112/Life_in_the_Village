@@ -21,6 +21,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 
 /** Phase 6.2.d.1 — migrated from {@code BakerGoal}. */
 public class BakerProductionBehavior extends AbstractProductionBehavior {
@@ -37,6 +38,16 @@ public class BakerProductionBehavior extends AbstractProductionBehavior {
     private static final ProductionRecipe MAKE_CAKE = SkillRecipes.MAKE_CAKE;
 
     private static final int MAX_BATCH = 8;
+
+    // Task System yield — when BAKER is in the migration set the Task
+    // System owns the work loop; this legacy APB behavior stands down so
+    // DoTaskBehavior (WORK@1) takes over.
+    @Override
+    protected boolean checkExtraStartConditions(net.minecraft.server.level.ServerLevel level,
+                                                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob entity) {
+        if (TaskMigration.ownsWork(entity.getProfession())) return false;
+        return super.checkExtraStartConditions(level, entity);
+    }
 
     // Priority order for chooseRecipe walks: high-value first, falls
     // back to BREAD which has no skill gate and is always choosable.

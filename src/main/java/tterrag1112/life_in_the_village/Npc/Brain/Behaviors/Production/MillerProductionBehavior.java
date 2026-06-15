@@ -17,6 +17,7 @@ import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecip
 import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
 
 import java.util.*;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 
 /**
  * Miller grinds wheat into flour at a grindstone. Flour deposited to the
@@ -49,7 +50,15 @@ public class MillerProductionBehavior extends AbstractProductionBehavior {
 
     private static final int MAX_BATCH = 8;
 
-    
+    // Task System yield -- when MILLER is in the migration set the Task
+    // System owns the work loop; this legacy APB behavior stands down so
+    // DoTaskBehavior (WORK@1) takes over.
+    @Override
+    protected boolean checkExtraStartConditions(net.minecraft.server.level.ServerLevel level,
+                                                tterrag1112.life_in_the_village.Entities.custom.TownspersonMob entity) {
+        if (TaskMigration.ownsWork(entity.getProfession())) return false;
+        return super.checkExtraStartConditions(level, entity);
+    }
 
     @Override protected BuildingType requiredBuildingType() { return BuildingType.MILLER; }
 

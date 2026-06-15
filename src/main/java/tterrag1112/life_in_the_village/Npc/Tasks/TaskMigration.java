@@ -35,7 +35,9 @@ public final class TaskMigration {
                        Profession.WEAVER,
                        Profession.CARPENTER,
                        Profession.STONEMASON,
-                       Profession.SCRIBE);
+                       Profession.SCRIBE,
+                       Profession.BAKER,
+                       Profession.MILLER);
 
     /** True if {@code profession} drives work through the Task System. */
     public static boolean isMigrated(Profession profession) {
@@ -52,7 +54,7 @@ public final class TaskMigration {
     }
 
     /**
-     * T2 — whether the Task System owns HOUSEHOLD-scope chores (food upkeep).
+     * T2 -- whether the Task System owns HOUSEHOLD-scope chores (food upkeep).
      * Household migration is non-profession: every household is always
      * task-migrated. Always returns {@code true}. The two consumers mirror
      * the profession path:
