@@ -2,6 +2,7 @@ package tterrag1112.life_in_the_village.Npc.Tasks;
 
 import tterrag1112.life_in_the_village.Npc.Tasks.Blacksmith.BlacksmithFulfillments;
 import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdFulfillments;
+import tterrag1112.life_in_the_village.Npc.Tasks.Producer.DeliverFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeWriteFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
@@ -48,5 +49,8 @@ public final class Fulfillments {
         // T3 — the scribe's scribal-commission service strategy (the only
         // PerformService strategy; it self-filters to scribal PerformService).
         SHARED.register(Objective.Type.PERFORM_SERVICE, new ScribeWriteFulfillment());
+        // T5b-3 — the producer-carries delivery strategy for cascaded CRAFT
+        // requests (Objective.Deliver). Nothing else handles DELIVER.
+        SHARED.register(Objective.Type.DELIVER, new DeliverFulfillment());
     }
 }

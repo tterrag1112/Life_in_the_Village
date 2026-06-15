@@ -47,6 +47,12 @@ public final class RequestBoardTicker {
         long now = level.getGameTime();
         RequestBoard board = RequestBoard.get(level);
 
+        // T5b-2/3 — the CRAFT cascade owns CRAFT requests: decompose OPEN
+        // CRAFT requests into per-business craft + deliver tasks and re-arm
+        // in-flight ones. Runs before the acceptance pass, which now SKIPs
+        // CRAFT. A delivered request reaches FULFILLED via pass 1 below.
+        RequestCascade.run(level, board, now);
+
         // 1. Promote completed in-progress requests + settle.
         for (Request r : board.all()) {
             if (r.status() != RequestStatus.IN_PROGRESS && r.status() != RequestStatus.ACCEPTED) {
@@ -105,6 +111,9 @@ public final class RequestBoardTicker {
         // even when the snapshot is stale.
         for (Request r : board.open()) {
             if (r.status() != RequestStatus.OPEN) continue;
+            // T5b — CRAFT is owned by RequestCascade; the abstract
+            // acceptance pass leaves it alone.
+            if (r.type() == RequestType.CRAFT) continue;
             // Pick the highest-level eligible guild that has at least
             // one BRONZE+ member as a candidate fulfiller. Score is
             // just the number of qualifying members; ties resolve by
