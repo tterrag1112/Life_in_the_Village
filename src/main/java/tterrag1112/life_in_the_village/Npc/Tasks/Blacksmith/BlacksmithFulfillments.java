@@ -4,31 +4,27 @@ import tterrag1112.life_in_the_village.Npc.Tasks.FulfillmentRegistry;
 import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
 
 /**
- * T1 — registers the BLACKSMITH fulfillment strategies into the shared
+ * Registers the BLACKSMITH's genuinely-specific intermediate-acquisition
+ * strategies (smelt own ore, buy ingots) into the shared
  * {@link FulfillmentRegistry}. Called once from {@code Fulfillments.install()}.
  *
- * <ul>
- *   <li>{@code ProvideItem} → {@link CraftToolFulfillment} (the primary
- *       toolmaking act; lazily spawns an iron Acquire dependency when the
- *       building is short on iron).</li>
- *   <li>{@code Acquire} → {@link SmeltFulfillment} then
- *       {@link BuyIngotFulfillment} (the scorer picks: smelt when ore+coal
- *       are on hand, buy when not).</li>
- *   <li>{@code MaintainStock} → same two strategies (the LOW-priority iron
- *       reserve).</li>
- * </ul>
+ * <p>The generic craft fulfillment ({@code ProvideItem}) and the generic
+ * surplus-sell fulfillment ({@code SellSurplus}) are NOT registered here &mdash;
+ * those are spec-driven and registered for every producer via
+ * {@code ProducerSpecs.registerFulfillments}. This helper now contains only
+ * what is unique to the smith: the two ways it sources its own iron.</p>
  *
- * <p>Registration order is registration-order-only for tie-breaks; the
- * dispatcher selects by {@code score}, so Smelt vs Buy is decided by their
- * availability-driven scores, not the order here.</p>
+ * <ul>
+ *   <li>{@code Acquire} / {@code MaintainStock} (intermediates) &rarr;
+ *       {@link SmeltFulfillment} then {@link BuyIngotFulfillment} (the scorer
+ *       smelts when ore+coal are on hand, buys when not).</li>
+ * </ul>
  */
 public final class BlacksmithFulfillments {
 
     private BlacksmithFulfillments() {}
 
     public static void register(FulfillmentRegistry registry) {
-        registry.register(Objective.Type.PROVIDE_ITEM, new CraftToolFulfillment());
-
         SmeltFulfillment smelt = new SmeltFulfillment();
         BuyIngotFulfillment buy = new BuyIngotFulfillment();
         registry.register(Objective.Type.ACQUIRE, smelt);

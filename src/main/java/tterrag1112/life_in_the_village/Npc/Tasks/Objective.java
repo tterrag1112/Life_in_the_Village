@@ -28,7 +28,8 @@ import java.util.UUID;
  */
 public sealed interface Objective
         permits Objective.ProvideItem, Objective.MaintainStock, Objective.Acquire,
-                Objective.Deliver, Objective.Staff, Objective.PerformService {
+                Objective.Deliver, Objective.Staff, Objective.PerformService,
+                Objective.SellSurplus {
 
     /** The dispatch tag for this variant. */
     Type type();
@@ -85,6 +86,23 @@ public sealed interface Objective
         @Override public Type type() { return Type.STAFF; }
     }
 
+    /**
+     * Sell off-quota surplus of {@code item}. The quantity is NOT fixed at
+     * issue time — it is resolved at fulfillment time from the workshop's
+     * current surplus (see {@code SellSurplusFulfillment} +
+     * {@code WorkshopVending.computeSurplus}). Modeled as its own variant
+     * rather than {@link Deliver} because there is no fixed destination or
+     * quantity: the fulfillment picks the reachable market and the live
+     * over-quota amount each time it runs.
+     */
+    record SellSurplus(Item item) implements Objective {
+        public static final MapCodec<SellSurplus> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
+                BuiltInRegistries.ITEM.byNameCodec().fieldOf("item").forGetter(SellSurplus::item)
+        ).apply(i, SellSurplus::new));
+
+        @Override public Type type() { return Type.SELL_SURPLUS; }
+    }
+
     /** Perform a non-production service identified by {@code kind} (open extension point). */
     record PerformService(String kind) implements Objective {
         public static final MapCodec<PerformService> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
@@ -106,7 +124,8 @@ public sealed interface Objective
         ACQUIRE(Acquire.CODEC),
         DELIVER(Deliver.CODEC),
         STAFF(Staff.CODEC),
-        PERFORM_SERVICE(PerformService.CODEC);
+        PERFORM_SERVICE(PerformService.CODEC),
+        SELL_SURPLUS(SellSurplus.CODEC);
 
         private final MapCodec<? extends Objective> codec;
 

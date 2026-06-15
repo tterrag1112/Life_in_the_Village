@@ -5,7 +5,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.behavior.Behavior;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
-import tterrag1112.life_in_the_village.Npc.Tasks.Blacksmith.BlacksmithTaskSource;
+import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -139,13 +139,13 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         activeExecutor = null;
     }
 
-    // ── Source refresh (T1: blacksmith only) ─────────────────────────────────
+    // ── Source refresh (spec-driven; this phase: blacksmith) ─────────────────
 
     private void refreshSources(ServerLevel level, TownspersonMob entity, TaskContext ctx) {
         long now = level.getGameTime();
         if (now - lastRefreshTick < REFRESH_INTERVAL) return;
         lastRefreshTick = now;
-        BlacksmithTaskSource.forNpc(level, entity).ifPresent(src -> src.generate(ctx));
+        ProducerSpecs.generateAll(level, entity, ctx);
     }
 
     // ── Ranking + selection ──────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Tasks;
 
 import tterrag1112.life_in_the_village.Npc.Tasks.Blacksmith.BlacksmithFulfillments;
+import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -32,6 +33,11 @@ public final class Fulfillments {
      * Each migrated profession registers here.
      */
     public static void install() {
+        // Generic, spec-driven producer fulfillments (craft + surplus-sell)
+        // for every registered ProductionTaskSpec.
+        ProducerSpecs.registerFulfillments(SHARED);
+        // Profession-specific intermediate acquisition (the smith's
+        // smelt-own-ore / buy-ingots strategies).
         BlacksmithFulfillments.register(SHARED);
     }
 }
