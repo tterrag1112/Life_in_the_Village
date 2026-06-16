@@ -89,7 +89,8 @@ public final class ScribeCounter {
             terms = JobContractTerms.commission(prof, targetItem, salary, player.getUUID());
         } else {
             terms = new JobContractTerms(prof, rank, Optional.empty(),
-                    salary, Optional.empty(), duration, Optional.of(player.getUUID()));
+                    salary, Optional.empty(), duration, Optional.of(player.getUUID()),
+                    Optional.empty(),Optional.empty());
         }
 
         ItemStack stack = new ItemStack(ModItems.JOB_CONTRACT.get());

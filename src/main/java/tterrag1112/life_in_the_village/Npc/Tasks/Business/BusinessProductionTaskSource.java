@@ -518,7 +518,7 @@ public final class BusinessProductionTaskSource implements TaskSource {
      * ({@code BusinessManagementScreen}) can call it directly — preserving the
      * same contract as before PB4.</p>
      */
-    static ProductionRecipe recipeFor(Item item) {
+    public static ProductionRecipe recipeFor(Item item) {
         return recipeIndex().get(item);
     }
 
@@ -526,7 +526,7 @@ public final class BusinessProductionTaskSource implements TaskSource {
      * Resolves an item from its namespaced-id string. Returns {@code null} if
      * blank or unregistered.
      */
-    static Item resolveItem(String itemId) {
+    public static Item resolveItem(String itemId) {
         if (itemId == null || itemId.isBlank()) return null;
         try {
             return BuiltInRegistries.ITEM
