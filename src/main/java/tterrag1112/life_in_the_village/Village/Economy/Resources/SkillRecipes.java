@@ -111,6 +111,22 @@ public final class SkillRecipes {
             Map.of(Items.GLOW_BERRIES, 1, Items.BROWN_MUSHROOM, 1),
             Items.SUSPICIOUS_STEW, 1, 120);
 
+    // ── CARPENTRY intermediates ───────────────────────────────────────────────
+    /**
+     * PB4 — planks-to-sticks intermediate, matching vanilla ratio (2 planks → 4
+     * sticks). Keyed to OAK_PLANKS so the diamond-sword chain resolves cleanly
+     * (logs→oak_planks→sticks→diamond_sword). No skill gate: stick-cutting is
+     * entry-level carpentry work.
+     *
+     * <p>This recipe is the craftable link that terminates the stick dependency
+     * of MAKE_DIAMOND_SWORD / MAKE_DIAMOND_PICKAXE in the PB4 DAG resolver.
+     * OAK_LOG (raw leaf) → OAK_PLANKS (crafted by log recipe above) →
+     * STICK (this) → diamond_sword output. The log recipe is already present;
+     * diamonds are raw leaves consumed from business storage.</p>
+     */
+    public static final ProductionRecipe PLANKS_TO_STICK =
+            ProductionRecipe.of(Items.OAK_PLANKS, 2, Items.STICK, 4, 40);
+
     // ── WEAVING (WeaverProductionBehavior) ───────────────────────────────────
     public static final ProductionRecipe SPIN_STRING =
             ProductionRecipe.of(Items.STRING, 4, Items.WHITE_WOOL, 1, 60);
@@ -324,6 +340,33 @@ public final class SkillRecipes {
     public static List<ProductionRecipe> forSkill(Skill skill) {
         if (skill == Skill.BLACKSMITHING) return blacksmithRecipes();
         return BY_SKILL.getOrDefault(skill, List.of());
+    }
+
+    // =========================================================================
+    // PB4 — production intermediates.
+    // Recipes needed for DAG-based intermediate production (e.g. planks→sticks
+    // for the diamond-sword chain) that are NOT in any skill's main production
+    // bucket. The DAG resolver's reverse index includes these via
+    // BusinessProductionTaskSource.buildRecipeIndex(), which calls this method
+    // after the primary skill scan. NPC-profession behaviors (CarpenterCrafts,
+    // etc.) do NOT call this, so these recipes don't alter NPC craft-selection.
+    // =========================================================================
+
+    /**
+     * Supplemental intermediate recipes used by the PB4 DAG resolver.
+     * These are craftable intermediate products not owned by any particular
+     * profession skill bucket, exposed separately so NPC profession behaviors
+     * (which read {@link #forSkill}) are unaffected.
+     *
+     * <p>Current intermediates:</p>
+     * <ul>
+     *   <li>{@link #PLANKS_TO_STICK} — 2 oak_planks → 4 sticks (vanilla ratio);
+     *       terminates the stick dependency in WEAPONSMITHING / TOOLSMITHING
+     *       production chains.</li>
+     * </ul>
+     */
+    public static List<ProductionRecipe> productionIntermediates() {
+        return List.of(PLANKS_TO_STICK);
     }
 
     // =========================================================================
