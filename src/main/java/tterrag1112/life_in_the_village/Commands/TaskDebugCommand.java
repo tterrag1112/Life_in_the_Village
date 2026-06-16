@@ -416,14 +416,14 @@ public final class TaskDebugCommand {
                         + "(not a FARMER or no assigned FARMHOUSE)\n");
             } else {
                 sb.append("  farmhouse §afound§r (")
-                  .append(assignedBuilding != null ? shortId(assignedBuilding.getId()) : "?")
-                  .append(")\n");
+                        .append(assignedBuilding != null ? shortId(assignedBuilding.getId()) : "?")
+                        .append(")\n");
 
                 // Plot breakdown
                 VillageSavedData vsd = VillageSavedData.get(level);
                 java.util.UUID fhId = assignedBuilding.getId();
                 java.util.List<FarmPlot> allFarmPlots = vsd.getFarmPlotsForFarmhouse(fhId);
-                java.util.List<FarmPlot> cropPlots    = allFarmPlots.stream()
+                java.util.List<FarmPlot> cropPlots = allFarmPlots.stream()
                         .filter(p -> p.getSubtype() == FarmPlot.PlotSubtype.CROP_FIELD)
                         .collect(java.util.stream.Collectors.toList());
                 long now2 = level.getGameTime();
@@ -431,17 +431,17 @@ public final class TaskDebugCommand {
                         .filter(p -> !p.isFallow())
                         .collect(java.util.stream.Collectors.toList());
                 sb.append("  plots: total=").append(allFarmPlots.size())
-                  .append(" CROP_FIELD=").append(cropPlots.size())
-                  .append(" non-fallow=").append(activePlots.size()).append("\n");
+                        .append(" CROP_FIELD=").append(cropPlots.size())
+                        .append(" non-fallow=").append(activePlots.size()).append("\n");
 
                 // Role
                 FarmRole role = ProfessionRoleManager.getRole(npc, FarmRole.class);
                 boolean specBiasAnimal = (role == FarmRole.GENERALIST)
                         && npc.getSpecializationComponent().currentId()
-                                .map(id -> id.equals(
-                                        tterrag1112.life_in_the_village.Npc.Specialization
-                                                .NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name()))
-                                .orElse(false);
+                        .map(id -> id.equals(
+                                tterrag1112.life_in_the_village.Npc.Specialization
+                                        .NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name()))
+                        .orElse(false);
                 // Matches AnimalTaskSource.generate() exactly:
                 // ANIMAL_SPECIALIST | ANIMAL_TENDER | FERTILIZER | specBiasAnimal → animal_tend
                 // SHEPHERD → shear task; BEEKEEPER → collect_honey task (G2b)
@@ -449,7 +449,7 @@ public final class TaskDebugCommand {
                         || role == FarmRole.ANIMAL_TENDER
                         || role == FarmRole.FERTILIZER
                         || specBiasAnimal;
-                boolean isShepherd  = role == FarmRole.SHEPHERD;
+                boolean isShepherd = role == FarmRole.SHEPHERD;
                 boolean isBeekeeper = role == FarmRole.BEEKEEPER;
                 boolean shepherdOrBeekeeper = isShepherd || isBeekeeper;
                 boolean isFertilizer = role == FarmRole.FERTILIZER;
@@ -491,13 +491,14 @@ public final class TaskDebugCommand {
                                 .filter(p -> p.getId().equals(pid2))
                                 .collect(java.util.stream.Collectors.toList());
                         sb.append("  apprentice assignedPlot=").append(shortId(pid2))
-                          .append(" → ").append(activePlots.size())
-                          .append(" matching active plot(s)\n");
+                                .append(" → ").append(activePlots.size())
+                                .append(" matching active plot(s)\n");
                     }
                 }
 
                 // Per-plot eligibility (capped at 8)
                 int plotCap = 8;
+                Building fh2 = null;
                 if (!activePlots.isEmpty() && !animalRole && !shepherdOrBeekeeper) {
                     sb.append("  per-plot eligibility (mature/emptyFarmland/seeds/tillable/compost):\n");
                     int harvest2 = 0, replant2 = 0, till2 = 0, compost2 = 0;
@@ -508,17 +509,17 @@ public final class TaskDebugCommand {
                                         level, assignedBuilding, npc, fp, now2);
                         if (shown2 < plotCap) {
                             sb.append("    plot ").append(shortId(fp.getId()))
-                              .append(" mature=").append(elig.mature() ? "§ay§r" : "§7n§r")
-                              .append(" empty=").append(elig.emptyFarmland() ? "§ay§r" : "§7n§r")
-                              .append(" seeds=").append(elig.seedsAvailable() ? "§ay§r" : "§7n§r")
-                              .append(" tillable=").append(elig.tillable() ? "§ay§r" : "§7n§r")
-                              .append(" compost=").append(elig.compostEligible() ? "§ay§r" : "§7n§r")
-                              .append("\n");
+                                    .append(" mature=").append(elig.mature() ? "§ay§r" : "§7n§r")
+                                    .append(" empty=").append(elig.emptyFarmland() ? "§ay§r" : "§7n§r")
+                                    .append(" seeds=").append(elig.seedsAvailable() ? "§ay§r" : "§7n§r")
+                                    .append(" tillable=").append(elig.tillable() ? "§ay§r" : "§7n§r")
+                                    .append(" compost=").append(elig.compostEligible() ? "§ay§r" : "§7n§r")
+                                    .append("\n");
                         }
                         shown2++;
-                        if (canHarvest2 && elig.mature())                          harvest2++;
-                        if (canPlant2   && elig.emptyFarmland() && elig.seedsAvailable()) replant2++;
-                        if (canPlant2   && elig.tillable())                        till2++;
+                        if (canHarvest2 && elig.mature()) harvest2++;
+                        if (canPlant2 && elig.emptyFarmland() && elig.seedsAvailable()) replant2++;
+                        if (canPlant2 && elig.tillable()) till2++;
                         if (isFertilizer && !isApprentice2 && elig.compostEligible()) compost2++;
                     }
                     if (shown2 > plotCap) {
@@ -528,11 +529,10 @@ public final class TaskDebugCommand {
                     int sellSurplus2 = 0;
                     java.util.Map<net.minecraft.world.item.Item, Integer> sellFloors2 =
                             java.util.Map.of(
-                                Items.WHEAT, 32, Items.CARROT, 16,
-                                Items.POTATO, 16, Items.BEETROOT, 16,
-                                Items.WHEAT_SEEDS, 8, Items.BEETROOT_SEEDS, 8);
-                    tterrag1112.life_in_the_village.Village.Building fh2 =
-                            vsd.getBuildingById(fhId).orElse(null);
+                                    Items.WHEAT, 32, Items.CARROT, 16,
+                                    Items.POTATO, 16, Items.BEETROOT, 16,
+                                    Items.WHEAT_SEEDS, 8, Items.BEETROOT_SEEDS, 8);
+                    fh2 = vsd.getBuildingById(fhId).orElse(null);
                     if (fh2 != null) {
                         for (var e2 : sellFloors2.entrySet()) {
                             int stock2 = BuildingStorageAccess.countItem(level, fh2, e2.getKey());
@@ -543,7 +543,10 @@ public final class TaskDebugCommand {
                     for (tterrag1112.life_in_the_village.Village.Buildings.FarmPlot fp3 : activePlots) {
                         boolean ef = false;
                         for (net.minecraft.core.BlockPos fl : fp3.getFarmlandBlocks(level)) {
-                            if (level.getBlockState(fl.above()).isAir()) { ef = true; break; }
+                            if (level.getBlockState(fl.above()).isAir()) {
+                                ef = true;
+                                break;
+                            }
                         }
                         if (!ef) continue;
                         net.minecraft.world.item.Item si2 = fp3.getCropType().resolveSeedItem();
@@ -564,15 +567,15 @@ public final class TaskDebugCommand {
                     tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority rtTier =
                             VillageFarmingDemand.replantTillTier(foodNeedDbg);
                     sb.append("  food need=§e").append(foodNeedDbg.name())
-                      .append("§r → harvest tier=§e").append(hTier.name())
-                      .append("§r replant/till tier=§e").append(rtTier.name()).append("§r\n");
+                            .append("§r → harvest tier=§e").append(hTier.name())
+                            .append("§r replant/till tier=§e").append(rtTier.name()).append("§r\n");
                     sb.append("  FarmTaskSource WOULD emit: harvest=").append(harvest2)
-                      .append(" replant=").append(replant2)
-                      .append(" till=").append(till2)
-                      .append(" compost=").append(compost2)
-                      .append(" sell=").append(sellSurplus2)
-                      .append(" seedAcquire=").append(seedAcquire2)
-                      .append(" tasks\n");
+                            .append(" replant=").append(replant2)
+                            .append(" till=").append(till2)
+                            .append(" compost=").append(compost2)
+                            .append(" sell=").append(sellSurplus2)
+                            .append(" seedAcquire=").append(seedAcquire2)
+                            .append(" tasks\n");
                 } else if (activePlots.isEmpty() && !animalRole && !shepherdOrBeekeeper) {
                     sb.append("  §7(no non-fallow CROP_FIELD plots — zero farm tasks)§r\n");
                 }
@@ -583,8 +586,8 @@ public final class TaskDebugCommand {
                     if (animalRole) {
                         boolean hasRoster = !rsd2.getRostersForBuilding(fhId).isEmpty();
                         sb.append("  AnimalTaskSource WOULD emit: animal_tend=")
-                          .append(hasRoster ? "§a1§r" : "§c0 (no roster)§r")
-                          .append(" task\n");
+                                .append(hasRoster ? "§a1§r" : "§c0 (no roster)§r")
+                                .append(" task\n");
                     } else if (isShepherd) {
                         // G2b: SHEPHERD — shear task
                         boolean hasSheepRoster = rsd2
@@ -593,34 +596,37 @@ public final class TaskDebugCommand {
                         boolean hasShears2 = false;
                         net.minecraft.world.SimpleContainer pi3 = npc.getPersonalInventory();
                         for (int pi = 0; pi < pi3.getContainerSize(); pi++) {
-                            if (pi3.getItem(pi).getItem() == Items.SHEARS) { hasShears2 = true; break; }
+                            if (pi3.getItem(pi).getItem() == Items.SHEARS) {
+                                hasShears2 = true;
+                                break;
+                            }
                         }
                         boolean wouldShear = hasSheepRoster && hasShears2;
                         sb.append("  AnimalTaskSource WOULD emit: shear=")
-                          .append(wouldShear ? "§a1§r" : "§c0§r")
-                          .append(hasSheepRoster ? "" : " §7(no SHEEP roster with adults)§r")
-                          .append(hasSheepRoster && !hasShears2 ? " §7(no shears)§r" : "")
-                          .append(" task\n");
+                                .append(wouldShear ? "§a1§r" : "§c0§r")
+                                .append(hasSheepRoster ? "" : " §7(no SHEEP roster with adults)§r")
+                                .append(hasSheepRoster && !hasShears2 ? " §7(no shears)§r" : "")
+                                .append(" task\n");
                     } else if (isBeekeeper) {
                         // G2b: BEEKEEPER — collect_honey task
                         boolean hasBeeRoster = rsd2
                                 .getRoster(fhId, tterrag1112.life_in_the_village.Village.Roster.AnimalRosterDefinitions.BEE)
                                 .map(r -> r.countAdults() > 0).orElse(false);
                         int honeycombStock = BuildingStorageAccess.countItem(level, fh2, Items.HONEYCOMB);
-                        int bottleStock    = BuildingStorageAccess.countItem(level, fh2, Items.HONEY_BOTTLE);
+                        int bottleStock = BuildingStorageAccess.countItem(level, fh2, Items.HONEY_BOTTLE);
                         boolean hasShears3 = false, hasBottle3 = false;
                         net.minecraft.world.SimpleContainer pi4 = npc.getPersonalInventory();
                         for (int pi = 0; pi < pi4.getContainerSize(); pi++) {
                             net.minecraft.world.item.Item pii = pi4.getItem(pi).getItem();
-                            if (pii == Items.SHEARS)       hasShears3 = true;
+                            if (pii == Items.SHEARS) hasShears3 = true;
                             if (pii == Items.GLASS_BOTTLE) hasBottle3 = true;
                         }
-                        boolean canComb3   = hasBeeRoster && hasShears3 && honeycombStock < 16;
-                        boolean canBottle3 = hasBeeRoster && hasBottle3 && bottleStock    < 8;
+                        boolean canComb3 = hasBeeRoster && hasShears3 && honeycombStock < 16;
+                        boolean canBottle3 = hasBeeRoster && hasBottle3 && bottleStock < 8;
                         sb.append("  AnimalTaskSource WOULD emit: collect_honey=")
-                          .append((canComb3 || canBottle3) ? "§a1§r" : "§c0§r")
-                          .append(" (comb=").append(canComb3 ? "§ay§r" : "§cn§r")
-                          .append(" bottle=").append(canBottle3 ? "§ay§r" : "§cn§r").append(")\n");
+                                .append((canComb3 || canBottle3) ? "§a1§r" : "§c0§r")
+                                .append(" (comb=").append(canComb3 ? "§ay§r" : "§cn§r")
+                                .append(" bottle=").append(canBottle3 ? "§ay§r" : "§cn§r").append(")\n");
                     }
                 }
             }
