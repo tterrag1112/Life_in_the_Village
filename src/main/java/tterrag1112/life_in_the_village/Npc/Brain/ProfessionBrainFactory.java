@@ -19,7 +19,6 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBeha
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerLivestockVisitBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MinerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ScholarBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.CaravanMerchantBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.BusinessWorkerBehavior;
@@ -106,11 +105,6 @@ public final class ProfessionBrainFactory {
                     ImmutableList.of(new GuardMeleeAttackBehavior()));
         });
 
-        // MINER: single behavior with inlined ChannelRouter procurement
-        // (BuyFromNpc fold) and CARGO_DESTINATION-based sell handoff.
-        REGISTRARS.put(Profession.MINER, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(new MinerBehavior())));
 
         // Phase 6.2.d.3 — service-profession cluster.
         // Stationary "wait at counter, serve clients" pattern. Each
@@ -145,16 +139,6 @@ public final class ProfessionBrainFactory {
                                 new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
                                         .Production.PriestBehavior())));
 
-        // R6b — MONK: the monastery production context. The monk produces from
-        // its developed skills that the monastery's amenities support, routed to
-        // the monastery shared store (a second context over the M1/M2 production
-        // primitive). A skill-less monk produces nothing gracefully (R6c develops
-        // skills + adds need-driven assignment / mealtime distribution / economy).
-        REGISTRARS.put(Profession.MONK, (npc, brain) ->
-                brain.addActivity(NpcActivities.WORK.get(), 0,
-                        ImmutableList.of(
-                                new tterrag1112.life_in_the_village.Npc.Brain.Behaviors
-                                        .Production.MonkProductionBehavior())));
 
         // Phase 6.2.d.4 — civic + guard cluster.
         REGISTRARS.put(Profession.VILLAGE_LEADER, (npc, brain) ->

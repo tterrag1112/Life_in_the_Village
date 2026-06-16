@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.TaskContext;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskExecutor;
 
 import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * T1 — the generic produce executor. Drives one production cycle of the
@@ -29,6 +30,10 @@ import java.util.Optional;
  * <p>Profession-agnostic by design: a T2 profession reuses this verbatim,
  * passing its own {@code planFn}. The Plan, not this class, carries all
  * profession specifics.</p>
+ *
+ * <p>G5a — an optional {@link AdapterFactory} overload lets callers supply
+ * a custom {@link ContextProductionAdapter} subclass (e.g. the monk's
+ * scripture-override adapter) while still driving the same execution loop.</p>
  */
 public final class ContextPlanExecutor implements TaskExecutor {
 
@@ -39,13 +44,37 @@ public final class ContextPlanExecutor implements TaskExecutor {
         Optional<Plan> build(ServerLevel level, TownspersonMob npc, Task task);
     }
 
-    private final PlanFn planFn;
+    /**
+     * G5a — factory for a custom {@link ContextProductionAdapter} whose
+     * {@code producedStack} override requires access to live world + NPC.
+     * The supplier argument returns the adapter to drive; the adapter's
+     * {@code selectPlan} must delegate back to the caller's plan selection.
+     */
+    @FunctionalInterface
+    public interface AdapterFactory {
+        ContextProductionAdapter create(Supplier<Optional<Plan>> planSupplier,
+                                        ServerLevel level, TownspersonMob npc);
+    }
+
+    private final PlanFn         planFn;
+    private final AdapterFactory adapterFactory;
 
     private ContextProductionAdapter adapter;
     private boolean started;
 
+    /** Standard constructor — uses a plain {@link ContextProductionAdapter}. */
     public ContextPlanExecutor(PlanFn planFn) {
-        this.planFn = planFn;
+        this(planFn, (supplier, level, npc) -> new ContextProductionAdapter(supplier));
+    }
+
+    /**
+     * G5a — custom-adapter constructor. Callers supply an
+     * {@link AdapterFactory} to inject a {@link ContextProductionAdapter}
+     * subclass (e.g. one that overrides {@code producedStack} for scripture).
+     */
+    public ContextPlanExecutor(PlanFn planFn, AdapterFactory adapterFactory) {
+        this.planFn         = planFn;
+        this.adapterFactory = adapterFactory;
     }
 
     @Override
@@ -59,7 +88,8 @@ public final class ContextPlanExecutor implements TaskExecutor {
         if (!started) {
             // Build the adapter with a one-shot plan supplier that resolves
             // the recipe against current world state at start.
-            adapter = new ContextProductionAdapter(() -> planFn.build(level, npc, task));
+            adapter = adapterFactory.create(
+                    () -> planFn.build(level, npc, task), level, npc);
             if (!adapter.runCheckStart(level, npc)) {
                 // selectPlan was empty (inputs vanished / no workstation) — the
                 // cycle can't begin. FAILED releases the claim so the task can
