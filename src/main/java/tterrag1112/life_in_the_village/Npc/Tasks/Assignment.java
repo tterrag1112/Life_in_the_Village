@@ -80,6 +80,27 @@ public final class Assignment {
         return true;
     }
 
+    /**
+     * Graceful end-of-work yield. Drops {@code actor}'s claim and always
+     * returns the task to {@code OPEN} — even when it was IN_PROGRESS —
+     * so the dispatcher can re-claim it the next work period. Use this
+     * instead of {@link #release} on the dusk-yield path in
+     * {@link tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior}
+     * (WORK_PROFESSION scope only). Work genuinely abandoned due to an
+     * executor failure should still use {@link #release} so it reaches
+     * FAILED and the source can re-emit a fresh task on next refresh.
+     *
+     * <p>Returns {@code false} if {@code actor} was not a claimant
+     * (no-op).</p>
+     */
+    public boolean releaseGracefully(UUID actor) {
+        if (!claimants.remove(actor)) return false;
+        if (claimants.isEmpty()) {
+            status = Status.OPEN;
+        }
+        return true;
+    }
+
     /** CLAIMED -> IN_PROGRESS. Returns {@code false} from any other state. */
     public boolean advance() {
         if (status != Status.CLAIMED) return false;
