@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Networking;
 
 import net.minecraft.ChatFormatting;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.codec.StreamCodec;
@@ -9,16 +10,20 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.SimpleContainer;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.neoforge.network.PacketDistributor;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
+import tterrag1112.life_in_the_village.Components.ModDataComponents;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Gui.BusinessManagementScreen;
 import tterrag1112.life_in_the_village.Gui.BusinessWorkerScreen;
 import tterrag1112.life_in_the_village.Gui.VillageBookScreen;
 import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessHiring;
 import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
+import tterrag1112.life_in_the_village.Items.JobContractTerms;
+import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Life_in_the_village;
-import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.HousePurchaseManager;
@@ -72,14 +77,14 @@ public record BusinessActionPacket(
         SET_PRODUCER_TYPE,      // targetId=npcId, intParam=ProducerType.ordinal()
         ASSIGN_WORKER_TASK,     // targetId=npcId, strParam=itemId, intParam=count
         OPEN_WORKER_SCREEN,
+        MINT_HIRE_CONTRACT,     // owner-gated: mints a business-recruit JobContractItem + gives to player
 
         // ---- Schedule ----
         SET_WORK_HOURS,         // intParam=startHour, longParam=endHour
 
         // ---- Prices ----
         SET_ITEM_PRICE,         // strParam=itemId, longParam=pricePerUnit
-        REMOVE_ITEM_PRICE,  // strParam=itemId — removes override, reverts to market price
-
+        REMOVE_ITEM_PRICE,      // strParam=itemId — removes override, reverts to market price
 
         // ---- Buildings ----
         BUY_COMPANY_BUILDING,   // targetId=buildingId (deducts from player wallet)
@@ -245,8 +250,7 @@ public record BusinessActionPacket(
 
                 // =============================================================
                 // HIRE NPC  (via BusinessActionPacket — e.g. from management screen)
-                // Direct coin-hire from TownspersonMob.mobInteract uses the
-                // same server-side logic duplicated there for immediacy.
+                // Now delegates to BusinessHiring.hireIntoBusiness for shared logic.
                 // =============================================================
                 case HIRE_NPC -> {
                     Business c = ownedCompany(cdata, pkt.businessId(),
@@ -255,35 +259,54 @@ public record BusinessActionPacket(
 
                     UUID npcId = pkt.targetId();
                     var npc = findNpc(level, npcId);
-                    if (npc == null || npc.isBusinessWorker()) {
-                        fail(player, "NPC not found or already employed.");
+                    if (npc == null) {
+                        fail(player, "NPC not found.");
                         return;
                     }
 
                     Business.WorkerRole role = safeRole(pkt.intParam());
-                    long wage = Math.max(c.getEffectiveMinWage(vdata), 8L);
-
-                    Business.BusinessWorker worker = new Business.BusinessWorker(
-                            npcId, role, Business.ProducerType.GENERIC,
-                            Business.NO_BUILDING, wage,
-                            level.getGameTime(), "", 8,
-                            tterrag1112.life_in_the_village.Guilds.Companies
-                                    .EmploymentTier.APPRENTICE);
-
-                    c.addWorker(worker);
-                    npc.setBusinessId(c.getBusinessId());
-                    // Phase 6.3.3.a — gated, PLAYER (player hires via UI packet).
-                    tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
-                            npc, Profession.COMPANY_WORKER,
-                            tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.BUSINESS_PROMOTION,
-                            tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.PLAYER);
-                    cdata.markDirty();
+                    boolean hired = BusinessHiring.hireIntoBusiness(
+                            level, c, npc, role, vdata, cdata);
+                    if (!hired) {
+                        fail(player, "NPC is already employed.");
+                        return;
+                    }
 
                     player.displayClientMessage(
                             Component.literal("[" + npc.getNpcName()
                                     + "] I'll work for " + c.getName() + "!"), false);
 
                     refreshManagement(player, pkt.businessId(), level, cdata, vdata, "WORKERS");
+                }
+
+                // =============================================================
+                // MINT HIRE CONTRACT
+                // Mints a business-recruit JobContractItem and gives it to the
+                // player. The player then right-clicks an unemployed NPC to hire.
+                // =============================================================
+                case MINT_HIRE_CONTRACT -> {
+                    Business c = ownedCompany(cdata, pkt.businessId(),
+                            player.getUUID(), player);
+                    if (c == null) return;
+
+                    JobContractTerms terms = JobContractTerms.businessRecruit(
+                            c.getBusinessId(), Business.WorkerRole.PRODUCER);
+
+                    ItemStack contract = new ItemStack(ModItems.JOB_CONTRACT.get());
+                    contract.set(ModDataComponents.JOB_CONTRACT_TERMS.get(), terms);
+                    contract.set(DataComponents.ITEM_NAME,
+                            Component.literal("Hire Contract — " + c.getName()));
+
+                    if (!player.getInventory().add(contract)) {
+                        // Inventory full — drop at feet
+                        player.drop(contract, false);
+                    }
+
+                    player.displayClientMessage(
+                            Component.literal("Hire contract minted for \""
+                                    + c.getName() + "\". Right-click an unemployed "
+                                    + "villager to hire them.")
+                                    .withStyle(ChatFormatting.GOLD), false);
                 }
 
                 // =============================================================
@@ -571,7 +594,7 @@ public record BusinessActionPacket(
             npc.clearBusinessId();
             // Phase 6.3.3.a — gated, PLAYER (player-driven fire via UI packet).
             tterrag1112.life_in_the_village.Npc.Career.CareerTransitions.changeProfession(
-                    npc, Profession.NONE,
+                    npc, tterrag1112.life_in_the_village.Profession.Profession.NONE,
                     tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Reason.BUSINESS_PROMOTION,
                     tterrag1112.life_in_the_village.Npc.Career.ProfessionChangeRequest.Source.PLAYER);
         });

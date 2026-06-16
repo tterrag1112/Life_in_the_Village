@@ -11,16 +11,16 @@ import tterrag1112.life_in_the_village.Components.ModDataComponents;
 import java.util.function.Consumer;
 
 /**
- * Universal hire / commission / apprenticeship contract. Right-clicked
- * on an NPC, the contract's {@link JobContractTerms} drive the
+ * Universal hire / commission / apprenticeship / business-recruit contract.
+ * Right-clicked on an NPC, the contract's {@link JobContractTerms} drive the
  * dispatcher in {@code NpcInteractionHandler}. Plays no role in air —
  * an in-hand right-click in air just inspects tooltip.
  *
- * <p>Minted by SCRIBE through the ScribeCounter compose flow; the
- * underlying mint helper lives in
- * {@link tterrag1112.life_in_the_village.Npc.Scribal.ScribalItems#contract}
- * — this item subtype carries the structured terms alongside the
- * existing free-text body.</p>
+ * <p>Minted by SCRIBE through the ScribeCounter compose flow (hire/
+ * apprentice/commission) or by the Business Management GUI
+ * (business-recruit via {@code BusinessActionPacket.MINT_HIRE_CONTRACT}).
+ * The underlying mint helper for scribe-issued contracts lives in
+ * {@link tterrag1112.life_in_the_village.Npc.Scribal.ScribalItems#contract}.</p>
  */
 public class JobContractItem extends Item {
 
@@ -40,6 +40,21 @@ public class JobContractItem extends Item {
                     .withStyle(ChatFormatting.GRAY));
             return;
         }
+
+        // Business-recruit flavor: show business info, not profession
+        if (terms.isBusinessRecruit()) {
+            tooltipAdder.accept(Component.literal("Business Hire Contract")
+                    .withStyle(ChatFormatting.GOLD));
+            terms.recruiterRole().ifPresent(role ->
+                    tooltipAdder.accept(Component.literal("Role: " + role)
+                            .withStyle(ChatFormatting.AQUA)));
+            tooltipAdder.accept(Component.literal("Right-click an unemployed villager to hire them.")
+                    .withStyle(ChatFormatting.GRAY));
+            tooltipAdder.accept(Component.literal("One use — consumed on successful hire.")
+                    .withStyle(ChatFormatting.DARK_GRAY));
+            return;
+        }
+
         tooltipAdder.accept(Component.literal("Profession: " + terms.profession().name())
                 .withStyle(ChatFormatting.GOLD));
         if (terms.rank() != JobContractTerms.Rank.NONE) {
