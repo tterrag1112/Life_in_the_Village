@@ -7,6 +7,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeWriteFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmAcquireFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.AnimalTendFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmCropFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmSellFulfillment;
 
@@ -57,6 +58,8 @@ public final class Fulfillments {
         SHARED.register(Objective.Type.DELIVER, new DeliverFulfillment());
         // G1 — farm crop service tasks (harvest/replant/till/compost for FARMER).
         SHARED.register(Objective.Type.PERFORM_SERVICE, new FarmCropFulfillment());
+        // G2 — animal-tending (pasture rotation, ANIMAL_HUSBANDRY XP, disease recovery).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new AnimalTendFulfillment());
         // G1b — farmer surplus selling (SellSurplus for FARMER, coexists with
         //        SellSurplusFulfillment; profession guard discriminates).
         SHARED.register(Objective.Type.SELL_SURPLUS, new FarmSellFulfillment());

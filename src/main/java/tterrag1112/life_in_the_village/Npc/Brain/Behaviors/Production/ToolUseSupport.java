@@ -86,8 +86,8 @@ public final class ToolUseSupport {
      * <p>Example (farmer hoe ladder):</p>
      * <pre>
      *   float mult = ToolUseSupport.bestToolMultiplier(
-     *           entity, FarmerBehavior::isHoe,
-     *           FarmerBehavior::hoeProductivityMultiplier, 0.5f);
+     *           entity, FarmHoe::isHoe,
+     *           FarmHoe::hoeProductivityMultiplier, 0.5f);
      * </pre>
      */
     public static float bestToolMultiplier(TownspersonMob entity,

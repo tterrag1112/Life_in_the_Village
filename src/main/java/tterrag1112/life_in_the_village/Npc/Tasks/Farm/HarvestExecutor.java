@@ -16,7 +16,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import tterrag1112.life_in_the_village.Client.FarmingVisualEffects;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
+
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ToolUseSupport;
 import tterrag1112.life_in_the_village.Npc.Brain.Memories.NpcMemoryTypes;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
@@ -181,8 +181,8 @@ public final class HarvestExecutor implements TaskExecutor {
                 targetPlot.getCropType().coldTolerance());
         float blightMult  = targetPlot.isBlighted() ? FarmPlot.BLIGHT_YIELD_MULT : 1.0f;
         float hoeMult     = ToolUseSupport.bestToolMultiplier(
-                npc, FarmerBehavior::isHoe, FarmerBehavior::hoeProductivityMultiplier,
-                FarmerBehavior.HOE_PRODUCTIVITY_NO_HOE);
+                npc, FarmHoe::isHoe, FarmHoe::hoeProductivityMultiplier,
+                FarmHoe.HOE_PRODUCTIVITY_NO_HOE);
         float yieldMult   = seasonMult * soilMult * weatherMult
                 * droughtMult * frostMult * blightMult * hoeMult;
 
@@ -198,7 +198,7 @@ public final class HarvestExecutor implements TaskExecutor {
         }
 
         level.setBlock(cropPos, Blocks.AIR.defaultBlockState(), 3);
-        ToolUseSupport.useToolFromInventory(npc, FarmerBehavior::isHoe, level, InteractionHand.MAIN_HAND);
+        ToolUseSupport.useToolFromInventory(npc, FarmHoe::isHoe, level, InteractionHand.MAIN_HAND);
         npc.swing(InteractionHand.MAIN_HAND);
         level.playSound(null, cropPos, SoundEvents.CROP_BREAK, SoundSource.BLOCKS, 1.0f, 1.0f);
 
@@ -242,7 +242,7 @@ public final class HarvestExecutor implements TaskExecutor {
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack stack = inv.getItem(i);
             if (stack.isEmpty()) continue;
-            if (FarmerBehavior.isHoe(stack)) continue;  // keep tools
+            if (FarmHoe.isHoe(stack)) continue;  // keep tools
             BuildingStorageAccess.storeItem(level, farmhouse, stack);
             inv.setItem(i, ItemStack.EMPTY);
         }
@@ -274,7 +274,7 @@ public final class HarvestExecutor implements TaskExecutor {
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack s = inv.getItem(i);
             if (s.isEmpty()) continue;
-            if (FarmerBehavior.isHoe(s)) continue;
+            if (FarmHoe.isHoe(s)) continue;
             return s;
         }
         return ItemStack.EMPTY;

@@ -39,6 +39,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProductionTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProductionTaskSpec;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeCommissionTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmTaskSource;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.AnimalTaskSource;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmRole;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
@@ -555,6 +556,14 @@ public final class TaskDebugCommand {
                 } else if (activePlots.isEmpty() && !animalRole) {
                     sb.append("  §7(no non-fallow CROP_FIELD plots — zero farm tasks)§r\n");
                 }
+                // Animal role: show WOULD-emit for animal_tend
+                if (animalRole && fh2 != null) {
+                    boolean hasRoster = !tterrag1112.life_in_the_village.Village.Roster
+                            .RosterSavedData.get(level).getRostersForBuilding(fhId).isEmpty();
+                    sb.append("  AnimalTaskSource WOULD emit: animal_tend=")
+                      .append(hasRoster ? "§a1§r" : "§c0 (no roster)§r")
+                      .append(" task\n");
+                }
             }
         }
 
@@ -578,6 +587,7 @@ public final class TaskDebugCommand {
         ScribeCommissionTaskSource.generateFor(level, npc, ctx);
         HouseholdTaskSource.generateFor(level, npc, ctx);
         FarmTaskSource.generateFor(level, npc, ctx);
+        AnimalTaskSource.generateFor(level, npc, ctx);
 
         // ── Post-gen board dump ───────────────────────────────────────────────
         sb.append("\n§e--- Post-gen board state ---§r\n");

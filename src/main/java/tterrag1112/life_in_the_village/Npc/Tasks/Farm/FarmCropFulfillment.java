@@ -21,7 +21,7 @@ import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
  * <h3>canFulfill criteria</h3>
  * <ul>
  *   <li>Objective is {@link Objective.PerformService} with a
- *       {@link FarmVerb#isFarmVerb farm crop verb}.</li>
+ *       {@link FarmVerb#isCropVerb crop verb}.</li>
  *   <li>Actor is a {@link Profession#FARMER} with an assigned building
  *       of type {@link BuildingType#FARMHOUSE}.</li>
  * </ul>
@@ -43,7 +43,7 @@ public final class FarmCropFulfillment implements Fulfillment {
     @Override
     public boolean canFulfill(Task task, TaskActor actor, TaskContext ctx) {
         if (!(task.objective() instanceof Objective.PerformService ps)) return false;
-        if (!FarmVerb.isFarmVerb(ps.kind())) return false;
+        if (!FarmVerb.isCropVerb(ps.kind())) return false;
 
         TownspersonMob npc = ctx.npc().orElse(null);
         if (npc == null || npc.getProfession() != Profession.FARMER) return false;

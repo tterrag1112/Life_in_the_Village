@@ -14,7 +14,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.tags.BlockTags;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
+
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ToolUseSupport;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
@@ -143,7 +143,7 @@ public final class TillExecutor implements TaskExecutor {
 
         // === Till the block (mirrors FarmerBehavior.replant s.2) ===
         level.setBlock(pos, Blocks.FARMLAND.defaultBlockState(), 3);
-        ToolUseSupport.useToolFromInventory(npc, FarmerBehavior::isHoe, level, InteractionHand.MAIN_HAND);
+        ToolUseSupport.useToolFromInventory(npc, FarmHoe::isHoe, level, InteractionHand.MAIN_HAND);
         npc.swing(InteractionHand.MAIN_HAND);
         level.playSound(null, pos, SoundEvents.HOE_TILL, SoundSource.BLOCKS, 1.0f, 1.0f);
 

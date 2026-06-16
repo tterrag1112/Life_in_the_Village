@@ -415,7 +415,7 @@ public final class FarmTaskSource implements TaskSource {
         // ── Prune stale farm tasks (plots no longer eligible) ─────────────────
         for (Task t : List.copyOf(board.all())) {
             if (!(t.objective() instanceof Objective.PerformService ps)) continue;
-            if (!FarmVerb.isFarmVerb(ps.kind())) continue;
+            if (!FarmVerb.isCropVerb(ps.kind())) continue;
             if (live.contains(t.id())) continue;
             if (!t.assignment().claimants().isEmpty()) continue;
             board.remove(t.id());
@@ -546,7 +546,7 @@ public final class FarmTaskSource implements TaskSource {
             if (!t.assignment().claimants().isEmpty()) continue;
             boolean isFarmTask = false;
             if (t.objective() instanceof Objective.PerformService ps
-                    && FarmVerb.isFarmVerb(ps.kind())) {
+                    && FarmVerb.isCropVerb(ps.kind())) {
                 isFarmTask = true;
             } else if (t.objective() instanceof Objective.SellSurplus
                     || t.objective() instanceof Objective.Acquire) {
