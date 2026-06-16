@@ -12,6 +12,9 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmCropFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmSellFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.ShearFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.HoneyFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Priest.PriestFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Monk.MonkFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Mine.MineFulfillment;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -49,6 +52,7 @@ public final class Fulfillments {
      *   <li>{@link AnimalTendFulfillment} — kind == "animal_tend"</li>
      *   <li>{@link ShearFulfillment} — kind == "shear"</li>
      *   <li>{@link HoneyFulfillment} — kind == "collect_honey"</li>
+     *   <li>{@link PriestFulfillment} — kind == "officiate_rite"</li>
      * </ul>
      */
     public static void install() {
@@ -75,6 +79,12 @@ public final class Fulfillments {
         SHARED.register(Objective.Type.PERFORM_SERVICE, new ShearFulfillment());
         // G2b — honey collection (BEEKEEPER role, GATED_SPECIES realized production).
         SHARED.register(Objective.Type.PERFORM_SERVICE, new HoneyFulfillment());
+        // G4 — priest rite-officiation (officiate_rite for PRIEST, sacred-building gated).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new PriestFulfillment());
+        // G5a — monastic craft production (monastic_craft for MONK, monastery-gated).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new MonkFulfillment());
+        // G5a — mine ore production (mine for MINER, mine-building gated).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new MineFulfillment());
         // G1b — farmer surplus selling (SellSurplus for FARMER, coexists with
         //        SellSurplusFulfillment; profession guard discriminates).
         SHARED.register(Objective.Type.SELL_SURPLUS, new FarmSellFulfillment());

@@ -33,6 +33,7 @@ import tterrag1112.life_in_the_village.Npc.Religion.RiteTier;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Npc.Skills.SkillXp;
 import tterrag1112.life_in_the_village.Profession.Profession;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
 import tterrag1112.life_in_the_village.Profession.ProfessionSupplyChain;
 import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
@@ -193,19 +194,25 @@ public class PriestBehavior extends Behavior<TownspersonMob> {
         // single-priest village they defer until the (short) festival ends.
         if (tryStartFronting(level)) return;
 
-        RiteExecution rite = findClaimableRite(level);
-        if (rite != null) {
-            RiteSavedData rdata = RiteSavedData.get(level);
-            // Claim: persist presider=me so runDue defers (realized priest) and
-            // other priests skip this rite.
-            claimedRite = rite.withPresider(entity.getUUID());
-            rdata.putRite(claimedRite);
-            phase = Phase.WALKING_TO_RITE;
-            entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get()); // real work
-            entity.setCurrentActivity(clergyTitle() + ": Officiating " + riteLabel(rite.type()));
-            entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
-                    new WalkTarget(claimedRite.location(), WALK_SPEED, 1));
-            return;
+        // G4 partial yield: when PRIEST is task-migrated, DoTaskBehavior
+        // (via OfficiateRiteExecutor) owns the rite-officiation slice.
+        // Festival fronting (tryStartFronting above), temple-goods production,
+        // and the blessing aura are NOT gated — they remain live.
+        if (!TaskMigration.isMigrated(Profession.PRIEST)) {
+            RiteExecution rite = findClaimableRite(level);
+            if (rite != null) {
+                RiteSavedData rdata = RiteSavedData.get(level);
+                // Claim: persist presider=me so runDue defers (realized priest) and
+                // other priests skip this rite.
+                claimedRite = rite.withPresider(entity.getUUID());
+                rdata.putRite(claimedRite);
+                phase = Phase.WALKING_TO_RITE;
+                entity.getBrain().eraseMemory(NpcMemoryTypes.NO_ACTIONABLE_WORK.get()); // real work
+                entity.setCurrentActivity(clergyTitle() + ": Officiating " + riteLabel(rite.type()));
+                entity.getBrain().setMemory(MemoryModuleType.WALK_TARGET,
+                        new WalkTarget(claimedRite.location(), WALK_SPEED, 1));
+                return;
+            }
         }
         if (canProduce(level)) {
             phase = Phase.PRODUCING;

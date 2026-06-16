@@ -36,7 +36,7 @@ import java.util.function.Supplier;
  * {@code protected}, so this adapter exposes package-visible run hooks
  * (used by {@link ContextPlanExecutor} in the same package).</p>
  */
-public final class ContextProductionAdapter extends ContextProductionBehavior {
+public class ContextProductionAdapter extends ContextProductionBehavior {
 
     private final Supplier<Optional<Plan>> planSupplier;
 
