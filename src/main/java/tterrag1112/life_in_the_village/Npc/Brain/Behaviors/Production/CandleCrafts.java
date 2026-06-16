@@ -41,7 +41,7 @@ public final class CandleCrafts {
      *  − stock), the XP per cycle, and the nameplate label. */
     public record CandleCraft(ProductionRecipe recipe, int quota,
                               int xpPerBatch, String activityLabel) {
-        Item output() { return recipe.output(); }
+        public Item output() { return recipe.output(); }
     }
 
     /** The three candle crafts in priority order (candle, torch, lantern). */

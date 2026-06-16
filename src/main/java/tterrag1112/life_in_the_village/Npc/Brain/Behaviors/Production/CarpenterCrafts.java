@@ -48,7 +48,7 @@ public final class CarpenterCrafts {
     /** One carpenter craft: recipe, stock quota, XP, activity label. */
     public record CarpenterCraft(ProductionRecipe recipe, int quota,
                                  int xpPerBatch, String activityLabel) {
-        Item output() { return recipe.output(); }
+        public Item output() { return recipe.output(); }
     }
 
     /** Stock quotas from former {@code stockQuotas()} — keeps-floors for sell-surplus. */

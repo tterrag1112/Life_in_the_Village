@@ -39,7 +39,7 @@ public final class WeaverCrafts {
     /** One weaver craft: recipe, stock quota, XP, activity label. */
     public record WeaverCraft(ProductionRecipe recipe, int quota,
                               int xpPerBatch, String activityLabel) {
-        Item output() { return recipe.output(); }
+        public Item output() { return recipe.output(); }
     }
 
     /** All WEAVING recipes with their stock quotas (from former {@code stockQuotas()}). */

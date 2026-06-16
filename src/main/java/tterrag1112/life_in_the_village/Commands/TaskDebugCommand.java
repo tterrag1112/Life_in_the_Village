@@ -53,6 +53,7 @@ import tterrag1112.life_in_the_village.Npc.Brain.NpcSchedules;
 import tterrag1112.life_in_the_village.Npc.Schedule.DayPhase;
 import tterrag1112.life_in_the_village.Npc.Schedule.ScheduleResolver;
 import tterrag1112.life_in_the_village.Npc.Tasks.TaskScope;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionHelpers;
 
 import java.util.List;
 import java.util.Locale;
@@ -1195,7 +1196,7 @@ public final class TaskDebugCommand {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /** Human-readable summary of an Objective variant. */
-    static String objectiveSummary(Objective obj) {
+    public static String objectiveSummary(Objective obj) {
         return switch (obj) {
             case Objective.ProvideItem p ->
                 "provide " + itemName(p.item()) + "×" + p.qty();

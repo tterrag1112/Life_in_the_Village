@@ -45,7 +45,7 @@ public final class StonemasonCrafts {
     /** One stonemason craft: recipe, stock quota, XP, activity label. */
     public record StonemasonCraft(ProductionRecipe recipe, int quota,
                                   int xpPerBatch, String activityLabel) {
-        Item output() { return recipe.output(); }
+        public Item output() { return recipe.output(); }
     }
 
     /** Stock quotas from former {@code stockQuotas()} — keep-floors for sell-surplus. */
