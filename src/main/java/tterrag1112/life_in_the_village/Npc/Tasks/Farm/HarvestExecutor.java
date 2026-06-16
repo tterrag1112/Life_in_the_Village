@@ -88,6 +88,12 @@ public final class HarvestExecutor implements TaskExecutor {
             if (farmhouse == null) return Result.FAILED;
         }
 
+        // G1b: pull a hoe from farmhouse storage if the NPC has none.
+        // One-time call per executor instance; no-op when already holding a hoe.
+        if (phase == Phase.WALK_TO_PLOT) {
+            FarmHoe.ensureHoe(level, farmhouse, npc);
+        }
+
         return switch (phase) {
             case WALK_TO_PLOT      -> tickWalkToPlot(level, npc);
             case HARVEST_BLOCKS    -> tickHarvest(level, npc);

@@ -6,7 +6,9 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.DeliverFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeWriteFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmAcquireFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmCropFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmSellFulfillment;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -55,5 +57,11 @@ public final class Fulfillments {
         SHARED.register(Objective.Type.DELIVER, new DeliverFulfillment());
         // G1 — farm crop service tasks (harvest/replant/till/compost for FARMER).
         SHARED.register(Objective.Type.PERFORM_SERVICE, new FarmCropFulfillment());
+        // G1b — farmer surplus selling (SellSurplus for FARMER, coexists with
+        //        SellSurplusFulfillment; profession guard discriminates).
+        SHARED.register(Objective.Type.SELL_SURPLUS, new FarmSellFulfillment());
+        // G1b — farmer seed buying (Acquire for FARMER, seed-item guard
+        //        prevents interception of other professions' Acquire tasks).
+        SHARED.register(Objective.Type.ACQUIRE, new FarmAcquireFulfillment());
     }
 }

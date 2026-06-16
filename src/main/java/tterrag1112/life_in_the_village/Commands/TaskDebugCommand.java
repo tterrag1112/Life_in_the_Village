@@ -512,10 +512,46 @@ public final class TaskDebugCommand {
                     if (shown2 > plotCap) {
                         sb.append("    ... (+").append(shown2 - plotCap).append(" more)\n");
                     }
+                    // G1b: compute would-emit counts for sell + seed tasks
+                    int sellSurplus2 = 0;
+                    java.util.Map<net.minecraft.world.item.Item, Integer> sellFloors2 =
+                            java.util.Map.of(
+                                Items.WHEAT, 32, Items.CARROT, 16,
+                                Items.POTATO, 16, Items.BEETROOT, 16,
+                                Items.WHEAT_SEEDS, 8, Items.BEETROOT_SEEDS, 8);
+                    tterrag1112.life_in_the_village.Village.Building fh2 =
+                            vsd.getBuildingById(fhId).orElse(null);
+                    if (fh2 != null) {
+                        for (var e2 : sellFloors2.entrySet()) {
+                            int stock2 = BuildingStorageAccess.countItem(level, fh2, e2.getKey());
+                            if (stock2 > e2.getValue()) sellSurplus2++;
+                        }
+                    }
+                    int seedAcquire2 = 0;
+                    for (tterrag1112.life_in_the_village.Village.Buildings.FarmPlot fp3 : activePlots) {
+                        boolean ef = false;
+                        for (net.minecraft.core.BlockPos fl : fp3.getFarmlandBlocks(level)) {
+                            if (level.getBlockState(fl.above()).isAir()) { ef = true; break; }
+                        }
+                        if (!ef) continue;
+                        net.minecraft.world.item.Item si2 = fp3.getCropType().resolveSeedItem();
+                        int storedSi = fh2 != null
+                                ? BuildingStorageAccess.countItem(level, fh2, si2) : 0;
+                        int personalSi = 0;
+                        net.minecraft.world.SimpleContainer pi2 = npc.getPersonalInventory();
+                        for (int pii = 0; pii < pi2.getContainerSize(); pii++) {
+                            net.minecraft.world.item.ItemStack pis = pi2.getItem(pii);
+                            if (!pis.isEmpty() && pis.getItem() == si2) personalSi += pis.getCount();
+                        }
+                        if ((storedSi + personalSi) == 0) seedAcquire2++;
+                    }
                     sb.append("  FarmTaskSource WOULD emit: harvest=").append(harvest2)
                       .append(" replant=").append(replant2)
                       .append(" till=").append(till2)
-                      .append(" compost=").append(compost2).append(" tasks\n");
+                      .append(" compost=").append(compost2)
+                      .append(" sell=").append(sellSurplus2)
+                      .append(" seedAcquire=").append(seedAcquire2)
+                      .append(" tasks\n");
                 } else if (activePlots.isEmpty() && !animalRole) {
                     sb.append("  §7(no non-fallow CROP_FIELD plots — zero farm tasks)§r\n");
                 }

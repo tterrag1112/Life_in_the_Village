@@ -15,6 +15,7 @@ import net.minecraft.tags.BlockTags;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
+import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ToolUseSupport;
 import tterrag1112.life_in_the_village.Npc.Brain.NpcBehaviorHelpers;
 import tterrag1112.life_in_the_village.Npc.Tasks.Objective;
@@ -51,6 +52,7 @@ public final class TillExecutor implements TaskExecutor {
     private Phase    phase = Phase.WALK_TO_PLOT;
     private int      actionTimer;
     private FarmPlot targetPlot;
+    private Building farmhouse;
     private final List<BlockPos> toTill = new ArrayList<>();
 
     @Override
@@ -66,6 +68,18 @@ public final class TillExecutor implements TaskExecutor {
         if (targetPlot == null) {
             targetPlot = VillageSavedData.get(level).getFarmPlotById(plotId).orElse(null);
             if (targetPlot == null) return Result.FAILED;
+        }
+        if (farmhouse == null) {
+            farmhouse = npc.getAssignedBuildingId()
+                    .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
+                    .filter(b -> b.getType() == BuildingType.FARMHOUSE)
+                    .orElse(null);
+            // No farmhouse — still runnable, just no hoe pull possible
+        }
+
+        // G1b: pull a hoe from farmhouse storage if the NPC has none.
+        if (phase == Phase.WALK_TO_PLOT && farmhouse != null) {
+            FarmHoe.ensureHoe(level, farmhouse, npc);
         }
 
         return switch (phase) {

@@ -43,6 +43,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -300,14 +301,32 @@ public final class FarmTaskSource implements TaskSource {
             if (canPlant) {
                 boolean hasEmptyFarmland = hasEmptyFarmland(level, plot);
                 boolean hasSeed = hasEmptyFarmland && hasSeedsAvailable(level, plot);
+                TaskId acquireSeedId = ProductionTaskIds.stable(
+                        issuer, "farm_seed:" + plotId);
                 if (hasEmptyFarmland && hasSeed) {
                     live.add(replantId);
                     upsert(board, taskData, replantId,
                             new Objective.PerformService(FarmVerb.REPLANT,
                                     Optional.of(plotId.toString()), Optional.of(gpos)),
                             new Priority(TaskPriority.LOW, 0f), farmerFilter);
+                    // Seeds now available — remove any pending acquire task
+                    removeIfUnclaimed(board, acquireSeedId, taskData);
+                } else if (hasEmptyFarmland) {
+                    // Empty farmland but no seeds: emit a seed-buy task.
+                    // qty = max(1, farmlandSize - currentFarmhouseSeeds) mirrors
+                    // legacy FarmerBehavior.buySeeds qty formula.
+                    Item seedItem = plot.getCropType().resolveSeedItem();
+                    int farmlandSize = plot.getFarmlandBlocks(level).size();
+                    int storedSeeds  = BuildingStorageAccess.countItem(level, farmhouse, seedItem);
+                    int qty = Math.max(1, farmlandSize - storedSeeds);
+                    live.add(acquireSeedId);
+                    upsert(board, taskData, acquireSeedId,
+                            new Objective.Acquire(seedItem, qty),
+                            new Priority(TaskPriority.LOW, 0f), farmerFilter);
+                    removeIfUnclaimed(board, replantId, taskData);
                 } else {
                     removeIfUnclaimed(board, replantId, taskData);
+                    removeIfUnclaimed(board, acquireSeedId, taskData);
                 }
             } else {
                 removeIfUnclaimed(board, replantId, taskData);
@@ -359,6 +378,37 @@ public final class FarmTaskSource implements TaskSource {
                 }
             } else {
                 removeIfUnclaimed(board, compostId, taskData);
+            }
+        }
+
+        // ── Surplus sell tasks (one per sellable crop that is over its keep-floor) ──
+        // Emitted outside the per-plot loop because surplus is a farmhouse-level
+        // concern, not per-plot. Mirrors legacy FarmerBehavior.computeSurplusToSell
+        // and tryHandOffToSell (which issued these imperatively; here we use the
+        // task system so the dusk-yield applies uniformly).
+        // Keep-floors: WHEAT=32, CARROT=16, POTATO=16, BEETROOT=16, seeds=8.
+        // Sellable items mirror FarmerBehavior.sellableOutputs().
+        Map<Item, Integer> sellKeepFloors = Map.of(
+                Items.WHEAT,           32,
+                Items.CARROT,          16,
+                Items.POTATO,          16,
+                Items.BEETROOT,        16,
+                Items.WHEAT_SEEDS,      8,
+                Items.BEETROOT_SEEDS,   8);
+        for (Map.Entry<Item, Integer> entry : sellKeepFloors.entrySet()) {
+            Item cropItem = entry.getKey();
+            int  keepFloor = entry.getValue();
+            int  stock = BuildingStorageAccess.countItem(level, farmhouse, cropItem);
+            String itemKey = net.minecraft.core.registries.BuiltInRegistries.ITEM
+                    .getKey(cropItem).toString();
+            TaskId sellId = ProductionTaskIds.stable(issuer, "farm_sell:" + itemKey);
+            if (stock > keepFloor) {
+                live.add(sellId);
+                upsert(board, taskData, sellId,
+                        new Objective.SellSurplus(cropItem),
+                        new Priority(TaskPriority.LOW, 0f), farmerFilter);
+            } else {
+                removeIfUnclaimed(board, sellId, taskData);
             }
         }
 
@@ -493,9 +543,17 @@ public final class FarmTaskSource implements TaskSource {
     private void pruneAllFarmTasks(TaskBoard board, TaskSavedData taskData) {
         boolean changed = false;
         for (Task t : List.copyOf(board.all())) {
-            if (!(t.objective() instanceof Objective.PerformService ps)) continue;
-            if (!FarmVerb.isFarmVerb(ps.kind())) continue;
             if (!t.assignment().claimants().isEmpty()) continue;
+            boolean isFarmTask = false;
+            if (t.objective() instanceof Objective.PerformService ps
+                    && FarmVerb.isFarmVerb(ps.kind())) {
+                isFarmTask = true;
+            } else if (t.objective() instanceof Objective.SellSurplus
+                    || t.objective() instanceof Objective.Acquire) {
+                // Sell/seed tasks are also farm-owned on this board; prune them too
+                isFarmTask = true;
+            }
+            if (!isFarmTask) continue;
             board.remove(t.id());
             changed = true;
         }

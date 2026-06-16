@@ -91,6 +91,11 @@ public final class ReplantExecutor implements TaskExecutor {
         // Apprentice check mirrored from FarmerBehavior.shouldRotateCrops
         isApprentice = isApprenticeTier(level, npc, farmhouse);
 
+        // G1b: pull a hoe from farmhouse storage if the NPC has none.
+        if (phase == Phase.WALK_TO_PLOT) {
+            FarmHoe.ensureHoe(level, farmhouse, npc);
+        }
+
         return switch (phase) {
             case WALK_TO_PLOT      -> tickWalkToPlot(level, npc);
             case REPLANT_BLOCKS    -> tickReplant(level, npc);
