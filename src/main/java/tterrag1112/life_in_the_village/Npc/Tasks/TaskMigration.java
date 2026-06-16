@@ -38,7 +38,8 @@ public final class TaskMigration {
                        Profession.SCRIBE,
                        Profession.BAKER,
                        Profession.MILLER,
-                       Profession.FARMER);
+                       Profession.FARMER,
+                       Profession.PRIEST);
 
     /** True if {@code profession} drives work through the Task System. */
     public static boolean isMigrated(Profession profession) {

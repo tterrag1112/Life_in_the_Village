@@ -42,6 +42,13 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.VillageFarmingDemand;
 import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.AnimalTaskSource;
+import tterrag1112.life_in_the_village.Npc.Tasks.Priest.PriestTaskSource;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteSavedData;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteExecutor;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteCapability;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteTier;
+import tterrag1112.life_in_the_village.Npc.Religion.RiteOutcome;
+import tterrag1112.life_in_the_village.Village.Event.EventCategory;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmRole;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleManager;
@@ -618,6 +625,76 @@ public final class TaskDebugCommand {
             }
         }
 
+        // Priest
+        if (prof == Profession.PRIEST) {
+            anySource = true;
+            sb.append("§7[Priest]§r\n");
+            Optional<UUID> assignedId = npc.getAssignedBuildingId();
+            Building assignedBuilding = assignedId
+                    .flatMap(id -> VillageSavedData.get(level).getBuildingById(id))
+                    .orElse(null);
+            boolean hasSacredBuilding = assignedBuilding != null
+                    && PriestTaskSource.isReligiousBuilding(assignedBuilding.getType());
+            if (assignedId.isEmpty()) {
+                sb.append("  §cassigned building id: (none) — sacred building not assigned§r\n");
+            } else if (assignedBuilding == null) {
+                sb.append("  §cassigned building id: ").append(shortId(assignedId.get()))
+                  .append(" — NOT FOUND in VillageSavedData§r\n");
+            } else if (!hasSacredBuilding) {
+                sb.append("  §cassigned building: ").append(shortId(assignedBuilding.getId()))
+                  .append(" type=").append(assignedBuilding.getType().name())
+                  .append(" — expected TEMPLE/CHAPEL/SHRINE§r\n");
+            } else {
+                sb.append("  sacred building §afound§r (type=")
+                  .append(assignedBuilding.getType().name())
+                  .append(", id=").append(shortId(assignedBuilding.getId())).append(")\n");
+            }
+            if (hasSacredBuilding) {
+                java.util.Optional<tterrag1112.life_in_the_village.Village.Village> villageOpt =
+                        npc.getAssignedVillageName()
+                                .flatMap(n -> VillageSavedData.get(level).getVillageByName(n));
+                if (villageOpt.isEmpty()) {
+                    sb.append("  §c(no assigned village — cannot scan rites)§r\n");
+                } else {
+                    java.util.UUID villageId3 = villageOpt.get().getId();
+                    long now3 = level.getGameTime();
+                    java.util.UUID me3 = npc.getUUID();
+
+                    // Collect fronted rite ids (disjoint from task-source rites)
+                    java.util.Set<java.util.UUID> frontedRiteIds3 = new java.util.HashSet<>();
+                    for (tterrag1112.life_in_the_village.Village.Event.VillageEvent ve3
+                            : VillageSavedData.get(level).getAllEvents()) {
+                        if (!villageId3.equals(ve3.getVillageId())) continue;
+                        if (ve3.getType().category() != EventCategory.RELIGIOUS_RITE) continue;
+                        if (!ve3.isActiveAt(now3)) continue;
+                        String riteIdStr3 = ve3.getEventData().get(
+                                tterrag1112.life_in_the_village.Village.Event.CeremonyBlessings.RITE_ID_KEY);
+                        if (riteIdStr3 == null) continue;
+                        try { frontedRiteIds3.add(java.util.UUID.fromString(riteIdStr3)); }
+                        catch (IllegalArgumentException ignored3) {}
+                    }
+
+                    int dueTotal3 = 0, claimable3 = 0, fronted3 = 0;
+                    for (tterrag1112.life_in_the_village.Npc.Religion.RiteExecution r3
+                            : RiteSavedData.get(level).dueRites(now3)) {
+                        if (!villageId3.equals(r3.villageId())) continue;
+                        dueTotal3++;
+                        java.util.UUID presider3 = r3.presidingPriestId().orElse(null);
+                        boolean vacantOrMe = (presider3 == null || presider3.equals(me3));
+                        boolean capable3 = RiteCapability.canOfficiate(npc, r3.type());
+                        if (!vacantOrMe || !capable3) continue;
+                        if (frontedRiteIds3.contains(r3.riteId())) { fronted3++; continue; }
+                        claimable3++;
+                    }
+                    sb.append("  village rites: due=").append(dueTotal3)
+                      .append(" claimable(this priest)=§a").append(claimable3).append("§r")
+                      .append(" fronted(festival-excluded)=").append(fronted3).append("\n");
+                    sb.append("  PriestTaskSource WOULD emit: officiate_rite=")
+                      .append(claimable3 > 0 ? "§a" : "§c").append(claimable3).append("§r tasks\n");
+                }
+            }
+        }
+
         if (!anySource) {
             sb.append("  §7NPC is not a producer/scribe/farm and has no household"
                     + " — no task sources apply.§r\n");
@@ -639,6 +716,7 @@ public final class TaskDebugCommand {
         HouseholdTaskSource.generateFor(level, npc, ctx);
         FarmTaskSource.generateFor(level, npc, ctx);
         AnimalTaskSource.generateFor(level, npc, ctx);
+        PriestTaskSource.generateFor(level, npc, ctx);
 
         // ── Post-gen board dump ───────────────────────────────────────────────
         sb.append("\n§e--- Post-gen board state ---§r\n");
@@ -747,6 +825,14 @@ public final class TaskDebugCommand {
                 return "house building not found in VillageSavedData";
             }
             return "household bread target already met";
+        }
+
+        // Priest with no sacred building?
+        if (prof == Profession.PRIEST) {
+            if (PriestTaskSource.forNpc(level, npc).isEmpty()) {
+                return "TEMPLE/CHAPEL/SHRINE not assigned (or assigned building is wrong type)";
+            }
+            return "no claimable due rites in this village (all claimed by others, incapable, or fronted by festival)";
         }
 
         return "profession not migrated and no household (no task sources apply)";
