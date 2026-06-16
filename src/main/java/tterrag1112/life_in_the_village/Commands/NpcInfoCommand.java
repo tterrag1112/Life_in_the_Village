@@ -16,7 +16,6 @@ import tterrag1112.life_in_the_village.Entities.Goals.Profession.ProfessionRoleM
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Life_in_the_village;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Skills.Skill;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Village.Building;
@@ -151,7 +150,7 @@ public final class NpcInfoCommand {
      * keyed by activity. The reflection probe is the only way to
      * tell whether a profession-specific behavior is actually
      * REGISTERED vs. simply not running this tick — the symptom
-     * that motivated p.1 is FarmerBehavior never being checked at
+     * that motivated p.1 is the Brain not having WORK behaviors for a FARMER —
      * all, which means it's not in the Brain at all.
      *
      * <p>If reflection fails (Mojang renames the field, mod
@@ -177,20 +176,9 @@ public final class NpcInfoCommand {
             }
         }
 
-        // Direct FarmerBehavior probe — answers the p.1 question
-        // for FARMER NPCs without needing to scan the registered set.
-        if (isFarmerProfession(npc.getProfession())) {
-            FarmerBehavior fb = npc.getBehavior(FarmerBehavior.class);
-            sb.append("  FarmerBehavior running? = ")
-                    .append(fb != null ? "yes" : "no (not in runningBehaviors)")
-                    .append("\n");
-        }
-
         // Registered-behaviors dump via reflection. This is the
-        // load-bearing diagnostic: if FarmerBehavior isn't in this
-        // map at all for a FARMER, the Brain was never configured
-        // for FARMER's profession (likely because makeBrain ran
-        // when profession was still NONE).
+        // load-bearing diagnostic: confirms DoTaskBehavior is registered
+        // for a FARMER (WORK@1 drives all crop and animal work post-G2).
         appendRegisteredBehaviors(sb, brain);
     }
 

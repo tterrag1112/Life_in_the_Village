@@ -11,6 +11,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProducerSpecs;
 import tterrag1112.life_in_the_village.Npc.Tasks.Household.HouseholdTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeCommissionTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmTaskSource;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.AnimalTaskSource;
 
 import javax.annotation.Nullable;
 import java.util.ArrayList;
@@ -257,6 +258,7 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
                 ProducerSpecs.generateAll(level, entity, ctx);
                 ScribeCommissionTaskSource.generateFor(level, entity, ctx);
                 FarmTaskSource.generateFor(level, entity, ctx);
+                AnimalTaskSource.generateFor(level, entity, ctx);
             }
             case HOUSEHOLD       -> HouseholdTaskSource.generateFor(level, entity, ctx);
         }

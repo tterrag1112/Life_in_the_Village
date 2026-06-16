@@ -15,11 +15,8 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.PostalBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderMaintenanceBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderRepaintBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.FarmerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerLivestockVisitBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ShepherdBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BeekeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MinerBehavior;
@@ -85,28 +82,12 @@ public final class ProfessionBrainFactory {
                             new BuilderRepaintBehavior()));
         });
 
-        // FARMER + FARMHAND: separate behaviors per separate Goal classes.
-        // FarmerBehavior includes the inlined PostJob periodic side-effect.
-        // Phase 6.3.3.k.5 — also wire the predator scan (CORE: always-on)
-        // and reuse GuardMeleeAttackBehavior in FIGHT so a farmer that
-        // detects a wolf near their pen can defend the herd. Scan sets
-        // ATTACK_TARGET only when the NPC is skill-qualified; children
-        // and unskilled farmhands have hazard recorded but don't engage.
+        // FARMER + FARMHAND: G2b — ShepherdBehavior + BeekeeperBehavior deleted;
+        // all species work now runs through DoTaskBehavior (WORK@1) via shear/collect_honey
+        // tasks emitted by AnimalTaskSource. WORK@0 is empty for both professions.
+        // Phase 6.3.3.k.5 — predator scan (CORE: always-on) and GuardMeleeAttack
+        // (FIGHT) remain so farmers can defend their herds from wolves.
         REGISTRARS.put(Profession.FARMER, (npc, brain) -> {
-            // Phase 6.7.2 / 6.7.3 — ShepherdBehavior + BeekeeperBehavior
-            // precede FarmerBehavior in the WORK priority-0 bucket.
-            // Each gates strictly on its species-specific role
-            // (SHEPHERD / BEEKEEPER) + species roster + tools, so both
-            // are dormant for the typical farmer; when active they
-            // pre-empt the generic FarmerBehavior phases via
-            // WALK_TARGET memory contention. FarmerBehavior also
-            // explicitly defers via {Shepherd,Beekeeper}Behavior
-            // .hasActionableWork — see FarmerBehavior
-            // .checkExtraStartConditions.
-            brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new ShepherdBehavior(),
-                            new BeekeeperBehavior(),
-                            new FarmerBehavior()));
             brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
                     ImmutableList.of(new tterrag1112.life_in_the_village.Npc
                             .Brain.Behaviors.Civic.PredatorScanBehavior()));
@@ -118,10 +99,6 @@ public final class ProfessionBrainFactory {
         // Profession.FARMHAND remains as a @Deprecated load-time alias
         // (save migration rewrites FARMHAND-tagged NPCs to FARMER).
         REGISTRARS.put(Profession.FARMHAND, (npc, brain) -> {
-            brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new ShepherdBehavior(),
-                            new BeekeeperBehavior(),
-                            new FarmerBehavior()));
             brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
                     ImmutableList.of(new tterrag1112.life_in_the_village.Npc
                             .Brain.Behaviors.Civic.PredatorScanBehavior()));
