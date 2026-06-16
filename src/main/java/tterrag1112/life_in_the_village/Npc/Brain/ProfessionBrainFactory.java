@@ -17,8 +17,6 @@ import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderMai
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BuilderRepaintBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.HealerLivestockVisitBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.ShepherdBehavior;
-import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.BeekeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.InnkeeperBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.LibrarianBehavior;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.MinerBehavior;
@@ -84,20 +82,12 @@ public final class ProfessionBrainFactory {
                             new BuilderRepaintBehavior()));
         });
 
-        // FARMER + FARMHAND: ShepherdBehavior + BeekeeperBehavior cover
-        // species-specific work (G2b target); generic crop/animal work is
-        // driven by DoTaskBehavior (WORK@1). FarmerBehavior deleted in G2.
-        // Phase 6.3.3.k.5 — also wire the predator scan (CORE: always-on)
-        // and reuse GuardMeleeAttackBehavior in FIGHT so a farmer that
-        // detects a wolf near their pen can defend the herd.
+        // FARMER + FARMHAND: G2b — ShepherdBehavior + BeekeeperBehavior deleted;
+        // all species work now runs through DoTaskBehavior (WORK@1) via shear/collect_honey
+        // tasks emitted by AnimalTaskSource. WORK@0 is empty for both professions.
+        // Phase 6.3.3.k.5 — predator scan (CORE: always-on) and GuardMeleeAttack
+        // (FIGHT) remain so farmers can defend their herds from wolves.
         REGISTRARS.put(Profession.FARMER, (npc, brain) -> {
-            // Phase 6.7.2 / 6.7.3 — ShepherdBehavior + BeekeeperBehavior gate
-            // strictly on species-specific role + species roster + tools; both
-            // are dormant for non-specialist farmers. Generic crop and animal
-            // work runs through DoTaskBehavior at WORK@1.
-            brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new ShepherdBehavior(),
-                            new BeekeeperBehavior()));
             brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
                     ImmutableList.of(new tterrag1112.life_in_the_village.Npc
                             .Brain.Behaviors.Civic.PredatorScanBehavior()));
@@ -109,9 +99,6 @@ public final class ProfessionBrainFactory {
         // Profession.FARMHAND remains as a @Deprecated load-time alias
         // (save migration rewrites FARMHAND-tagged NPCs to FARMER).
         REGISTRARS.put(Profession.FARMHAND, (npc, brain) -> {
-            brain.addActivity(NpcActivities.WORK.get(), 0,
-                    ImmutableList.of(new ShepherdBehavior(),
-                            new BeekeeperBehavior()));
             brain.addActivity(net.minecraft.world.entity.schedule.Activity.CORE, 2,
                     ImmutableList.of(new tterrag1112.life_in_the_village.Npc
                             .Brain.Behaviors.Civic.PredatorScanBehavior()));

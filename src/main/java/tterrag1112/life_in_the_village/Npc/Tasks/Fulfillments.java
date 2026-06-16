@@ -10,6 +10,8 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmAcquireFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.AnimalTendFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmCropFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmSellFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.ShearFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.HoneyFulfillment;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -39,6 +41,15 @@ public final class Fulfillments {
     /**
      * Populate the shared registry. Call once from {@code commonSetup}.
      * Each migrated profession registers here.
+     *
+     * <p>PERFORM_SERVICE fulfillments are mutually exclusive by kind:</p>
+     * <ul>
+     *   <li>{@link ScribeWriteFulfillment} — scribal commission (self-filters)</li>
+     *   <li>{@link FarmCropFulfillment} — kind in {farm_harvest, farm_replant, farm_till, farm_compost}</li>
+     *   <li>{@link AnimalTendFulfillment} — kind == "animal_tend"</li>
+     *   <li>{@link ShearFulfillment} — kind == "shear"</li>
+     *   <li>{@link HoneyFulfillment} — kind == "collect_honey"</li>
+     * </ul>
      */
     public static void install() {
         // Generic, spec-driven producer fulfillments (craft + surplus-sell)
@@ -60,6 +71,10 @@ public final class Fulfillments {
         SHARED.register(Objective.Type.PERFORM_SERVICE, new FarmCropFulfillment());
         // G2 — animal-tending (pasture rotation, ANIMAL_HUSBANDRY XP, disease recovery).
         SHARED.register(Objective.Type.PERFORM_SERVICE, new AnimalTendFulfillment());
+        // G2b — sheep shearing (SHEPHERD role, GATED_SPECIES realized production).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new ShearFulfillment());
+        // G2b — honey collection (BEEKEEPER role, GATED_SPECIES realized production).
+        SHARED.register(Objective.Type.PERFORM_SERVICE, new HoneyFulfillment());
         // G1b — farmer surplus selling (SellSurplus for FARMER, coexists with
         //        SellSurplusFulfillment; profession guard discriminates).
         SHARED.register(Objective.Type.SELL_SURPLUS, new FarmSellFulfillment());

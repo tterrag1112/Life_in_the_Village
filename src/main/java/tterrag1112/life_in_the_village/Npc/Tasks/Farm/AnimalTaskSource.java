@@ -24,7 +24,10 @@ import tterrag1112.life_in_the_village.Npc.Tasks.TaskSource;
 import tterrag1112.life_in_the_village.Profession.Profession;
 import tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority;
 import tterrag1112.life_in_the_village.Village.Building;
+import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
+import tterrag1112.life_in_the_village.Village.Roster.AnimalRosterDefinitions;
+import tterrag1112.life_in_the_village.Village.Roster.BuildingRoster;
 import tterrag1112.life_in_the_village.Village.Roster.RosterSavedData;
 
 import java.util.List;
@@ -32,29 +35,37 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * G2 — task source for generic animal-tending work (pasture rotation,
- * ANIMAL_HUSBANDRY XP, passive disease recovery).
+ * G2 / G2b — task source for animal-work tasks.
  *
- * <p>Emits ONE {@link FarmVerb#ANIMAL_TEND} task per farmhouse when the
- * farmer's {@link FarmRole} qualifies for animal work and the farmhouse
- * has at least one animal roster. A single task per farmhouse is correct
- * because the executor handles pen selection internally via
- * {@link tterrag1112.life_in_the_village.Village.Roster.PastureRotation}.</p>
+ * <p>Emits tasks based on the farmer's {@link FarmRole}:</p>
+ * <ul>
+ *   <li><b>ANIMAL_SPECIALIST, ANIMAL_TENDER, FERTILIZER, GENERALIST+ANIMAL_FOCUS</b>
+ *       → one {@link FarmVerb#ANIMAL_TEND} task per farmhouse.</li>
+ *   <li><b>SHEPHERD</b>
+ *       → one {@link FarmVerb#SHEAR} task keyed by the SHEEP roster's bound pen.</li>
+ *   <li><b>BEEKEEPER</b>
+ *       → one {@link FarmVerb#COLLECT_HONEY} task keyed by the BEE roster's bound apiary.</li>
+ * </ul>
  *
- * <h3>Role gate (mirrors FarmerBehavior.analyze lines 487–497 exactly)</h3>
- * ANIMAL_SPECIALIST, ANIMAL_TENDER, FERTILIZER, or
- * GENERALIST+FARMER_ANIMAL_FOCUS specialization. Note FERTILIZER: in the
- * legacy behavior it was routed to TENDING_ANIMALS only when no compost work
- * was available. In the task system both tasks coexist on the board and the
- * board's ranking resolves priority — a FERTILIZER with bone-meal will pick
- * the compost task (NORMAL tier); when compost is done or no bone-meal exists
- * they pick animal_tend. Behaviour is equivalent, and simpler.
+ * <p>The three branches are mutually exclusive by role: a farmer can only
+ * be in one role at a time, so exactly one of the three task types is ever
+ * emitted by a given NPC. Stale tasks from the other branches are pruned
+ * via {@code removeIfUnclaimed}.</p>
  *
- * <h3>Roster gate</h3>
- * At least one {@link tterrag1112.life_in_the_village.Village.Roster.BuildingRoster}
- * must exist for the farmhouse. No roster → no animal_tend task.
+ * <h3>ANIMAL_TEND role gate (mirrors FarmerBehavior.analyze :487–497)</h3>
+ * ANIMAL_SPECIALIST, ANIMAL_TENDER, FERTILIZER, or GENERALIST+FARMER_ANIMAL_FOCUS.
+ * SHEPHERD and BEEKEEPER are explicitly excluded here — they get their own
+ * species tasks, not the generic tend task.
+ *
+ * <h3>SHEAR / COLLECT_HONEY trigger predicates (mirror hasActionableWork)</h3>
+ * SHEAR: role==SHEPHERD, SHEEP roster with countAdults()>0, shears in inventory.
+ * COLLECT_HONEY: role==BEEKEEPER, BEE roster with countAdults()>0, at least one
+ * of (shears + HONEYCOMB below quota) or (glass_bottle + HONEY_BOTTLE below quota).
  */
 public final class AnimalTaskSource implements TaskSource {
+
+    private static final int HONEYCOMB_STOCK_QUOTA    = 16;
+    private static final int HONEY_BOTTLE_STOCK_QUOTA = 8;
 
     private final IssuerRef issuer;
     private final Building  farmhouse;
@@ -98,9 +109,17 @@ public final class AnimalTaskSource implements TaskSource {
     @Override
     public void generate(TaskContext ctx) {
         ServerLevel level = ctx.level();
-
-        // ── Role gate (verbatim from FarmerBehavior.analyze :487-497) ────────
         FarmRole role = ProfessionRoleManager.getRole(farmer, FarmRole.class);
+
+        TaskSavedData taskData = TaskSavedData.get(level);
+        TaskBoard board = taskData.board(issuer);
+
+        // ── Stable task ids for all three task types ──────────────────────────
+        TaskId tendId  = ProductionTaskIds.stable(issuer, "animal_tend:" + farmhouse.getId());
+        TaskId shearId = ProductionTaskIds.stable(issuer, "shear:" + farmhouse.getId());
+        TaskId honeyId = ProductionTaskIds.stable(issuer, "collect_honey:" + farmhouse.getId());
+
+        // ── Determine which branch applies ────────────────────────────────────
         boolean specBiasAnimal = (role == FarmRole.GENERALIST)
                 && farmer.getSpecializationComponent().currentId()
                         .map(id -> id.equals(NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name()))
@@ -109,36 +128,87 @@ public final class AnimalTaskSource implements TaskSource {
                 || role == FarmRole.ANIMAL_TENDER
                 || role == FarmRole.FERTILIZER
                 || specBiasAnimal;
+        boolean isShepherd  = role == FarmRole.SHEPHERD;
+        boolean isBeekeeper = role == FarmRole.BEEKEEPER;
 
-        TaskSavedData taskData = TaskSavedData.get(level);
-        TaskBoard board = taskData.board(issuer);
-        TaskId tendId  = ProductionTaskIds.stable(issuer, "animal_tend:" + farmhouse.getId());
-
-        if (!animalRole) {
-            removeIfUnclaimed(board, tendId, taskData);
-            return;
-        }
-
-        // ── Roster gate: at least one animal roster must exist ────────────────
         RosterSavedData rdata = RosterSavedData.get(level);
-        boolean hasRoster = !rdata.getRostersForBuilding(farmhouse.getId()).isEmpty();
-        if (!hasRoster) {
-            removeIfUnclaimed(board, tendId, taskData);
-            return;
-        }
-
-        // ── Emit one animal_tend task for this farmhouse ──────────────────────
         BlockPos origin = farmhouse.getShape().getOrigin();
         GlobalPos gpos  = GlobalPos.of(level.dimension(), origin);
         TaskFilter farmerFilter = new TaskFilter(
                 Optional.empty(), 0, Optional.empty(),
                 Optional.of(Profession.FARMER), Optional.empty(), false);
 
-        upsert(board, taskData, tendId,
-                new Objective.PerformService(FarmVerb.ANIMAL_TEND,
-                        Optional.of(farmhouse.getId().toString()), Optional.of(gpos)),
-                new Priority(TaskPriority.NORMAL, 0f),
-                farmerFilter);
+        // ── Branch: generic ANIMAL_TEND ───────────────────────────────────────
+        if (animalRole) {
+            removeIfUnclaimed(board, shearId, taskData);
+            removeIfUnclaimed(board, honeyId, taskData);
+            boolean hasRoster = !rdata.getRostersForBuilding(farmhouse.getId()).isEmpty();
+            if (!hasRoster) {
+                removeIfUnclaimed(board, tendId, taskData);
+                return;
+            }
+            upsert(board, taskData, tendId,
+                    new Objective.PerformService(FarmVerb.ANIMAL_TEND,
+                            Optional.of(farmhouse.getId().toString()), Optional.of(gpos)),
+                    new Priority(TaskPriority.NORMAL, 0f),
+                    farmerFilter);
+            return;
+        }
+
+        // ── Branch: SHEAR (SHEPHERD role) ─────────────────────────────────────
+        if (isShepherd) {
+            removeIfUnclaimed(board, tendId, taskData);
+            removeIfUnclaimed(board, honeyId, taskData);
+
+            BuildingRoster sheepRoster = rdata
+                    .getRoster(farmhouse.getId(), AnimalRosterDefinitions.SHEEP).orElse(null);
+            boolean canShear = sheepRoster != null
+                    && sheepRoster.countAdults() > 0
+                    && hasItem(farmer, net.minecraft.world.item.Items.SHEARS);
+            if (!canShear) {
+                removeIfUnclaimed(board, shearId, taskData);
+                return;
+            }
+            upsert(board, taskData, shearId,
+                    new Objective.PerformService(FarmVerb.SHEAR,
+                            Optional.of(farmhouse.getId().toString()), Optional.of(gpos)),
+                    new Priority(TaskPriority.NORMAL, 0f),
+                    farmerFilter);
+            return;
+        }
+
+        // ── Branch: COLLECT_HONEY (BEEKEEPER role) ────────────────────────────
+        if (isBeekeeper) {
+            removeIfUnclaimed(board, tendId, taskData);
+            removeIfUnclaimed(board, shearId, taskData);
+
+            BuildingRoster beeRoster = rdata
+                    .getRoster(farmhouse.getId(), AnimalRosterDefinitions.BEE).orElse(null);
+            boolean hasAdults = beeRoster != null && beeRoster.countAdults() > 0;
+            boolean canMakeComb = hasAdults
+                    && hasItem(farmer, net.minecraft.world.item.Items.SHEARS)
+                    && BuildingStorageAccess.countItem(level, farmhouse,
+                            net.minecraft.world.item.Items.HONEYCOMB) < HONEYCOMB_STOCK_QUOTA;
+            boolean canMakeBottle = hasAdults
+                    && hasItem(farmer, net.minecraft.world.item.Items.GLASS_BOTTLE)
+                    && BuildingStorageAccess.countItem(level, farmhouse,
+                            net.minecraft.world.item.Items.HONEY_BOTTLE) < HONEY_BOTTLE_STOCK_QUOTA;
+            if (!canMakeComb && !canMakeBottle) {
+                removeIfUnclaimed(board, honeyId, taskData);
+                return;
+            }
+            upsert(board, taskData, honeyId,
+                    new Objective.PerformService(FarmVerb.COLLECT_HONEY,
+                            Optional.of(farmhouse.getId().toString()), Optional.of(gpos)),
+                    new Priority(TaskPriority.NORMAL, 0f),
+                    farmerFilter);
+            return;
+        }
+
+        // ── No applicable role — prune all three ──────────────────────────────
+        removeIfUnclaimed(board, tendId, taskData);
+        removeIfUnclaimed(board, shearId, taskData);
+        removeIfUnclaimed(board, honeyId, taskData);
     }
 
     // ── Board mutation helpers (mirror FarmTaskSource) ────────────────────────
@@ -169,5 +239,13 @@ public final class AnimalTaskSource implements TaskSource {
                 data.markChanged();
             }
         });
+    }
+
+    private static boolean hasItem(TownspersonMob entity, net.minecraft.world.item.Item item) {
+        var inv = entity.getPersonalInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            if (inv.getItem(i).getItem() == item) return true;
+        }
+        return false;
     }
 }

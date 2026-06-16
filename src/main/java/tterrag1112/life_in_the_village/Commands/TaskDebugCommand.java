@@ -432,40 +432,41 @@ public final class TaskDebugCommand {
                                         tterrag1112.life_in_the_village.Npc.Specialization
                                                 .NpcSpecializationTypes.FARMER_ANIMAL_FOCUS.name()))
                                 .orElse(false);
-                // Matches generate() exactly: ANIMAL_SPECIALIST | ANIMAL_TENDER | specBiasAnimal.
-                // SHEPHERD / BEEKEEPER are NOT gated as animalRole in generate().
+                // Matches AnimalTaskSource.generate() exactly:
+                // ANIMAL_SPECIALIST | ANIMAL_TENDER | FERTILIZER | specBiasAnimal → animal_tend
+                // SHEPHERD → shear task; BEEKEEPER → collect_honey task (G2b)
                 boolean animalRole = role == FarmRole.ANIMAL_SPECIALIST
                         || role == FarmRole.ANIMAL_TENDER
+                        || role == FarmRole.FERTILIZER
                         || specBiasAnimal;
-                boolean shepherdOrBeekeeper = role == FarmRole.SHEPHERD
-                        || role == FarmRole.BEEKEEPER;
+                boolean isShepherd  = role == FarmRole.SHEPHERD;
+                boolean isBeekeeper = role == FarmRole.BEEKEEPER;
+                boolean shepherdOrBeekeeper = isShepherd || isBeekeeper;
                 boolean isFertilizer = role == FarmRole.FERTILIZER;
                 // Mirrors canHarvest(role) / canPlant(role) in generate() exactly.
                 // APPRENTICE is NOT in either set — generate() never included it.
-                boolean canHarvest2 = !animalRole && (role == null || role == FarmRole.GENERALIST
+                boolean canHarvest2 = !animalRole && !shepherdOrBeekeeper
+                        && (role == null || role == FarmRole.GENERALIST
                         || role == FarmRole.CROP_SPECIALIST || role == FarmRole.HARVESTER);
                 // FERTILIZER override: generate() forces canHarvest=false, canPlant=false.
                 if (isFertilizer) canHarvest2 = false;
-                boolean canPlant2 = !animalRole && !isFertilizer && (role == null
-                        || role == FarmRole.GENERALIST || role == FarmRole.CROP_SPECIALIST
-                        || role == FarmRole.PLANTER);
+                boolean canPlant2 = !animalRole && !shepherdOrBeekeeper && !isFertilizer
+                        && (role == null || role == FarmRole.GENERALIST
+                        || role == FarmRole.CROP_SPECIALIST || role == FarmRole.PLANTER);
                 String roleStr = role != null ? role.name() : "(null=GENERALIST-equivalent)";
                 String roleVerdict;
                 if (animalRole) {
                     roleVerdict = "§c→ ANIMAL role — zero crop tasks§r";
+                } else if (isShepherd) {
+                    roleVerdict = "§b→ SHEPHERD — shear task (G2b)§r";
+                } else if (isBeekeeper) {
+                    roleVerdict = "§b→ BEEKEEPER — collect_honey task (G2b)§r";
                 } else if (isFertilizer) {
                     roleVerdict = "§7→ FERTILIZER — compost only (no harvest/plant/till)§r";
                 } else {
                     roleVerdict = "§a→ harvest=" + canHarvest2 + " plant/till=" + canPlant2 + "§r";
                 }
                 sb.append("  role=").append(roleStr).append(" ").append(roleVerdict).append("\n");
-                // Advisory: SHEPHERD/BEEKEEPER are not gated as animal in generate() — they
-                // fall through to crop-capable logic just like GENERALIST would.
-                if (shepherdOrBeekeeper) {
-                    sb.append("  §e[advisory] role=").append(role.name())
-                      .append(" is NOT gated as animalRole in generate() —")
-                      .append(" treated as crop-capable (WOULD-emit counts reflect this)§r\n");
-                }
 
                 // Apprentice plot restriction — detected via EmploymentTier, NOT FarmRole.APPRENTICE.
                 boolean isApprentice2 = FarmTaskSource.isApprenticeTierFor(
@@ -487,7 +488,7 @@ public final class TaskDebugCommand {
 
                 // Per-plot eligibility (capped at 8)
                 int plotCap = 8;
-                if (!activePlots.isEmpty() && !animalRole) {
+                if (!activePlots.isEmpty() && !animalRole && !shepherdOrBeekeeper) {
                     sb.append("  per-plot eligibility (mature/emptyFarmland/seeds/tillable/compost):\n");
                     int harvest2 = 0, replant2 = 0, till2 = 0, compost2 = 0;
                     int shown2 = 0;
@@ -553,16 +554,55 @@ public final class TaskDebugCommand {
                       .append(" sell=").append(sellSurplus2)
                       .append(" seedAcquire=").append(seedAcquire2)
                       .append(" tasks\n");
-                } else if (activePlots.isEmpty() && !animalRole) {
+                } else if (activePlots.isEmpty() && !animalRole && !shepherdOrBeekeeper) {
                     sb.append("  §7(no non-fallow CROP_FIELD plots — zero farm tasks)§r\n");
                 }
-                // Animal role: show WOULD-emit for animal_tend
-                if (animalRole && fh2 != null) {
-                    boolean hasRoster = !tterrag1112.life_in_the_village.Village.Roster
-                            .RosterSavedData.get(level).getRostersForBuilding(fhId).isEmpty();
-                    sb.append("  AnimalTaskSource WOULD emit: animal_tend=")
-                      .append(hasRoster ? "§a1§r" : "§c0 (no roster)§r")
-                      .append(" task\n");
+                // Animal/species role: show WOULD-emit for the applicable task
+                if (fh2 != null) {
+                    tterrag1112.life_in_the_village.Village.Roster.RosterSavedData rsd2 =
+                            tterrag1112.life_in_the_village.Village.Roster.RosterSavedData.get(level);
+                    if (animalRole) {
+                        boolean hasRoster = !rsd2.getRostersForBuilding(fhId).isEmpty();
+                        sb.append("  AnimalTaskSource WOULD emit: animal_tend=")
+                          .append(hasRoster ? "§a1§r" : "§c0 (no roster)§r")
+                          .append(" task\n");
+                    } else if (isShepherd) {
+                        // G2b: SHEPHERD — shear task
+                        boolean hasSheepRoster = rsd2
+                                .getRoster(fhId, tterrag1112.life_in_the_village.Village.Roster.AnimalRosterDefinitions.SHEEP)
+                                .map(r -> r.countAdults() > 0).orElse(false);
+                        boolean hasShears2 = false;
+                        net.minecraft.world.SimpleContainer pi3 = npc.getPersonalInventory();
+                        for (int pi = 0; pi < pi3.getContainerSize(); pi++) {
+                            if (pi3.getItem(pi).getItem() == Items.SHEARS) { hasShears2 = true; break; }
+                        }
+                        boolean wouldShear = hasSheepRoster && hasShears2;
+                        sb.append("  AnimalTaskSource WOULD emit: shear=")
+                          .append(wouldShear ? "§a1§r" : "§c0§r")
+                          .append(hasSheepRoster ? "" : " §7(no SHEEP roster with adults)§r")
+                          .append(hasSheepRoster && !hasShears2 ? " §7(no shears)§r" : "")
+                          .append(" task\n");
+                    } else if (isBeekeeper) {
+                        // G2b: BEEKEEPER — collect_honey task
+                        boolean hasBeeRoster = rsd2
+                                .getRoster(fhId, tterrag1112.life_in_the_village.Village.Roster.AnimalRosterDefinitions.BEE)
+                                .map(r -> r.countAdults() > 0).orElse(false);
+                        int honeycombStock = BuildingStorageAccess.countItem(level, fh2, Items.HONEYCOMB);
+                        int bottleStock    = BuildingStorageAccess.countItem(level, fh2, Items.HONEY_BOTTLE);
+                        boolean hasShears3 = false, hasBottle3 = false;
+                        net.minecraft.world.SimpleContainer pi4 = npc.getPersonalInventory();
+                        for (int pi = 0; pi < pi4.getContainerSize(); pi++) {
+                            net.minecraft.world.item.Item pii = pi4.getItem(pi).getItem();
+                            if (pii == Items.SHEARS)       hasShears3 = true;
+                            if (pii == Items.GLASS_BOTTLE) hasBottle3 = true;
+                        }
+                        boolean canComb3   = hasBeeRoster && hasShears3 && honeycombStock < 16;
+                        boolean canBottle3 = hasBeeRoster && hasBottle3 && bottleStock    < 8;
+                        sb.append("  AnimalTaskSource WOULD emit: collect_honey=")
+                          .append((canComb3 || canBottle3) ? "§a1§r" : "§c0§r")
+                          .append(" (comb=").append(canComb3 ? "§ay§r" : "§cn§r")
+                          .append(" bottle=").append(canBottle3 ? "§ay§r" : "§cn§r").append(")\n");
+                    }
                 }
             }
         }
