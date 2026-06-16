@@ -265,6 +265,7 @@ public class BusinessManagementScreen extends Screen {
         renameBox  = null;
         int px = bookX + SIDEBAR_W + PAGE_PAD, py = bookY + 36;
         if (currentSection == Section.OVERVIEW)  buildOverviewWidgets(px, py);
+        if (currentSection == Section.WORKERS)   buildWorkerWidgets(px, py);
         if (currentSection == Section.SCHEDULE)  buildScheduleWidgets(px, py);
     }
 
@@ -292,6 +293,18 @@ public class BusinessManagementScreen extends Screen {
         addRenderableWidget(StyledButton.builder(Component.literal("Dissolve Business"),
                 b -> sendAction(BusinessActionPacket.ActionType.DISSOLVE_COMPANY, "", 0, 0))
                 .pos(px, py + 140).size(PW, 16).build());
+    }
+
+    private void buildWorkerWidgets(int px, int py) {
+        // "Hire Contract" button — mints a business-recruit JobContractItem
+        addRenderableWidget(StyledButton.builder(
+                Component.literal("Hire Contract"),
+                b -> ClientPacketDistributor.sendToServer(new BusinessActionPacket(
+                        BusinessActionPacket.ActionType.MINT_HIRE_CONTRACT,
+                        data.businessId(), new UUID(0, 0), "", 0L, 0)))
+                .pos(px + PW - 80, py - 13)
+                .size(78, 12)
+                .build());
     }
 
     private void buildScheduleWidgets(int px, int py) {
@@ -394,9 +407,10 @@ public class BusinessManagementScreen extends Screen {
         g.drawString(font, "Worker",   px + 2,        y + 2, BookScreenColors.MID, false);
         g.drawString(font, "Role",     px + 100,       y + 2, BookScreenColors.MID, false);
         g.drawString(font, "Wage/day", px + PW - 110,  y + 2, BookScreenColors.MID, false);
+        // Note: "Hire Contract" button is rendered by the widget layer (added in buildWorkerWidgets)
         if (data.workers().isEmpty()) {
-            g.drawCenteredString(font, "No workers hired.",                                    px + PW / 2, py + 60, BookScreenColors.MID);
-            g.drawCenteredString(font, "Interact with an unemployed NPC while holding a coin.", px + PW / 2, py + 74, BookScreenColors.LIGHT);
+            g.drawCenteredString(font, "No workers hired.",                                     px + PW / 2, py + 60, BookScreenColors.MID);
+            g.drawCenteredString(font, "Click \"Hire Contract\" then right-click a villager.", px + PW / 2, py + 74, BookScreenColors.LIGHT);
         } else {
             workerList.render(g, mx, my);
         }

@@ -12,6 +12,9 @@ import net.minecraft.world.item.Items;
 import tterrag1112.life_in_the_village.Components.ModDataComponents;
 import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Trade.WanderingTraderBehavior;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessHiring;
+import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Items.JobContractTerms;
 import tterrag1112.life_in_the_village.Items.ModItems;
 import tterrag1112.life_in_the_village.Items.StallLeaseTerms;
@@ -49,7 +52,8 @@ import java.util.UUID;
  *       the primer and falls through.</li>
  *   <li><b>WRITTEN_LETTER held</b> → LetterDelivery handoff.</li>
  *   <li><b>JOB_CONTRACT held</b> → routed per
- *       {@link JobContractTerms} (hire / apprenticeship / commission).</li>
+ *       {@link JobContractTerms} (business-recruit checked first, then
+ *       hire / apprenticeship / commission).</li>
  *   <li><b>STALL_LEASE held</b> → redeem at a market.</li>
  *   <li><b>Source-book held</b> + SCRIBE → book copy commission stub.</li>
  *   <li><b>Healer-donation item held</b> + HEALER → donation stub.</li>
@@ -204,6 +208,15 @@ public final class NpcInteractionHandler {
                     .withStyle(ChatFormatting.GRAY), false);
             return InteractionResult.SUCCESS;
         }
+
+        // ── Business-recruit flavor — handled BEFORE the profession gate ───
+        // The contract bypasses profession matching because it recruits any
+        // unemployed NPC into a specific business.
+        if (terms.isBusinessRecruit()) {
+            return handleBusinessRecruit(npc, player, level, held, terms);
+        }
+
+        // ── Profession gate (hire / apprenticeship / commission) ──────────
         if (npc.getProfession() != terms.profession()) {
             player.displayClientMessage(Component.literal(
                             "[" + npc.getNpcName() + "] This contract isn't for my profession.")
@@ -244,6 +257,87 @@ public final class NpcInteractionHandler {
         WorkplaceAssignmentManager.handleWorkRequest(player, npc, level);
         // Don't consume on hire — the player keeps the contract as proof
         // until they /profession leave. Future polish can change this.
+        return InteractionResult.SUCCESS;
+    }
+
+    /**
+     * Business-recruit contract path.
+     *
+     * <p>Security checks (in order):
+     * <ol>
+     *   <li>The business referenced by the contract still exists.</li>
+     *   <li>The using player is the owner of that business (prevents
+     *       transferring or stealing contracts).</li>
+     *   <li>The target NPC is not already employed in a business.</li>
+     * </ol>
+     *
+     * <p>On success: calls {@link BusinessHiring#hireIntoBusiness} then
+     * consumes ONE item from the stack (one-shot hire). On failure: sends a
+     * clear message and does NOT consume the contract.
+     */
+    private static InteractionResult handleBusinessRecruit(TownspersonMob npc,
+                                                           ServerPlayer player,
+                                                           ServerLevel level,
+                                                           ItemStack held,
+                                                           JobContractTerms terms) {
+        UUID businessId = terms.recruitingBusinessId().orElse(null);
+        if (businessId == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] This contract has no business attached.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        VillageSavedData vdata = VillageSavedData.get(level);
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+
+        // 1. Business must exist
+        Business business = cdata.getById(businessId).orElse(null);
+        if (business == null) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] The business on this contract no longer exists.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // 2. Caller must own the business (security: contract can't be shared to hire into someone else's business)
+        if (!business.isOwnedByPlayer(player.getUUID())) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] You don't own the business on this contract.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // 3. NPC must be unemployed (not already a business worker)
+        if (npc.isBusinessWorker()) {
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] I'm already employed elsewhere.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Parse the role stored in the contract (defaults to PRODUCER if missing/invalid)
+        Business.WorkerRole role = Business.WorkerRole.PRODUCER;
+        if (terms.recruiterRole().isPresent()) {
+            try { role = Business.WorkerRole.valueOf(terms.recruiterRole().get()); }
+            catch (IllegalArgumentException ignored) {}
+        }
+
+        boolean hired = BusinessHiring.hireIntoBusiness(level, business, npc, role, vdata, cdata);
+        if (!hired) {
+            // isBusinessWorker() check above should have caught this, but guard defensively
+            player.displayClientMessage(Component.literal(
+                            "[" + npc.getNpcName() + "] Couldn't hire — NPC is already employed.")
+                    .withStyle(ChatFormatting.RED), false);
+            return InteractionResult.SUCCESS;
+        }
+
+        // Success — consume one contract (one-shot)
+        held.shrink(1);
+        player.displayClientMessage(
+                Component.literal("[" + npc.getNpcName() + "] I'll work for "
+                        + business.getName() + "!")
+                        .withStyle(ChatFormatting.GREEN), false);
         return InteractionResult.SUCCESS;
     }
 
