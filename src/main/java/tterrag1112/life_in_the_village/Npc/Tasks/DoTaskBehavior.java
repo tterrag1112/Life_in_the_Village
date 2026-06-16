@@ -1,6 +1,7 @@
 package tterrag1112.life_in_the_village.Npc.Tasks;
 
 import com.google.common.collect.ImmutableMap;
+import net.minecraft.world.entity.ai.memory.MemoryModuleType;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.ai.behavior.Behavior;
 import tterrag1112.life_in_the_village.Entities.ActivityState;
@@ -86,6 +87,14 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
             return false;
         }
 
+        // Dusk-yield gate (WORK_PROFESSION only): don't start a new profession
+        // task when work-time has ended. The HOUSEHOLD scope runs in IDLE and
+        // must NOT be gated (household chores happen off-hours).
+        if (scope == TaskScope.WORK_PROFESSION && !entity.isWorkTime()) {
+            signalNoActionableWork(entity, true);
+            return false;
+        }
+
         TaskContext ctx = new TaskContext(level, entity);
         refreshSources(level, entity, ctx);
 
@@ -124,7 +133,13 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
 
     @Override
     protected boolean canStillUse(ServerLevel level, TownspersonMob entity, long gameTime) {
-        return activeExecutor != null && activeTask != null;
+        if (activeExecutor == null || activeTask == null) return false;
+        // Dusk-yield: abandon the in-flight WORK_PROFESSION task when work-time
+        // ends so the brain can flip to REST and ReturnHomeBehavior can start.
+        // The brain will call stop(), which releases the claim gracefully and
+        // erases WALK_TARGET so ReturnHomeBehavior's VALUE_ABSENT gate opens.
+        if (scope == TaskScope.WORK_PROFESSION && !entity.isWorkTime()) return false;
+        return true;
     }
 
     @Override
@@ -155,10 +170,26 @@ public final class DoTaskBehavior extends Behavior<TownspersonMob> {
         // If the brain stops us mid-run (pre-empted), release the claim so the
         // task isn't stranded IN_PROGRESS with a claimant that walked away.
         if (activeTask != null && activeTask.assignment().isClaimedBy(entity.getUUID())) {
-            activeTask.assignment().release(entity.getUUID());
+            if (scope == TaskScope.WORK_PROFESSION && !entity.isWorkTime()) {
+                // Dusk-yield: graceful release returns the task to OPEN so the
+                // same task can be re-claimed when work resumes next morning.
+                // This is NOT a failure — the executor simply didn't finish today.
+                activeTask.assignment().releaseGracefully(entity.getUUID());
+            } else {
+                // Pre-empted mid-day or mid-household: treat as a real abandon.
+                // FAILED tasks are re-emitted by the source on the next refresh.
+                activeTask.assignment().release(entity.getUUID());
+            }
             TaskSavedData.get(level).markChanged();
         }
+        // Erase WALK_TARGET on ANY stop so ReturnHomeBehavior's VALUE_ABSENT
+        // start-gate opens. Only erases when we actually held an active task
+        // (i.e. we ran) to avoid stomping a legitimate WALK_TARGET set by
+        // another behavior in a different activity. The HOUSEHOLD scope is also
+        // guarded: household tasks don't walk to the field, so this is a no-op
+        // in practice, but is correct in either scope.
         if (activeTask != null) {
+            entity.getBrain().eraseMemory(MemoryModuleType.WALK_TARGET);
             entity.setActivityState(ActivityState.IDLE);
         }
         finishRun();

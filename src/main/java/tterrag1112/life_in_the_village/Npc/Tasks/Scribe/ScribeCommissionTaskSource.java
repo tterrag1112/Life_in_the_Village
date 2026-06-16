@@ -139,9 +139,18 @@ public final class ScribeCommissionTaskSource implements TaskSource {
         Priority priority = priorityFor(c);
         Optional<Task> existing = board.get(id);
         if (existing.isPresent()) {
-            existing.get().setPriority(priority);
-            data.markChanged();
-            return;
+            Task t = existing.get();
+            // Revive terminal tasks (FAILED / DONE) so re-issued commissions
+            // with the same stable id are claimable again after the source
+            // re-emits them — mirrors the fix in ProductionTaskSource.upsert.
+            if (t.assignment().isTerminal()) {
+                board.remove(id);
+                // fall through to create a fresh task below
+            } else {
+                t.setPriority(priority);
+                data.markChanged();
+                return;
+            }
         }
         Objective obj = new Objective.PerformService(
                 ScribeService.KIND, Optional.of(c.commissionId().toString()));

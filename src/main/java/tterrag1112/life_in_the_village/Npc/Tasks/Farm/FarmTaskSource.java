@@ -461,9 +461,19 @@ public final class FarmTaskSource implements TaskSource {
                         Objective obj, Priority priority, TaskFilter filter) {
         Optional<Task> existing = board.get(id);
         if (existing.isPresent()) {
-            existing.get().setPriority(priority);
-            data.markChanged();
-            return;
+            Task t = existing.get();
+            // If the task reached a terminal state (FAILED from a mid-day
+            // executor abandon, or DONE), revive it as a fresh OPEN task so it
+            // becomes claimable again on the next source refresh. This makes the
+            // "source refresh can recreate" promise correct for stable-id tasks.
+            if (t.assignment().isTerminal()) {
+                board.remove(id);
+                // fall through to create a fresh task below
+            } else {
+                t.setPriority(priority);
+                data.markChanged();
+                return;
+            }
         }
         Task t = new Task(id, issuer, obj, priority, filter,
                 new Assignment(), List.of(), 0L, null);
