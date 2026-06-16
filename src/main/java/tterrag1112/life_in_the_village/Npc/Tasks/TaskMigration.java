@@ -41,7 +41,10 @@ public final class TaskMigration {
                        Profession.FARMER,
                        Profession.PRIEST,
                        Profession.MONK,
-                       Profession.MINER);
+                       Profession.MINER,
+                       // PB2: COMPANY_WORKER PRODUCER role is now task-driven.
+                       // SELLER/COURIER keep their legacy paths (partial yield).
+                       Profession.COMPANY_WORKER);
 
     /** True if {@code profession} drives work through the Task System. */
     public static boolean isMigrated(Profession profession) {

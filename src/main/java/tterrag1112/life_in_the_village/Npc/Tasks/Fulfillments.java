@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Farm.HoneyFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Priest.PriestFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Monk.MonkFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Mine.MineFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Business.BusinessCraftFulfillment;
 
 /**
  * T1 — the single, shared {@link FulfillmentRegistry} for the whole mod.
@@ -85,6 +86,15 @@ public final class Fulfillments {
         SHARED.register(Objective.Type.PERFORM_SERVICE, new MonkFulfillment());
         // G5a — mine ore production (mine for MINER, mine-building gated).
         SHARED.register(Objective.Type.PERFORM_SERVICE, new MineFulfillment());
+        // PB2 — business-issued craft production (PROVIDE_ITEM for COMPANY_WORKER
+        //   and skilled employees on business tasks). Issuer-scoped: only fires
+        //   for tasks with IssuerRef(BUSINESS, ...) whose issuer matches the
+        //   acting NPC's businessId. Mutually exclusive with CraftOutputFulfillment
+        //   for COMPANY_WORKER (CraftOutputFulfillment gates on profession==spec,
+        //   which is never COMPANY_WORKER; score 9 < 10 for overlap on skilled
+        //   employee cases where both can match — claim exclusivity prevents
+        //   double-execution).
+        SHARED.register(Objective.Type.PROVIDE_ITEM, new BusinessCraftFulfillment());
         // G1b — farmer surplus selling (SellSurplus for FARMER, coexists with
         //        SellSurplusFulfillment; profession guard discriminates).
         SHARED.register(Objective.Type.SELL_SURPLUS, new FarmSellFulfillment());

@@ -7,6 +7,8 @@ import net.minecraft.world.entity.ai.memory.MemoryStatus;
 import net.minecraft.world.entity.ai.memory.WalkTarget;
 import com.google.common.collect.ImmutableMap;
 import tterrag1112.life_in_the_village.Npc.Brain.BrainNavGuard;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskMigration;
+import tterrag1112.life_in_the_village.Profession.Profession;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
@@ -103,6 +105,14 @@ public class BusinessWorkerBehavior extends Behavior<TownspersonMob> {
 
         worker = business.getWorker(entity.getUUID()).orElse(null);
         if (worker == null) return false;
+
+        // PB2 — PRODUCER partial yield: when COMPANY_WORKER is task-migrated,
+        // DoTaskBehavior (via BusinessCraftFulfillment) owns the PRODUCER slice.
+        // SELLER / COURIER / CARAVAN_ATTENDANT keep running here unchanged.
+        if (worker.role() == Business.WorkerRole.PRODUCER
+                && TaskMigration.isMigrated(Profession.COMPANY_WORKER)) {
+            return false;
+        }
 
         // Must have an assigned task to do meaningful work
         if (worker.assignedItemId().isEmpty()
