@@ -14,6 +14,8 @@ import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.BusinessActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenBusinessWorkerPacket;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Tasks.Business.BusinessProductionTaskSource;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 
 import java.util.*;
 
@@ -39,6 +41,15 @@ public class BusinessWorkerScreen extends Screen {
     private int dropdownScroll = 0;
     private List<OpenBusinessWorkerPacket.AvailableItem> filteredItems = List.of();
     private TabBar<Business.WorkerRole> tabBar;
+
+    /**
+     * PB3 — the producer item list only shows items that have a SkillRecipes
+     * recipe (hasRecipe == true). This is derived client-side from the flag the
+     * server set during buildProductionEntries. The list is rebuilt in
+     * buildProducerWidgets and used by the ScrollList + onItemClick.
+     */
+    private List<OpenBusinessWorkerPacket.AvailableItem> recipeItems = List.of();
+
     private ScrollList<OpenBusinessWorkerPacket.AvailableItem> itemList;
     private ScrollList<OpenBusinessWorkerPacket.SellListing>   sellList;
     private StyledEditBox searchBox;
@@ -51,12 +62,13 @@ public class BusinessWorkerScreen extends Screen {
         this.activeProducerType = parseProducerType(data.producerType());
         this.targetCount        = Math.max(1, data.currentTargetCount());
         this.editWage           = data.wage();
-        for (int i = 0; i < data.availableItems().size(); i++) {
-            if (data.availableItems().get(i).itemId().equals(data.currentItemId())) {
-                selectedItemIndex = i; break;
-            }
-        }
+        // Seed selected index against the recipe-filtered list (rebuilt in init)
+        // — re-matched after recipeItems is populated.
     }
+
+    // =========================================================================
+    // Server-side snapshot builder
+    // =========================================================================
 
     public static void open(net.minecraft.server.level.ServerPlayer player,
                             TownspersonMob npc, Business business) {
@@ -76,6 +88,9 @@ public class BusinessWorkerScreen extends Screen {
         String npcName = TownspersonMob.findByUUID(level, npcId)
                 .map(n -> n.getNpcName()).orElse("Worker");
 
+        // Build available-item map from building storage.
+        // PB3: annotate each item with hasRecipe + requiredSkill so the client
+        // can filter the producer picker to recipe-backed items only.
         Map<String, OpenBusinessWorkerPacket.AvailableItem> itemMap = new LinkedHashMap<>();
         UUID NULL_BUILDING = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
@@ -87,6 +102,11 @@ public class BusinessWorkerScreen extends Screen {
             vdata.getBuildingById(bid).ifPresent(b ->
                     scanBuildingIntoMap(level, b, itemMap, business, vdata));
         }
+
+        // PB3: also inject all SkillRecipes outputs that aren't already in storage,
+        // so owners can assign a production goal even before any stock exists.
+        // These entries get stockCount=0, marketPrice=0, hasRecipe=true.
+        injectCraftableItems(itemMap);
 
         List<OpenBusinessWorkerPacket.CompanyBuildingEntry> companyBuildings = new ArrayList<>();
         for (UUID bid : business.getBuildingIds())
@@ -148,6 +168,10 @@ public class BusinessWorkerScreen extends Screen {
                 companyBuildings, currentMarketPrice, sellListings));
     }
 
+    // =========================================================================
+    // Private server-side helpers
+    // =========================================================================
+
     private static void scanBuildingIntoMap(
             net.minecraft.server.level.ServerLevel level,
             tterrag1112.life_in_the_village.Village.Building building,
@@ -163,28 +187,99 @@ public class BusinessWorkerScreen extends Screen {
                 long marketPrice = tterrag1112.life_in_the_village.Village.Economy
                         .VillageEconomy.getDynamicPrice(
                                 level, business.getHomeVillageId(), stack.getItem());
+
+                // PB3: annotate hasRecipe + requiredSkill
+                ProductionRecipe recipe = BusinessProductionTaskSource.recipeFor(stack.getItem());
+                boolean hasRecipe = recipe != null;
+                String reqSkill = "";
+                if (recipe != null && !recipe.skillRequirements().isEmpty()) {
+                    var entry = recipe.skillRequirements().entrySet().iterator().next();
+                    reqSkill = entry.getKey().name() + " ≥" + entry.getValue();
+                }
+
                 if (itemMap.containsKey(key)) {
                     var ex = itemMap.get(key);
                     itemMap.put(key, new OpenBusinessWorkerPacket.AvailableItem(
-                            key, ex.displayName(), ex.stockCount() + stack.getCount(), marketPrice));
+                            key, ex.displayName(), ex.stockCount() + stack.getCount(),
+                            marketPrice, hasRecipe, reqSkill));
                 } else {
                     itemMap.put(key, new OpenBusinessWorkerPacket.AvailableItem(
-                            key, stack.getHoverName().getString(), stack.getCount(), marketPrice));
+                            key, stack.getHoverName().getString(), stack.getCount(),
+                            marketPrice, hasRecipe, reqSkill));
                 }
             }
         }
     }
 
+    /**
+     * PB3 — inject all SkillRecipes outputs as zero-stock entries so the owner
+     * can pick any craftable item as a production goal even before stock exists.
+     * Items already in the map (from storage scan) keep their stock counts; only
+     * missing items are added with stockCount=0.
+     */
+    private static void injectCraftableItems(
+            Map<String, OpenBusinessWorkerPacket.AvailableItem> itemMap) {
+        for (tterrag1112.life_in_the_village.Npc.Skills.Skill skill :
+                tterrag1112.life_in_the_village.Npc.Skills.Skill.values()) {
+            for (ProductionRecipe recipe : tterrag1112.life_in_the_village.Village.Economy
+                    .Resources.SkillRecipes.forSkill(skill)) {
+                net.minecraft.world.item.Item out = recipe.output();
+                String key = net.minecraft.core.registries.BuiltInRegistries
+                        .ITEM.getKey(out).toString();
+                if (itemMap.containsKey(key)) {
+                    // Already present from storage — just ensure hasRecipe is set
+                    var ex = itemMap.get(key);
+                    if (!ex.hasRecipe()) {
+                        String reqSkill = "";
+                        if (!recipe.skillRequirements().isEmpty()) {
+                            var entry = recipe.skillRequirements().entrySet().iterator().next();
+                            reqSkill = entry.getKey().name() + " ≥" + entry.getValue();
+                        }
+                        itemMap.put(key, new OpenBusinessWorkerPacket.AvailableItem(
+                                key, ex.displayName(), ex.stockCount(), ex.marketPrice(),
+                                true, reqSkill));
+                    }
+                } else {
+                    String reqSkill = "";
+                    if (!recipe.skillRequirements().isEmpty()) {
+                        var entry = recipe.skillRequirements().entrySet().iterator().next();
+                        reqSkill = entry.getKey().name() + " ≥" + entry.getValue();
+                    }
+                    String displayName = out.getDefaultInstance().getHoverName().getString();
+                    itemMap.put(key, new OpenBusinessWorkerPacket.AvailableItem(
+                            key, displayName, 0, 0L, true, reqSkill));
+                }
+            }
+        }
+    }
+
+    // =========================================================================
+    // Screen lifecycle
+    // =========================================================================
+
     @Override
     protected void init() {
         panelX = (width - W) / 2;
         panelY = (height - H) / 2;
+
         List<TabBar.Entry<Business.WorkerRole>> tabs = new ArrayList<>();
         for (Business.WorkerRole r : Business.WorkerRole.values())
             tabs.add(new TabBar.Entry<>(r, formatRole(r.name()), true));
         tabBar = new TabBar<>(panelX, panelY + HEADER_H, TAB_H, tabs,
                 () -> activeRole,
                 r -> { activeRole = r; selectedItemIndex = -1; buildWidgets(); });
+
+        // PB3: build the recipe-only list before buildWidgets (which uses it)
+        rebuildRecipeItems();
+
+        // Match selectedItemIndex into recipeItems for the current goal
+        selectedItemIndex = -1;
+        for (int i = 0; i < recipeItems.size(); i++) {
+            if (recipeItems.get(i).itemId().equals(data.currentItemId())) {
+                selectedItemIndex = i; break;
+            }
+        }
+
         buildWidgets();
     }
 
@@ -210,7 +305,14 @@ public class BusinessWorkerScreen extends Screen {
             .pos(panelX + 28, wageY).size(16, 14).build());
     }
 
+    /**
+     * PB3 — producer widgets use recipeItems (recipe-gated) instead of
+     * data.availableItems() (stock-gated) so the picker only offers items
+     * that BusinessProductionTaskSource can actually emit a task for.
+     */
     private void buildProducerWidgets(int contentTop) {
+        rebuildRecipeItems();
+
         Set<String> ownedTypes = getOwnedProducerTypes();
         int ptX = panelX + 8, ptY = contentTop + 2;
         for (Business.ProducerType pt : Business.ProducerType.values()) {
@@ -225,9 +327,15 @@ public class BusinessWorkerScreen extends Screen {
             ptX += 52;
             if (ptX + 48 > panelX + W - 8) { ptX = panelX + 8; ptY += 16; }
         }
+
+        // PB3 hint line
+        int hintY = contentTop + 34;
+        // (drawn in render, not as a widget)
+
         int listY = contentTop + 42;
+        // PB3: list uses recipeItems, not data.availableItems()
         itemList = new ScrollList<>(panelX + 8, listY, W - 36, LIST_H, ITEM_ROW_H,
-                data.availableItems(), this::drawItemRow, this::onItemClick);
+                recipeItems, this::drawItemRow, this::onItemClick);
         int countY = contentTop + 42 + LIST_H + 8;
         addRenderableWidget(StyledButton.builder(Component.literal("−"),
                 b -> { targetCount = Math.max(1, targetCount - 1); buildWidgets(); })
@@ -236,8 +344,8 @@ public class BusinessWorkerScreen extends Screen {
                 b -> { targetCount = Math.min(64, targetCount + 1); buildWidgets(); })
             .pos(panelX + W / 2 + 8, countY).size(16, 12).build());
         addRenderableWidget(StyledButton.builder(Component.literal("Assign Production Task"),
-                b -> { if (selectedItemIndex >= 0 && selectedItemIndex < data.availableItems().size())
-                           sendTask(data.availableItems().get(selectedItemIndex).itemId(), targetCount); })
+                b -> { if (selectedItemIndex >= 0 && selectedItemIndex < recipeItems.size())
+                           sendTask(recipeItems.get(selectedItemIndex).itemId(), targetCount); })
             .pos(panelX + 8, panelY + H - 24).size(W - 16, 16).build());
     }
 
@@ -285,6 +393,7 @@ public class BusinessWorkerScreen extends Screen {
 
     private void buildCourierWidgets(int contentTop) {
         int listY = contentTop + 14;
+        // Courier uses the full availableItems (stock-present) — not recipe-gated
         itemList = new ScrollList<>(panelX + 8, listY, W - 36, LIST_H, ITEM_ROW_H,
                 data.availableItems(), this::drawItemRow, this::onItemClick);
         int countY = contentTop + 14 + LIST_H + 8;
@@ -299,6 +408,10 @@ public class BusinessWorkerScreen extends Screen {
                            sendTask(data.availableItems().get(selectedItemIndex).itemId(), targetCount); })
             .pos(panelX + 8, panelY + H - 24).size(W - 16, 16).build());
     }
+
+    // =========================================================================
+    // Render
+    // =========================================================================
 
     @Override
     public void render(GuiGraphics g, int mx, int my, float pt) {
@@ -342,6 +455,12 @@ public class BusinessWorkerScreen extends Screen {
             g.drawString(font, hint, panelX + 8, contentTop + 36,
                     BookScreenColors.MID, false);
         }
+
+        // PB3 hint: "Showing craftable items only"
+        int hintY = contentTop + 34;
+        g.drawString(font, "Craftable items only  (✓ = recipe found)",
+                panelX + 8, hintY, BookScreenColors.LIGHT, false);
+
         drawItemList(g, contentTop + 42, mx, my, "Select item to produce:");
 
         int countY = contentTop + 42 + LIST_H + 8;
@@ -379,21 +498,39 @@ public class BusinessWorkerScreen extends Screen {
                     panelX + 8, wageY + 16, BookScreenColors.RED_TXT, false);
     }
 
+    /**
+     * Draws the item list background + the ScrollList.
+     * For PRODUCER mode, the list contains recipeItems; for COURIER, availableItems.
+     * The list reference (itemList) is always set to the correct backing list
+     * before this is called.
+     */
     private void drawItemList(GuiGraphics g, int listY, int mx, int my, String header) {
         int listX = panelX + 8, listW = W - 36;
         g.drawString(font, header, listX, listY - 10, BookScreenColors.MID, false);
         g.fill(listX, listY, listX + listW, listY + LIST_H, 0xFFEEE8D0);
         g.renderOutline(listX, listY, listW, LIST_H, BookScreenColors.BORDER);
-        if (data.availableItems().isEmpty())
-            g.drawCenteredString(font, "No items found in business buildings",
+        // PB3: for producer, show empty state when no craftable items exist
+        List<?> listData = (activeRole == Business.WorkerRole.PRODUCER) ? recipeItems
+                : data.availableItems();
+        if (listData.isEmpty())
+            g.drawCenteredString(font,
+                    activeRole == Business.WorkerRole.PRODUCER
+                            ? "No craftable items found." : "No items in business buildings",
                     listX + listW / 2, listY + LIST_H / 2 - 4, BookScreenColors.LIGHT);
         else if (itemList != null)
             itemList.render(g, mx, my);
     }
 
+    /**
+     * PB3: item row shows hasRecipe indicator and requiredSkill.
+     * Works for both producer (recipeItems) and courier (availableItems).
+     */
     private void drawItemRow(GuiGraphics g, int rx, int ry, int rw, int rh,
                              OpenBusinessWorkerPacket.AvailableItem item, boolean hovered) {
-        int idx = data.availableItems().indexOf(item);
+        // Determine which list this row belongs to
+        List<OpenBusinessWorkerPacket.AvailableItem> activeList =
+                (activeRole == Business.WorkerRole.PRODUCER) ? recipeItems : data.availableItems();
+        int idx = activeList.indexOf(item);
         boolean sel = idx == selectedItemIndex;
         int bg = sel     ? BookScreenColors.COL_SELECTED
                 : hovered ? BookScreenColors.HIGHLIGHT
@@ -408,18 +545,40 @@ public class BusinessWorkerScreen extends Screen {
         if (font.width(label) > rw - 90) label = label.substring(0, 9) + "…";
         g.drawString(font, label, rx + 22, ry + 6,
                 sel ? BookScreenColors.DARK : BookScreenColors.MID, false);
-        String stock = "×" + item.stockCount();
-        int coinW = CoinRenderer.coinRowWidth(item.marketPrice());
-        g.drawString(font, stock, rx + rw - coinW - font.width(stock) - 4,
-                ry + 6, BookScreenColors.GOLD, false);
-        if (item.marketPrice() > 0)
-            CoinRenderer.renderCoinRow(g, item.marketPrice(),
-                    rx + rw - coinW - 2, ry + 2);
+
+        // PB3: show required skill if present (instead of / alongside stock)
+        if (!item.requiredSkill().isEmpty()) {
+            String skillLabel = item.requiredSkill();
+            int skillW = font.width(skillLabel);
+            g.drawString(font, skillLabel,
+                    rx + rw - skillW - 4, ry + 6, BookScreenColors.AMBER, false);
+        } else {
+            // No skill gate: show stock
+            String stock = "×" + item.stockCount();
+            int coinW = item.marketPrice() > 0 ? CoinRenderer.coinRowWidth(item.marketPrice()) : 0;
+            g.drawString(font, stock, rx + rw - coinW - font.width(stock) - 4,
+                    ry + 6, BookScreenColors.GOLD, false);
+            if (item.marketPrice() > 0)
+                CoinRenderer.renderCoinRow(g, item.marketPrice(),
+                        rx + rw - coinW - 2, ry + 2);
+        }
+
+        // Tooltip: full name + skill requirement
+        if (hovered) {
+            List<Component> tip = new ArrayList<>();
+            tip.add(Component.literal(item.displayName()));
+            if (!item.requiredSkill().isEmpty())
+                tip.add(Component.literal("Requires: " + item.requiredSkill()));
+            tip.add(Component.literal("Stock: " + item.stockCount()));
+            tooltips.queue(rx + 2, ry + ITEM_ROW_H, tip);
+        }
     }
 
     private boolean onItemClick(OpenBusinessWorkerPacket.AvailableItem item,
                                 int btn, double relX, double relY) {
-        selectedItemIndex = data.availableItems().indexOf(item);
+        List<OpenBusinessWorkerPacket.AvailableItem> activeList =
+                (activeRole == Business.WorkerRole.PRODUCER) ? recipeItems : data.availableItems();
+        selectedItemIndex = activeList.indexOf(item);
         return true;
     }
 
@@ -495,8 +654,8 @@ public class BusinessWorkerScreen extends Screen {
         } else {
             CoinRenderer.renderCoinRow(g, listing.marketPrice(), priceX, ry + 2);
         }
-        drawMini(g, rx + rw - 38, ry + 3, 12, 14, "◀", false);
-        drawMini(g, rx + rw - 24, ry + 3, 12, 14, "▶", false);
+        drawMini(g, rx + rw - 38, ry + 3, 12, 14, "◄", false);
+        drawMini(g, rx + rw - 24, ry + 3, 12, 14, "►", false);
         drawMini(g, rx + rw - 10, ry + 3, 10, 14, "×", false);
     }
 
@@ -527,6 +686,10 @@ public class BusinessWorkerScreen extends Screen {
         g.drawString(font, label, bx + (bw - tw) / 2, by + (bh - 8) / 2,
                 BookScreenColors.DARK, false);
     }
+
+    // =========================================================================
+    // Input
+    // =========================================================================
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean consumed) {
@@ -565,6 +728,10 @@ public class BusinessWorkerScreen extends Screen {
     @Override
     public boolean keyPressed(KeyEvent event) { return super.keyPressed(event); }
 
+    // =========================================================================
+    // Packet helpers
+    // =========================================================================
+
     private void send(BusinessActionPacket.ActionType type, UUID target,
                       String str, long lp, int ip) {
         ClientPacketDistributor.sendToServer(new BusinessActionPacket(
@@ -591,6 +758,20 @@ public class BusinessWorkerScreen extends Screen {
         send(BusinessActionPacket.ActionType.REMOVE_ITEM_PRICE, new UUID(0, 0), itemId, 0L, 0);
     }
 
+    // =========================================================================
+    // List helpers
+    // =========================================================================
+
+    /**
+     * PB3 — filter data.availableItems() to recipe-backed items only.
+     * Called in init() and buildProducerWidgets() to keep the list current.
+     */
+    private void rebuildRecipeItems() {
+        recipeItems = data.availableItems().stream()
+                .filter(OpenBusinessWorkerPacket.AvailableItem::hasRecipe)
+                .toList();
+    }
+
     private void rebuildFilteredItems() {
         String query = searchText.toLowerCase();
         filteredItems = data.availableItems().stream()
@@ -615,6 +796,10 @@ public class BusinessWorkerScreen extends Screen {
         return owned;
     }
 
+    // =========================================================================
+    // Static helpers
+    // =========================================================================
+
     private static Business.WorkerRole parseRole(String s) {
         try { return Business.WorkerRole.valueOf(s); }
         catch (Exception e) { return Business.WorkerRole.PRODUCER; }
@@ -634,15 +819,15 @@ public class BusinessWorkerScreen extends Screen {
         } catch (Exception e) { return null; }
     }
 
-    private String formatRole(String r) {
+    private static String formatRole(String r) {
         if (r == null || r.isEmpty()) return "—";
         String lower = r.toLowerCase().replace('_', ' ');
         return Character.toUpperCase(lower.charAt(0)) + lower.substring(1);
     }
 
-    private String formatItemId(String itemId) {
+    private static String formatItemId(String itemId) {
         if (itemId == null || itemId.isEmpty()) return "—";
         String path = itemId.contains(":") ? itemId.split(":")[1] : itemId;
-        return path.replace('_', ' ');
+        return Character.toUpperCase(path.charAt(0)) + path.substring(1).replace('_', ' ');
     }
 }

@@ -4,7 +4,9 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
@@ -15,8 +17,17 @@ import tterrag1112.life_in_the_village.Guilds.Companies.Business;
 import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.BusinessActionPacket;
 import tterrag1112.life_in_the_village.Networking.OpenBusinessManagementPacket;
+import tterrag1112.life_in_the_village.Networking.OpenBusinessManagementPacket.ProductionDiagnostic;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Tasks.Assignment;
+import tterrag1112.life_in_the_village.Npc.Tasks.IssuerRef;
+import tterrag1112.life_in_the_village.Npc.Tasks.LevelKind;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskBoard;
+import tterrag1112.life_in_the_village.Npc.Tasks.TaskSavedData;
+import tterrag1112.life_in_the_village.Npc.Tasks.Business.BusinessProductionTaskSource;
+import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Currency.CurrencyValue;
+import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 
 import java.util.*;
 
@@ -25,7 +36,7 @@ public class BusinessManagementScreen extends Screen {
     private static final int BOOK_W=420, BOOK_H=300, SIDEBAR_W=130, PAGE_PAD=14, ROW_H=24;
     private static final int PW = BOOK_W - SIDEBAR_W - PAGE_PAD * 2; // 262
 
-    public enum Section { OVERVIEW, WORKERS, PRICES, SCHEDULE }
+    public enum Section { OVERVIEW, WORKERS, PRICES, SCHEDULE, PRODUCTION }
 
     private final OpenBusinessManagementPacket data;
     private int bookX, bookY;
@@ -33,14 +44,19 @@ public class BusinessManagementScreen extends Screen {
 
     private final TooltipLayer tooltips = new TooltipLayer();
     private Sidebar<Section> sidebar;
-    private ScrollList<OpenBusinessManagementPacket.WorkerEntry> workerList;
-    private ScrollList<OpenBusinessManagementPacket.PriceEntry>  priceList;
+    private ScrollList<OpenBusinessManagementPacket.WorkerEntry>     workerList;
+    private ScrollList<OpenBusinessManagementPacket.PriceEntry>      priceList;
+    private ScrollList<OpenBusinessManagementPacket.ProductionEntry> productionList;
     private StyledEditBox depositBox, renameBox;
 
     public BusinessManagementScreen(OpenBusinessManagementPacket data) {
         super(Component.literal(data.businessName()));
         this.data = data;
     }
+
+    // =========================================================================
+    // Server-side snapshot builder
+    // =========================================================================
 
     public static void sendOpenPacket(ServerPlayer player, UUID businessId,
                                       ServerLevel level, BusinessSavedData cdata,
@@ -56,30 +72,157 @@ public class BusinessManagementScreen extends Screen {
 
         List<OpenBusinessManagementPacket.WorkerEntry> workers = new ArrayList<>();
         for (Business.BusinessWorker w : business.getWorkers()) {
-            String name = TownspersonMob.findByUUID(level, w.npcId()).map(n -> n.getNpcName()).orElse("Unknown NPC");
-            workers.add(new OpenBusinessManagementPacket.WorkerEntry(w.npcId(), name, w.role().name(), w.wagePerDay(), w.assignedItemId(), w.dailyTargetCount()));
+            String name = TownspersonMob.findByUUID(level, w.npcId())
+                    .map(n -> n.getNpcName()).orElse("Unknown NPC");
+            workers.add(new OpenBusinessManagementPacket.WorkerEntry(
+                    w.npcId(), name, w.role().name(), w.wagePerDay(),
+                    w.assignedItemId(), w.dailyTargetCount()));
         }
 
         List<OpenBusinessManagementPacket.PriceEntry> prices = new ArrayList<>();
         for (Business.PriceOverride p : business.getAllPriceOverrides()) {
-            var item = net.minecraft.core.registries.BuiltInRegistries.ITEM.get(net.minecraft.resources.Identifier.parse(p.itemId())).map(h -> h.value()).orElse(null);
-            String display = item != null ? item.getDefaultInstance().getHoverName().getString() : p.itemId();
-            prices.add(new OpenBusinessManagementPacket.PriceEntry(p.itemId(), display, p.pricePerUnit()));
+            var item = BuiltInRegistries.ITEM
+                    .get(Identifier.parse(p.itemId())).map(h -> h.value()).orElse(null);
+            String display = item != null
+                    ? item.getDefaultInstance().getHoverName().getString() : p.itemId();
+            prices.add(new OpenBusinessManagementPacket.PriceEntry(
+                    p.itemId(), display, p.pricePerUnit()));
         }
 
         List<OpenBusinessManagementPacket.BuildingEntry> buildings = new ArrayList<>();
         for (UUID bid : business.getBuildingIds())
-            vdata.getBuildingById(bid).ifPresent(b -> buildings.add(new OpenBusinessManagementPacket.BuildingEntry(bid, b.getName(), b.getType().name())));
+            vdata.getBuildingById(bid).ifPresent(b -> buildings.add(
+                    new OpenBusinessManagementPacket.BuildingEntry(
+                            bid, b.getName(), b.getType().name())));
 
-        var wallet = new net.minecraft.world.SimpleContainer(player.getInventory().getContainerSize());
-        for (int i = 0; i < player.getInventory().getContainerSize(); i++) wallet.setItem(i, player.getInventory().getItem(i).copy());
-        long wealth = tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper.getWealth(wallet).toBronze();
+        var wallet = new net.minecraft.world.SimpleContainer(
+                player.getInventory().getContainerSize());
+        for (int i = 0; i < player.getInventory().getContainerSize(); i++)
+            wallet.setItem(i, player.getInventory().getItem(i).copy());
+        long wealth = tterrag1112.life_in_the_village.Village.Economy.Currency.CoinHelper
+                .getWealth(wallet).toBronze();
+
+        // PB3 — build production snapshot
+        List<OpenBusinessManagementPacket.ProductionEntry> prodEntries =
+                buildProductionEntries(business, level, vdata);
 
         PacketDistributor.sendToPlayer(player, new OpenBusinessManagementPacket(
                 businessId, business.getName(), business.getTreasuryBronze(), wealth,
                 business.getWorkSchedule().startHour(), business.getWorkSchedule().endHour(),
-                business.getEffectiveMinWage(vdata), workers, prices, buildings, restoreSection));
+                business.getEffectiveMinWage(vdata), workers, prices, buildings,
+                restoreSection, prodEntries));
     }
+
+    /**
+     * PB3 — server-side production snapshot builder. One entry per PRODUCER worker
+     * that has a non-empty assignedItemId. Reads TaskSavedData read-only for board
+     * status; reads BuildingStorageAccess for current stock and input checks.
+     */
+    private static List<OpenBusinessManagementPacket.ProductionEntry> buildProductionEntries(
+            Business business, ServerLevel level, VillageSavedData vdata) {
+
+        List<OpenBusinessManagementPacket.ProductionEntry> entries = new ArrayList<>();
+        IssuerRef issuer = new IssuerRef(LevelKind.BUSINESS, business.getBusinessId());
+        TaskSavedData taskData = TaskSavedData.get(level);
+        TaskBoard board = taskData.boardIfPresent(issuer).orElse(null);
+
+        for (Business.BusinessWorker w : business.getWorkers()) {
+            if (w.role() != Business.WorkerRole.PRODUCER) continue;
+            if (w.assignedItemId().isEmpty()) continue;
+
+            String itemId = w.assignedItemId();
+            net.minecraft.world.item.Item goalItem =
+                    BusinessProductionTaskSource.resolveItem(itemId);
+            String itemName = goalItem != null
+                    ? goalItem.getDefaultInstance().getHoverName().getString()
+                    : itemId;
+
+            String npcName = TownspersonMob.findByUUID(level, w.npcId())
+                    .map(n -> n.getNpcName()).orElse("Worker");
+
+            int dailyTarget = Math.max(1, w.dailyTargetCount());
+
+            // ── Diagnostic derivation ─────────────────────────────────────
+            ProductionDiagnostic diagnostic;
+            String boardStatus = "NONE";
+            String requiredSkill = "";
+            int currentStock = 0;
+
+            if (goalItem == null) {
+                diagnostic = ProductionDiagnostic.BLOCKED_NO_RECIPE;
+            } else {
+                ProductionRecipe recipe = BusinessProductionTaskSource.recipeFor(goalItem);
+                if (recipe == null) {
+                    diagnostic = ProductionDiagnostic.BLOCKED_NO_RECIPE;
+                } else {
+                    // Build requiredSkill display string
+                    if (!recipe.skillRequirements().isEmpty()) {
+                        var entry = recipe.skillRequirements().entrySet().iterator().next();
+                        requiredSkill = entry.getKey().name() + " ≥" + entry.getValue();
+                    }
+
+                    // Count stock across all business buildings
+                    for (UUID bid : business.getBuildingIds()) {
+                        var building = vdata.getBuildingById(bid).orElse(null);
+                        if (building != null)
+                            currentStock += BuildingStorageAccess.countItem(
+                                    level, building, goalItem);
+                    }
+
+                    // Board task status
+                    if (board != null) {
+                        // Stable task id mirrors BusinessProductionTaskSource
+                        var prodKey = "business-produce:"
+                                + net.minecraft.core.registries.BuiltInRegistries.ITEM
+                                .getKey(goalItem).toString();
+                        var taskId = tterrag1112.life_in_the_village.Npc.Tasks.Producer
+                                .ProductionTaskIds.stable(issuer, prodKey);
+                        var taskOpt = board.get(taskId);
+                        if (taskOpt.isPresent()) {
+                            Assignment.Status s = taskOpt.get().assignment().status();
+                            boardStatus = s.name();
+                        }
+                    }
+
+                    if (currentStock >= dailyTarget) {
+                        // Stock already at/above target — source would remove task
+                        diagnostic = ProductionDiagnostic.PRODUCING;
+                    } else if ("CLAIMED".equals(boardStatus) || "IN_PROGRESS".equals(boardStatus)) {
+                        diagnostic = ProductionDiagnostic.PRODUCING;
+                    } else if ("OPEN".equals(boardStatus)) {
+                        // Check if inputs are present in any assigned building
+                        boolean inputsMissing = false;
+                        var assignedBuilding = vdata.getBuildingById(w.assignedBuildingId())
+                                .orElse(null);
+                        if (assignedBuilding != null) {
+                            for (var inputEntry : recipe.inputs().entrySet()) {
+                                int needed = inputEntry.getValue();
+                                int have = BuildingStorageAccess.countItem(
+                                        level, assignedBuilding, inputEntry.getKey());
+                                if (have < needed) { inputsMissing = true; break; }
+                            }
+                        }
+                        diagnostic = inputsMissing
+                                ? ProductionDiagnostic.BLOCKED_MISSING_INPUTS
+                                : ProductionDiagnostic.IDLE_OPEN;
+                    } else {
+                        // No board task yet — source hasn't run or goal was just set
+                        diagnostic = ProductionDiagnostic.IDLE_NO_TASK;
+                    }
+                }
+            }
+
+            entries.add(new OpenBusinessManagementPacket.ProductionEntry(
+                    w.npcId(), npcName, itemId, itemName,
+                    dailyTarget, currentStock,
+                    boardStatus, diagnostic.name(), requiredSkill));
+        }
+        return entries;
+    }
+
+    // =========================================================================
+    // Screen lifecycle
+    // =========================================================================
 
     @Override
     protected void init() {
@@ -92,10 +235,11 @@ public class BusinessManagementScreen extends Screen {
 
         sidebar = new Sidebar<>(bookX + 2, bookY + 28, SIDEBAR_W - 2, 18,
                 List.of(
-                        new Sidebar.Entry<>(Section.OVERVIEW,  "Overview",                          true),
-                        new Sidebar.Entry<>(Section.WORKERS,   "Workers (" + data.workers().size() + ")", true),
-                        new Sidebar.Entry<>(Section.PRICES,    "Prices",                            true),
-                        new Sidebar.Entry<>(Section.SCHEDULE,  "Schedule",                          true)
+                        new Sidebar.Entry<>(Section.OVERVIEW,    "Overview",                               true),
+                        new Sidebar.Entry<>(Section.WORKERS,     "Workers (" + data.workers().size() + ")", true),
+                        new Sidebar.Entry<>(Section.PRICES,      "Prices",                                 true),
+                        new Sidebar.Entry<>(Section.SCHEDULE,    "Schedule",                               true),
+                        new Sidebar.Entry<>(Section.PRODUCTION,  "Production",                             true)
                 ),
                 () -> currentSection,
                 s -> { currentSection = s; buildWidgets(); },
@@ -103,8 +247,12 @@ public class BusinessManagementScreen extends Screen {
 
         int px = bookX + SIDEBAR_W + PAGE_PAD, py = bookY + 36;
         int maxY = bookY + BOOK_H - 34;
-        workerList = new ScrollList<>(px, py + 14, PW, maxY - py - 14, ROW_H + 2, data.workers(), this::drawWorkerRow, null);
-        priceList  = new ScrollList<>(px, py + 14, PW, maxY - py - 14, 18, data.priceOverrides(), this::drawPriceRow, this::onPriceClick);
+        workerList = new ScrollList<>(px, py + 14, PW, maxY - py - 14, ROW_H + 2,
+                data.workers(), this::drawWorkerRow, null);
+        priceList  = new ScrollList<>(px, py + 14, PW, maxY - py - 14, 18,
+                data.priceOverrides(), this::drawPriceRow, this::onPriceClick);
+        productionList = new ScrollList<>(px, py + 14, PW, maxY - py - 14, 38,
+                data.productionEntries(), this::drawProductionRow, null);
 
         buildWidgets();
     }
@@ -116,8 +264,8 @@ public class BusinessManagementScreen extends Screen {
         depositBox = null;
         renameBox  = null;
         int px = bookX + SIDEBAR_W + PAGE_PAD, py = bookY + 36;
-        if (currentSection == Section.OVERVIEW) buildOverviewWidgets(px, py);
-        if (currentSection == Section.SCHEDULE) buildScheduleWidgets(px, py);
+        if (currentSection == Section.OVERVIEW)  buildOverviewWidgets(px, py);
+        if (currentSection == Section.SCHEDULE)  buildScheduleWidgets(px, py);
     }
 
     private void buildOverviewWidgets(int px, int py) {
@@ -161,6 +309,10 @@ public class BusinessManagementScreen extends Screen {
                 .pos(px + 100, py + 60).size(16, 14).build());
     }
 
+    // =========================================================================
+    // Render
+    // =========================================================================
+
     @Override
     public void render(GuiGraphics g, int mx, int my, float pt) {
         tooltips.reset();
@@ -183,7 +335,7 @@ public class BusinessManagementScreen extends Screen {
     private void drawSidebarFooter(GuiGraphics g) {
         int tyY = bookY + BOOK_H - 36;
         g.fill(bookX + 4, tyY, bookX + SIDEBAR_W - 4, tyY + 1, BookScreenColors.BORDER);
-        g.drawString(font, "Treasury",                       bookX + 6, tyY + 4,  BookScreenColors.MID,  false);
+        g.drawString(font, "Treasury",                            bookX + 6, tyY + 4,  BookScreenColors.MID,  false);
         g.drawString(font, CoinRenderer.format(data.treasuryBronze()), bookX + 6, tyY + 14, BookScreenColors.GOLD, false);
     }
 
@@ -206,12 +358,15 @@ public class BusinessManagementScreen extends Screen {
         int px = bookX + SIDEBAR_W + PAGE_PAD, py = bookY + 36;
         int maxY = bookY + BOOK_H - 34;
         switch (currentSection) {
-            case OVERVIEW  -> drawOverview(g, px, py, maxY);
-            case WORKERS   -> drawWorkers(g, px, py, mx, my);
-            case PRICES    -> drawPrices(g, px, py, mx, my);
-            case SCHEDULE  -> drawSchedule(g, px, py, maxY);
+            case OVERVIEW    -> drawOverview(g, px, py, maxY);
+            case WORKERS     -> drawWorkers(g, px, py, mx, my);
+            case PRICES      -> drawPrices(g, px, py, mx, my);
+            case SCHEDULE    -> drawSchedule(g, px, py, maxY);
+            case PRODUCTION  -> drawProduction(g, px, py, mx, my);
         }
     }
+
+    // ── Overview ─────────────────────────────────────────────────────────────
 
     private void drawOverview(GuiGraphics g, int px, int py, int maxY) {
         int y = py;
@@ -231,6 +386,8 @@ public class BusinessManagementScreen extends Screen {
                     px, py + 138, data.effectiveMinWage() > 1 ? BookScreenColors.AMBER : BookScreenColors.MID, false);
     }
 
+    // ── Workers ──────────────────────────────────────────────────────────────
+
     private void drawWorkers(GuiGraphics g, int px, int py, int mx, int my) {
         int y = py;
         g.fill(px, y, px + PW, y + 12, 0xFFE8E0C8);
@@ -238,7 +395,7 @@ public class BusinessManagementScreen extends Screen {
         g.drawString(font, "Role",     px + 100,       y + 2, BookScreenColors.MID, false);
         g.drawString(font, "Wage/day", px + PW - 110,  y + 2, BookScreenColors.MID, false);
         if (data.workers().isEmpty()) {
-            g.drawCenteredString(font, "No workers hired.",                               px + PW / 2, py + 60, BookScreenColors.MID);
+            g.drawCenteredString(font, "No workers hired.",                                    px + PW / 2, py + 60, BookScreenColors.MID);
             g.drawCenteredString(font, "Interact with an unemployed NPC while holding a coin.", px + PW / 2, py + 74, BookScreenColors.LIGHT);
         } else {
             workerList.render(g, mx, my);
@@ -251,7 +408,6 @@ public class BusinessManagementScreen extends Screen {
         g.fill(rx, ry, rx + rw, ry + ROW_H, active ? BookScreenColors.GREEN_BG : BookScreenColors.PARCHMENT);
         g.renderOutline(rx, ry, rw, ROW_H, BookScreenColors.BORDER);
 
-        // Truncate name to fit
         String name = w.npcName();
         while (font.width(name) > 90 && name.length() > 3) name = name.substring(0, name.length() - 1);
         if (!name.equals(w.npcName())) name += "…";
@@ -260,7 +416,6 @@ public class BusinessManagementScreen extends Screen {
         g.drawString(font, name, rx + 3, mid, BookScreenColors.DARK, false);
         g.drawString(font, formatRole(w.role()), rx + 100, mid, BookScreenColors.MID, false);
 
-        // Wage text + action mini-buttons
         g.drawString(font, CoinRenderer.format(w.wagePerDay()), rx + rw - 135, mid, BookScreenColors.GOLD, false);
         int bMid = ry + (ROW_H - 14) / 2;
         drawMini(g, rx + rw - 110, bMid, 14, 14, "−", false);
@@ -276,10 +431,11 @@ public class BusinessManagementScreen extends Screen {
                 List.of(Component.literal(w.npcName() + " • " + formatRole(w.role()))));
     }
 
+    // ── Prices ───────────────────────────────────────────────────────────────
+
     private void drawPrices(GuiGraphics g, int px, int py, int mx, int my) {
-        int y = py;
-        g.drawString(font, "Custom sell prices", px, y, BookScreenColors.MID, false);
-        g.fill(px, y + 10, px + PW, y + 11, BookScreenColors.BORDER);
+        g.drawString(font, "Custom sell prices", px, py, BookScreenColors.MID, false);
+        g.fill(px, py + 10, px + PW, py + 11, BookScreenColors.BORDER);
         if (data.priceOverrides().isEmpty()) {
             g.drawCenteredString(font, "No price overrides set.",             px + PW / 2, py + 28, BookScreenColors.MID);
             g.drawCenteredString(font, "Assign a SELLER worker to add items.", px + PW / 2, py + 42, BookScreenColors.LIGHT);
@@ -292,8 +448,8 @@ public class BusinessManagementScreen extends Screen {
                               OpenBusinessManagementPacket.PriceEntry p, boolean hovered) {
         g.fill(rx, ry, rx + rw, ry + 14, BookScreenColors.PARCHMENT);
         g.renderOutline(rx, ry, rw, 14, BookScreenColors.BORDER);
-        g.drawString(font, p.itemName(),                          rx + 3,      ry + 3, BookScreenColors.DARK, false);
-        g.drawString(font, CoinRenderer.format(p.pricePerUnit()), rx + rw - 80, ry + 3, BookScreenColors.GOLD, false);
+        g.drawString(font, p.itemName(),                           rx + 3,       ry + 3, BookScreenColors.DARK, false);
+        g.drawString(font, CoinRenderer.format(p.pricePerUnit()),  rx + rw - 80, ry + 3, BookScreenColors.GOLD, false);
         drawMini(g, rx + rw - 36, ry, 16, 14, "−", false);
         drawMini(g, rx + rw - 18, ry, 16, 14, "+",      false);
     }
@@ -304,12 +460,7 @@ public class BusinessManagementScreen extends Screen {
         return false;
     }
 
-    private void drawMini(GuiGraphics g, int bx, int by, int bw, int bh, String label, boolean hov) {
-        g.fill(bx, by, bx + bw, by + bh, hov ? BookScreenColors.HIGHLIGHT : BookScreenColors.PARCHMENT);
-        g.renderOutline(bx, by, bw, bh, BookScreenColors.BORDER);
-        int tw = font.width(label);
-        g.drawString(font, label, bx + (bw - tw) / 2, by + (bh - 8) / 2, BookScreenColors.DARK, false);
-    }
+    // ── Schedule ─────────────────────────────────────────────────────────────
 
     private void drawSchedule(GuiGraphics g, int px, int py, int maxY) {
         int y = py;
@@ -320,7 +471,6 @@ public class BusinessManagementScreen extends Screen {
         g.drawString(font, "End:   " + formatHour(data.workEndHour()), px, y + 8 + 20, BookScreenColors.DARK, false);
         y += 60;
 
-        // 24-hour visual bar
         g.fill(px, y, px + PW, y + 14, 0xFFDDD8C0);
         g.renderOutline(px, y, PW, 14, BookScreenColors.BORDER);
         int startPx = px + (int)(data.workStartHour() / 24.0 * PW);
@@ -337,6 +487,132 @@ public class BusinessManagementScreen extends Screen {
         if (y + 10 < maxY)
             g.drawString(font, "Workers operate during highlighted hours.", px, y, BookScreenColors.LIGHT, false);
     }
+
+    // ── Production ───────────────────────────────────────────────────────────
+
+    private void drawProduction(GuiGraphics g, int px, int py, int mx, int my) {
+        // Header
+        g.drawString(font, "Active production goals", px, py, BookScreenColors.MID, false);
+        g.fill(px, py + 10, px + PW, py + 11, BookScreenColors.BORDER);
+
+        if (data.productionEntries().isEmpty()) {
+            g.drawCenteredString(font, "No production goals set.",                    px + PW / 2, py + 32, BookScreenColors.MID);
+            g.drawCenteredString(font, "Open a PRODUCER worker and assign an item.", px + PW / 2, py + 46, BookScreenColors.LIGHT);
+            return;
+        }
+
+        // Column headers
+        int hy = py + 14;
+        g.fill(px, hy, px + PW, hy + 10, 0xFFE8E0C8);
+        g.drawString(font, "Worker / Item",  px + 2,        hy + 1, BookScreenColors.MID, false);
+        g.drawString(font, "Stock/Target",   px + PW - 130, hy + 1, BookScreenColors.MID, false);
+        g.drawString(font, "Status",         px + PW - 60,  hy + 1, BookScreenColors.MID, false);
+
+        productionList.render(g, mx, my);
+    }
+
+    /** Row height = 38px: 2 text lines + progress bar + status pill. */
+    private void drawProductionRow(GuiGraphics g, int rx, int ry, int rw, int rh,
+                                   OpenBusinessManagementPacket.ProductionEntry e, boolean hovered) {
+        ProductionDiagnostic diag = parseDiagnostic(e.diagnostic());
+
+        // Row background by status
+        int rowBg = switch (diag) {
+            case PRODUCING            -> BookScreenColors.GREEN_BG;
+            case IDLE_NO_TASK, IDLE_OPEN -> BookScreenColors.PARCHMENT;
+            case BLOCKED_NO_RECIPE,
+                 BLOCKED_MISSING_INPUTS -> BookScreenColors.RED_BG;
+        };
+        g.fill(rx, ry, rx + rw, ry + rh, rowBg);
+        g.renderOutline(rx, ry, rw, rh, BookScreenColors.BORDER);
+
+        // Item icon
+        var stack = resolveStack(e.itemId(), 1);
+        if (stack != null) {
+            g.renderItem(stack, rx + 2, ry + 1);
+        }
+
+        int textX = rx + 20;
+
+        // Line 1: worker name
+        String workerLabel = e.npcName();
+        if (font.width(workerLabel) > 110) workerLabel = workerLabel.substring(0, 12) + "…";
+        g.drawString(font, workerLabel, textX, ry + 2, BookScreenColors.DARK, false);
+
+        // Line 2: item name + required skill
+        String itemLabel = formatItemId(e.itemId());
+        if (font.width(itemLabel) > 90) itemLabel = itemLabel.substring(0, 10) + "…";
+        g.drawString(font, itemLabel, textX, ry + 12, BookScreenColors.MID, false);
+        if (!e.requiredSkill().isEmpty()) {
+            String skillLabel = "[" + e.requiredSkill() + "]";
+            g.drawString(font, skillLabel, textX + 100, ry + 12, BookScreenColors.AMBER, false);
+        }
+
+        // Progress bar: currentStock / dailyTarget (clamped to [0,1])
+        int barX = rx + 2, barY = ry + 24, barW = rw - 130, barH = 6;
+        float fill = e.dailyTarget() > 0
+                ? Math.min(1f, (float) e.currentStock() / e.dailyTarget()) : 0f;
+        int fillColor = switch (diag) {
+            case PRODUCING            -> BookScreenColors.GREEN_TXT;
+            case IDLE_NO_TASK, IDLE_OPEN -> BookScreenColors.MID;
+            case BLOCKED_NO_RECIPE,
+                 BLOCKED_MISSING_INPUTS -> BookScreenColors.RED_TXT;
+        };
+        ProgressBar.draw(g, barX, barY, barW, barH, fill,
+                0xFFD8D0B8, fillColor, BookScreenColors.BORDER);
+        g.drawString(font, e.currentStock() + "/" + e.dailyTarget(),
+                barX + barW + 3, barY - 1, BookScreenColors.MID, false);
+
+        // Status pill
+        String pillLabel;
+        int pillBg, pillTxt;
+        switch (diag) {
+            case PRODUCING -> {
+                pillLabel = "Producing";
+                pillBg = BookScreenColors.GREEN_BG;
+                pillTxt = BookScreenColors.GREEN_TXT;
+            }
+            case IDLE_NO_TASK -> {
+                pillLabel = "Idle";
+                pillBg = 0xFFDDD8C0;
+                pillTxt = BookScreenColors.MID;
+            }
+            case IDLE_OPEN -> {
+                pillLabel = "Queued";
+                pillBg = BookScreenColors.BLUE_BG;
+                pillTxt = 0xFF2A5A8A;
+            }
+            case BLOCKED_NO_RECIPE -> {
+                pillLabel = "No Recipe";
+                pillBg = BookScreenColors.RED_BG;
+                pillTxt = BookScreenColors.RED_TXT;
+            }
+            case BLOCKED_MISSING_INPUTS -> {
+                pillLabel = "No Inputs";
+                pillBg = 0xFFFFDDC0;
+                pillTxt = 0xFF8B4A00;
+            }
+            default -> {
+                pillLabel = diag.name();
+                pillBg = BookScreenColors.PARCHMENT;
+                pillTxt = BookScreenColors.MID;
+            }
+        }
+        int pillW = Pill.width(font, pillLabel);
+        Pill.draw(g, font, rx + rw - pillW - 2, ry + 24, pillLabel, pillBg, pillTxt);
+
+        // Tooltip: full diagnostic reason on hover
+        if (hovered) {
+            String reason = diagnosticTooltip(diag, e);
+            tooltips.queue(rx + 2, ry + rh,
+                    List.of(Component.literal(e.npcName() + " → " + formatItemId(e.itemId())),
+                            Component.literal(reason)));
+        }
+    }
+
+    // =========================================================================
+    // Input
+    // =========================================================================
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean consumed) {
@@ -360,13 +636,15 @@ public class BusinessManagementScreen extends Screen {
             }
         }
         if (currentSection == Section.PRICES && priceList.mouseClicked(mx, my, event.button())) return true;
+        // Production section: rows are display-only (set goals via Worker screen Manage button)
         return super.mouseClicked(event, consumed);
     }
 
     @Override
     public boolean mouseScrolled(double mx, double my, double dx, double dy) {
-        if (currentSection == Section.WORKERS && workerList.mouseScrolled(mx, my, dy)) return true;
-        if (currentSection == Section.PRICES  && priceList.mouseScrolled(mx, my, dy))  return true;
+        if (currentSection == Section.WORKERS    && workerList.mouseScrolled(mx, my, dy))     return true;
+        if (currentSection == Section.PRICES     && priceList.mouseScrolled(mx, my, dy))      return true;
+        if (currentSection == Section.PRODUCTION && productionList.mouseScrolled(mx, my, dy)) return true;
         return super.mouseScrolled(mx, my, dx, dy);
     }
 
@@ -375,6 +653,10 @@ public class BusinessManagementScreen extends Screen {
         if (sidebar.keyPressed(event.key())) return true;
         return super.keyPressed(event);
     }
+
+    // =========================================================================
+    // Packet helpers
+    // =========================================================================
 
     private void sendAction(BusinessActionPacket.ActionType type, long longParam) {
         ClientPacketDistributor.sendToServer(new BusinessActionPacket(type, data.businessId(), new UUID(0,0), "", longParam, 0));
@@ -395,19 +677,57 @@ public class BusinessManagementScreen extends Screen {
         ClientPacketDistributor.sendToServer(new BusinessActionPacket(BusinessActionPacket.ActionType.SET_WORK_HOURS, data.businessId(), new UUID(0,0), "", endH, startH));
     }
 
-    private String sectionLabel(Section s) {
-        return switch (s) {
-            case OVERVIEW -> "Overview";
-            case WORKERS  -> "Workers (" + data.workers().size() + ")";
-            case PRICES   -> "Prices";
-            case SCHEDULE -> "Schedule";
+    // =========================================================================
+    // Utility
+    // =========================================================================
+
+    private void drawMini(GuiGraphics g, int bx, int by, int bw, int bh, String label, boolean hov) {
+        g.fill(bx, by, bx + bw, by + bh, hov ? BookScreenColors.HIGHLIGHT : BookScreenColors.PARCHMENT);
+        g.renderOutline(bx, by, bw, bh, BookScreenColors.BORDER);
+        int tw = font.width(label);
+        g.drawString(font, label, bx + (bw - tw) / 2, by + (bh - 8) / 2, BookScreenColors.DARK, false);
+    }
+
+    private static net.minecraft.world.item.ItemStack resolveStack(String itemId, int count) {
+        try {
+            return BuiltInRegistries.ITEM
+                    .get(Identifier.parse(itemId))
+                    .map(h -> new net.minecraft.world.item.ItemStack(h.value(), count))
+                    .orElse(null);
+        } catch (Exception e) { return null; }
+    }
+
+    private static ProductionDiagnostic parseDiagnostic(String name) {
+        try { return ProductionDiagnostic.valueOf(name); }
+        catch (Exception e) { return ProductionDiagnostic.IDLE_NO_TASK; }
+    }
+
+    private static String diagnosticTooltip(ProductionDiagnostic diag,
+                                            OpenBusinessManagementPacket.ProductionEntry e) {
+        return switch (diag) {
+            case PRODUCING            -> "Worker is actively crafting or stock is at target.";
+            case IDLE_NO_TASK         -> "Goal is set but the task board hasn't issued a task yet. Wait a moment.";
+            case IDLE_OPEN            -> "Task queued on board but no worker has claimed it yet.";
+            case BLOCKED_NO_RECIPE    -> "Item \"" + formatItemId(e.itemId()) + "\" has no known recipe. Set a different goal.";
+            case BLOCKED_MISSING_INPUTS -> "Recipe ingredients missing in the assigned building's storage.";
         };
     }
+
+    private String sectionLabel(Section s) {
+        return switch (s) {
+            case OVERVIEW    -> "Overview";
+            case WORKERS     -> "Workers (" + data.workers().size() + ")";
+            case PRICES      -> "Prices";
+            case SCHEDULE    -> "Schedule";
+            case PRODUCTION  -> "Production (" + data.productionEntries().size() + " goals)";
+        };
+    }
+
     private String formatHour(int h)    { return String.format("%02d:00", h); }
     private String formatRole(String r) { return (r == null || r.isEmpty()) ? "—" : r.charAt(0) + r.substring(1).toLowerCase(); }
-    private String formatItemId(String id) {
+    private static String formatItemId(String id) {
         if (id == null || id.isEmpty()) return "—";
         String path = id.contains(":") ? id.split(":")[1] : id;
-        return path.replace('_', ' ');
+        return Character.toUpperCase(path.charAt(0)) + path.substring(1).replace('_', ' ');
     }
 }

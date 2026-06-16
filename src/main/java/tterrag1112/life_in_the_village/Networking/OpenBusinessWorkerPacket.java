@@ -31,14 +31,31 @@ public record OpenBusinessWorkerPacket(
     // Nested records
     // -------------------------------------------------------------------------
 
-    /** An item found across the business's buildings, with its merged stock
-     *  count and the current village market price for comparison. */
+    /**
+     * An item found across the business's buildings, with its merged stock
+     * count and the current village market price for comparison.
+     *
+     * PB3 additions:
+     *   hasRecipe       — true if BusinessProductionTaskSource.recipeFor found a
+     *                     SkillRecipes entry for this item. Producer tab filters to
+     *                     hasRecipe==true so only craftable items can be assigned.
+     *   requiredSkill   — human-readable skill gate, e.g. "BLACKSMITHING ≥50",
+     *                     empty if the recipe has no skill requirement.
+     */
     public record AvailableItem(
             String itemId,
             String displayName,
             int stockCount,
-            long marketPrice
-    ) {}
+            long marketPrice,
+            boolean hasRecipe,      // PB3
+            String requiredSkill    // PB3 — empty if no gate
+    ) {
+        /** Backward-compat constructor for callers that predate PB3. */
+        public AvailableItem(String itemId, String displayName,
+                             int stockCount, long marketPrice) {
+            this(itemId, displayName, stockCount, marketPrice, false, "");
+        }
+    }
 
     public record SellListing(
             String itemId,
@@ -88,13 +105,15 @@ public record OpenBusinessWorkerPacket(
                 buf.writeUtf(pkt.role());
                 buf.writeUtf(pkt.producerType());
 
-                // Available items
+                // Available items (PB3: include hasRecipe + requiredSkill)
                 buf.writeVarInt(pkt.availableItems().size());
                 for (AvailableItem item : pkt.availableItems()) {
                     buf.writeUtf(item.itemId());
                     buf.writeUtf(item.displayName());
                     buf.writeVarInt(item.stockCount());
                     buf.writeVarLong(item.marketPrice());
+                    buf.writeBoolean(item.hasRecipe());
+                    buf.writeUtf(item.requiredSkill());
                 }
 
                 // Business buildings
@@ -137,7 +156,9 @@ public record OpenBusinessWorkerPacket(
                             buf.readUtf(),
                             buf.readUtf(),
                             buf.readVarInt(),
-                            buf.readVarLong()));
+                            buf.readVarLong(),
+                            buf.readBoolean(),
+                            buf.readUtf()));
                 }
 
                 int buildingCount = buf.readVarInt();
