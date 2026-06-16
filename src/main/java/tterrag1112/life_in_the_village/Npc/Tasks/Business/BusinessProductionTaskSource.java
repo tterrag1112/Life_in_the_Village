@@ -9,6 +9,7 @@ import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
 import tterrag1112.life_in_the_village.Guilds.Companies.Business;
 import tterrag1112.life_in_the_village.Guilds.Companies.BusinessSavedData;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
+import tterrag1112.life_in_the_village.Npc.Brain.Behaviors.Production.WorkshopProcurement;
 import tterrag1112.life_in_the_village.Npc.Tasks.Assignment;
 import tterrag1112.life_in_the_village.Npc.Tasks.IssuerRef;
 import tterrag1112.life_in_the_village.Npc.Tasks.LevelKind;
@@ -29,6 +30,7 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.ProductionRecipe;
 import tterrag1112.life_in_the_village.Village.Economy.Resources.SkillRecipes;
+import tterrag1112.life_in_the_village.Village.Village;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,7 +43,7 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * PB2/PB4 — task source for business-driven production dispatch.
+ * PB2/PB4/PB4b — task source for business-driven production dispatch.
  *
  * <h3>PB2 behaviour (single-level, unchanged)</h3>
  * For each PRODUCER-role worker in the business that has a non-empty
@@ -58,12 +60,24 @@ import java.util.UUID;
  * dependency mechanism in {@link tterrag1112.life_in_the_village.Npc.Tasks.DoTaskBehavior}
  * ensures child nodes execute before the parent.
  *
+ * <h3>PB4b extension — market-buy for affordable raw leaves</h3>
+ * When a recipe input is a TRUE raw leaf (no recipe in {@link SkillRecipes})
+ * and is missing from business storage, the resolver checks whether the
+ * business treasury can afford to buy it at the current dynamic market price.
+ * If affordable, an {@link Objective.Acquire} task is emitted at a stable id
+ * ("business-acquire:…") and wired as a parent dependency so the craft node
+ * waits for the buy to complete.  {@link BusinessBuyFulfillment} handles the
+ * Acquire task and purchases from the market using the business treasury.
+ * If unaffordable (or no price estimate is available), the raw leaf is pruned
+ * as before — the parent node shows BLOCKED_MISSING_INPUTS.
+ *
  * <h3>DAG ordering via {@code Task.dependencies}</h3>
  * {@code DoTaskBehavior.pickTop} skips a task until every dependency task on the
  * board is DONE (or absent — absent deps are considered satisfied). Child tasks
- * complete first (crafted → DONE), the parent becomes claimable, a worker crafts
- * the final output. No new fulfillment is needed: every DAG node is a
- * {@link Objective.ProvideItem} handled by {@link BusinessCraftFulfillment}.
+ * complete first (crafted or bought → DONE), the parent becomes claimable, a
+ * worker crafts the final output. No new fulfillment is needed: every DAG craft
+ * node is a {@link Objective.ProvideItem} handled by {@link BusinessCraftFulfillment};
+ * raw-leaf nodes are {@link Objective.Acquire} handled by {@link BusinessBuyFulfillment}.
  *
  * <h3>Depth cap and cycle guard (mandatory)</h3>
  * {@link #MAX_DAG_DEPTH} (6) caps the recursion so pathological recipe networks
@@ -73,13 +87,19 @@ import java.util.UUID;
  * emitted.
  *
  * <h3>Raw leaves</h3>
- * Items with no recipe, or whose recipe is excluded by the depth/cycle guards,
- * are raw leaves. No task is emitted for them; they must be present in business
- * storage. If absent, the parent node's {@link BusinessCraftFulfillment#canFulfill}
- * will fail, and the task shows {@code BLOCKED_MISSING_INPUTS} in the PB3 GUI.
+ * Items with no recipe are raw leaves.  PB4b: if affordable, an Acquire task
+ * is emitted for the leaf; if not, the parent shows BLOCKED_MISSING_INPUTS.
+ * Items whose recipe is excluded by the depth/cycle guards are NOT treated as
+ * raw leaves — they are craftable but guard-blocked; no Acquire is emitted
+ * for them (they must appear in storage).
  *
  * <h3>Idempotency / stable ids</h3>
- * Task ids are deterministic: {@code "business-produce:<goalItem>:<nodeItem>"}.
+ * Task ids are deterministic:
+ * <ul>
+ *   <li>Root goal: {@code "business-produce:<goalItem>"}</li>
+ *   <li>Craft child: {@code "business-produce:<goalItem>:<nodeItem>"}</li>
+ *   <li>Acquire (raw buy): {@code "business-acquire:<goalItem>:<inputItem>"}</li>
+ * </ul>
  * Re-generation updates priority in place (non-terminal task) or replaces
  * terminal tasks with fresh ones. Storage-satisfied inputs have their tasks
  * removed via {@code removeIfUnclaimed}. The DAG converges; no duplicates
@@ -237,7 +257,7 @@ public final class BusinessProductionTaskSource implements TaskSource {
             int deficit = target - stock;
             if (deficit <= 0) {
                 // Goal satisfied — prune the whole DAG for this goal.
-                removeGoalDag(board, taskData, goalItem, recipe);
+                removeGoalDag(board, taskData, goalItem, recipe, level);
                 continue;
             }
 
@@ -271,18 +291,22 @@ public final class BusinessProductionTaskSource implements TaskSource {
      * <p>For each input of {@code nodeRecipe}:
      * <ol>
      *   <li>If business storage already has enough → satisfied; remove any
-     *       stale task and don't recurse.</li>
+     *       stale task (craft or acquire) and don't recurse.</li>
      *   <li>If the input has a recipe AND the depth/cycle guard allows →
-     *       emit a child task and recurse into its inputs.</li>
-     *   <li>Otherwise (raw leaf or guard triggered) → no task; parent will
-     *       show {@code BLOCKED_MISSING_INPUTS} if the item isn't in storage.</li>
+     *       emit a child {@link Objective.ProvideItem} task and recurse.</li>
+     *   <li>If the input is a TRUE raw leaf (no recipe) → PB4b: check
+     *       affordability against the business treasury. If affordable,
+     *       emit an {@link Objective.Acquire} task so an employee buys it
+     *       from the market. If unaffordable, prune (parent BLOCKED).</li>
+     *   <li>If craftable but guard-blocked (depth cap / cycle) → prune
+     *       as before; do NOT emit Acquire for these (they have recipes).</li>
      * </ol>
      *
      * <p>The result is accumulated into {@code dagDeps}: nodeItem → list of
      * immediate child TaskIds. Callers must upsert the root node AFTER this
      * method returns so that all child task ids are stable.</p>
      *
-     * @param level          server level (for storage queries)
+     * @param level          server level (for storage queries + price lookup)
      * @param board          the business task board (read/write)
      * @param taskData       persistence layer (for adds/removes)
      * @param nodeItem       the item being resolved at this level
@@ -313,55 +337,103 @@ public final class BusinessProductionTaskSource implements TaskSource {
             int inStorage = BuildingStorageAccess.countItem(level, workBuilding, inputItem);
             int stillNeeded = Math.max(0, totalInputNeeded - inStorage);
 
-            // Stable id for this input child task (scoped to the goal).
-            TaskId childId = childTaskId(goalItem, inputItem);
+            // Stable ids for this input (craft child and acquire are different id spaces).
+            TaskId craftChildId   = childTaskId(goalItem, inputItem);
+            TaskId acquireChildId = acquireTaskId(goalItem, inputItem);
 
             if (stillNeeded <= 0) {
-                // Input satisfied from storage → remove any stale task.
-                removeIfUnclaimed(board, childId, taskData);
+                // Input satisfied from storage → remove any stale task (craft or acquire).
+                removeIfUnclaimed(board, craftChildId, taskData);
+                removeIfUnclaimed(board, acquireChildId, taskData);
                 continue;
             }
 
             // Check if this input is craftable (has a recipe) and can be recursed.
             ProductionRecipe inputRecipe = recipeFor(inputItem);
 
-            if (inputRecipe == null
-                    || depth >= MAX_DAG_DEPTH
-                    || resolutionPath.contains(inputItem)) {
-                // Raw leaf (no recipe), depth cap hit, or cycle detected.
-                // Do NOT emit a task: the input must come from storage.
-                // A stale task for this id (from a prior DAG that was deeper)
-                // should be pruned.
-                removeIfUnclaimed(board, childId, taskData);
-                continue;
+            if (inputRecipe != null
+                    && depth < MAX_DAG_DEPTH
+                    && !resolutionPath.contains(inputItem)) {
+                // ── Craftable input: emit ProvideItem child and recurse ──────
+                // Remove any stale Acquire for this input (it had a recipe all along
+                // or the situation changed since the last generation pass).
+                removeIfUnclaimed(board, acquireChildId, taskData);
+
+                // Emit child task for this craftable input.
+                // The child's qty is the number of craft outputs needed, rounded up
+                // to the recipe's outputCount so we don't under-produce.
+                int childQty = (int) Math.ceil((double) stillNeeded / inputRecipe.outputCount())
+                               * inputRecipe.outputCount();
+                TaskFilter childFilter = skillFilterFor(inputRecipe);
+
+                // Recurse into child's inputs BEFORE upserting the child, so the
+                // child's own dep ids are computed and recorded in dagDeps.
+                Set<Item> childPath = new HashSet<>(resolutionPath);
+                childPath.add(inputItem);
+                resolveNode(level, board, taskData, inputItem, inputRecipe,
+                            childQty, goalItem, dagDeps, childPath, depth + 1);
+
+                // Upsert the child task with ITS children as dependencies.
+                List<TaskId> grandchildIds = dagDeps.getOrDefault(inputItem, List.of());
+                upsert(board, taskData, craftChildId,
+                        new Objective.ProvideItem(inputItem, childQty),
+                        new Priority(TaskPriority.NORMAL, 1.0f), // max urgency for intermediates
+                        childFilter, grandchildIds);
+
+                childIds.add(craftChildId);
+
+            } else if (inputRecipe == null) {
+                // ── PB4b: TRUE raw leaf (no recipe) — attempt market buy ─────
+                // Remove any stale craft child (it can't be here since there's no
+                // recipe, but guard against stale state from a previous run).
+                removeIfUnclaimed(board, craftChildId, taskData);
+
+                // Affordability gate: estimate cost from dynamic market price.
+                // We don't have an NPC here (task generation is headless), so we
+                // use the plain dynamic price without a COMMERCE multiplier. The
+                // actual buy at execute time will apply the employee's COMMERCE
+                // discount (so the real cost may be lower — safe, never higher).
+                long priceEstimate = affordabilityEstimate(level, inputItem, stillNeeded);
+                if (priceEstimate > 0 && business.getTreasuryBronze() >= priceEstimate) {
+                    // Treasury can cover it: emit an Acquire task.
+                    upsert(board, taskData, acquireChildId,
+                            new Objective.Acquire(inputItem, stillNeeded),
+                            new Priority(TaskPriority.NORMAL, 1.0f),
+                            TaskFilter.ANY, // profession-agnostic; BusinessBuyFulfillment gates on business scope
+                            List.of());
+                    childIds.add(acquireChildId);
+                } else {
+                    // Unaffordable or no price estimate: prune; parent stays BLOCKED.
+                    removeIfUnclaimed(board, acquireChildId, taskData);
+                }
+
+            } else {
+                // ── Craftable but guard-blocked (depth cap or cycle) ──────────
+                // Do NOT emit Acquire — the item has a recipe; buying it would
+                // bypass the craft chain. Prune both stale ids.
+                removeIfUnclaimed(board, craftChildId, taskData);
+                removeIfUnclaimed(board, acquireChildId, taskData);
             }
-
-            // Emit child task for this craftable input.
-            // The child's qty is the number of craft outputs needed, rounded up
-            // to the recipe's outputCount so we don't under-produce.
-            int childQty = (int) Math.ceil((double) stillNeeded / inputRecipe.outputCount())
-                           * inputRecipe.outputCount();
-            TaskFilter childFilter = skillFilterFor(inputRecipe);
-
-            // Recurse into child's inputs BEFORE upserting the child, so the
-            // child's own dep ids are computed and recorded in dagDeps.
-            Set<Item> childPath = new HashSet<>(resolutionPath);
-            childPath.add(inputItem);
-            resolveNode(level, board, taskData, inputItem, inputRecipe,
-                        childQty, goalItem, dagDeps, childPath, depth + 1);
-
-            // Upsert the child task with ITS children as dependencies.
-            List<TaskId> grandchildIds = dagDeps.getOrDefault(inputItem, List.of());
-            upsert(board, taskData, childId,
-                    new Objective.ProvideItem(inputItem, childQty),
-                    new Priority(TaskPriority.NORMAL, 1.0f), // max urgency for intermediates
-                    childFilter, grandchildIds);
-
-            childIds.add(childId);
         }
 
         // Record this node's children so the caller can wire them as deps of the parent.
         dagDeps.put(nodeItem, childIds);
+    }
+
+    /**
+     * Estimates the cost of acquiring {@code qty} units of {@code item} from
+     * the market, using the dynamic sell price as a proxy.
+     *
+     * <p>Returns 0 if the item has no price estimate (new/untraded item) — the
+     * caller treats 0 as "no price, don't emit Acquire". Uses the business's
+     * home-village for the price context; falls back to the global base price
+     * if the village can't be resolved.</p>
+     */
+    private long affordabilityEstimate(ServerLevel level, Item item, int qty) {
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageById(business.getHomeVillageId()).orElse(null);
+        long perUnit = WorkshopProcurement.getDynamicBuyPrice(level, village, item);
+        return perUnit * qty;
     }
 
     /**
@@ -374,10 +446,10 @@ public final class BusinessProductionTaskSource implements TaskSource {
      * (in-flight) tasks stay and will be pruned on the next refresh once done.</p>
      */
     private void removeGoalDag(TaskBoard board, TaskSavedData taskData,
-                                Item goalItem, ProductionRecipe goalRecipe) {
+                                Item goalItem, ProductionRecipe goalRecipe,
+                                ServerLevel level) {
         removeIfUnclaimed(board, goalTaskId(goalItem), taskData);
-        // Prune child tasks up to MAX_DAG_DEPTH. We do a DFS walk of the recipe
-        // DAG (same structure as resolveNode) and remove unclaimed nodes.
+        // Prune child tasks (both craft and acquire) up to MAX_DAG_DEPTH.
         pruneDag(board, taskData, goalItem, goalRecipe, new HashSet<>(), 0);
     }
 
@@ -387,7 +459,9 @@ public final class BusinessProductionTaskSource implements TaskSource {
         if (depth >= MAX_DAG_DEPTH) return;
         for (Item inputItem : recipe.inputs().keySet()) {
             if (!visited.add(inputItem)) continue; // cycle guard
+            // Prune both the craft child and the acquire child for this input.
             removeIfUnclaimed(board, childTaskId(goalItem, inputItem), taskData);
+            removeIfUnclaimed(board, acquireTaskId(goalItem, inputItem), taskData);
             ProductionRecipe inputRecipe = recipeFor(inputItem);
             if (inputRecipe != null) {
                 pruneDag(board, taskData, goalItem, inputRecipe, visited, depth + 1);
@@ -407,7 +481,7 @@ public final class BusinessProductionTaskSource implements TaskSource {
     }
 
     /**
-     * Stable id for a child (intermediate) task of {@code inputItem} within
+     * Stable id for a craft-intermediate child task of {@code inputItem} within
      * the DAG rooted at {@code goalItem}.
      *
      * <p>Scoped to the goal so two different goals that both need sticks get
@@ -417,6 +491,20 @@ public final class BusinessProductionTaskSource implements TaskSource {
     private TaskId childTaskId(Item goalItem, Item inputItem) {
         return ProductionTaskIds.stable(issuer,
                 "business-produce:" + ProductionTaskIds.key(goalItem)
+                + ":" + ProductionTaskIds.key(inputItem));
+    }
+
+    /**
+     * PB4b — stable id for a raw-leaf {@link Objective.Acquire} task.
+     *
+     * <p>Uses the "business-acquire:" prefix to keep Acquire tasks in a
+     * distinct id space from craft children ("business-produce:…"). This
+     * allows the resolver to upsert/remove them independently without
+     * colliding with any craft-child task at the same (goal, input) pair.</p>
+     */
+    private TaskId acquireTaskId(Item goalItem, Item inputItem) {
+        return ProductionTaskIds.stable(issuer,
+                "business-acquire:" + ProductionTaskIds.key(goalItem)
                 + ":" + ProductionTaskIds.key(inputItem));
     }
 

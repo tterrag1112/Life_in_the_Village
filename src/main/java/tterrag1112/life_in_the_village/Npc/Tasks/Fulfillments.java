@@ -15,6 +15,7 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Farm.HoneyFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Priest.PriestFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Monk.MonkFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Mine.MineFulfillment;
+import tterrag1112.life_in_the_village.Npc.Tasks.Business.BusinessBuyFulfillment;
 import tterrag1112.life_in_the_village.Npc.Tasks.Business.BusinessCraftFulfillment;
 
 /**
@@ -95,6 +96,15 @@ public final class Fulfillments {
         //   employee cases where both can match — claim exclusivity prevents
         //   double-execution).
         SHARED.register(Objective.Type.PROVIDE_ITEM, new BusinessCraftFulfillment());
+        // PB4b — business-issued raw-material buying (ACQUIRE for COMPANY_WORKER
+        //   and any employee of the business). Issuer-scoped (BUSINESS + businessId
+        //   match); profession-agnostic; skill-ungated (COMMERCE only affects
+        //   discount, not eligibility). Score 3.0 > FarmAcquireFulfillment (2.0)
+        //   and BuyFulfillment (2.0), ensuring business-treasury path wins when
+        //   the task is business-issued. Mutually exclusive with producer
+        //   BuyFulfillment (which gates on profession==spec, never COMPANY_WORKER)
+        //   and FarmAcquireFulfillment (which gates on FARMER profession + seed items).
+        SHARED.register(Objective.Type.ACQUIRE, new BusinessBuyFulfillment());
         // G1b — farmer surplus selling (SellSurplus for FARMER, coexists with
         //        SellSurplusFulfillment; profession guard discriminates).
         SHARED.register(Objective.Type.SELL_SURPLUS, new FarmSellFulfillment());

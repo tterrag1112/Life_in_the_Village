@@ -6,6 +6,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.slf4j.Logger;
 import tterrag1112.life_in_the_village.Entities.custom.TownspersonMob;
+import tterrag1112.life_in_the_village.Guilds.Companies.Business;
 import tterrag1112.life_in_the_village.Networking.VillageSavedData;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelQuote;
 import tterrag1112.life_in_the_village.Npc.Economy.Channels.ChannelRouter;
@@ -47,6 +48,13 @@ import java.util.UUID;
  *       behave identically to the private booleans they replace.</li>
  * </ul>
  *
+ * <h3>PB4b — business-treasury-funded buy</h3>
+ * {@link #buyForBusiness} is a parallel entry point that funds the
+ * purchase exclusively from the business treasury (no NPC wallet
+ * involvement beyond the transient top-up the channel machinery requires).
+ * Money conservation: debit-before-execute, refund-on-fail/partial,
+ * zero wallet remainder, zero duplication.
+ *
  * <h3>Package placement</h3>
  * Same package as {@code AbstractProductionBehavior} — no visibility
  * change required on any existing type.
@@ -77,7 +85,7 @@ public final class WorkshopProcurement {
     }
 
     // =========================================================================
-    // Public entry point
+    // Public entry points
     // =========================================================================
 
     /**
@@ -88,6 +96,9 @@ public final class WorkshopProcurement {
      * instance that persists across calls (i.e. a field on the behavior
      * object, not a local).  Diagnostic log wording is identical to the
      * pre-extraction version in {@code AbstractProductionBehavior}.</p>
+     *
+     * <p>Funding: building economy treasury first, NPC wallet for the
+     * shortfall (two-source, unchanged from pre-extraction).</p>
      *
      * @param callerClass  simple name used in log prefixes (pass
      *                     {@code getClass().getSimpleName()} from the
@@ -235,6 +246,186 @@ public final class WorkshopProcurement {
         }
     }
 
+    /**
+     * PB4b — business-treasury-funded buy.
+     *
+     * <p>Identical channel/quote/partial-fill/refund/deposit machinery as
+     * {@link #buy}, but the <em>sole</em> funding source is the
+     * {@link Business#getTreasuryBronze() business treasury}.  The NPC's
+     * personal wallet is used only as the transient conduit the channel
+     * machinery requires (top-up → execute → drain back); it is always left
+     * net-zero for the transaction.</p>
+     *
+     * <h3>Money conservation invariants</h3>
+     * <ul>
+     *   <li><b>Insufficient funds:</b> {@code business.withdrawBronze(total)}
+     *       returns {@code false} → no debit, no buy, no wallet touched.</li>
+     *   <li><b>No quote (no seller):</b> affordability pre-check may pass but
+     *       {@code findBestChannel} returns empty → continue; no debit.</li>
+     *   <li><b>Execute fail:</b> debit happened before execute; full refund
+     *       via {@code business.depositBronze(total)} + wallet drained back;
+     *       net zero on both.</li>
+     *   <li><b>Partial fill:</b> debit {@code total = price × affordableQty};
+     *       {@code actualSpent = result.totalBronze()}; leftover refunded via
+     *       {@code business.depositBronze(leftover)} + wallet drained back.</li>
+     *   <li><b>Success:</b> debit {@code total}, wallet pre-funded by same,
+     *       channel spends {@code actualSpent} from wallet, leftover = 0.</li>
+     * </ul>
+     *
+     * <p>COMMERCE XP is still awarded to the NPC (discount is their skill;
+     * they did the buying on behalf of the business).</p>
+     *
+     * @param entity        the employee NPC performing the purchase
+     * @param workBuilding  the business's production building (items deposited here)
+     * @param toBuy         items and quantities to acquire
+     * @param business      the business whose treasury bears the cost
+     * @param level         server level
+     * @param flags         caller-owned one-shot diagnostic flags
+     * @param callerClass   simple name for log prefixes
+     */
+    public static void buyForBusiness(
+            TownspersonMob entity,
+            Building workBuilding,
+            Map<Item, Integer> toBuy,
+            Business business,
+            ServerLevel level,
+            DiagFlags flags,
+            String callerClass) {
+
+        VillageSavedData data = VillageSavedData.get(level);
+        Village village = data.getVillageById(business.getHomeVillageId()).orElse(null);
+        if (village == null) return;
+
+        UUID buildingId = workBuilding.getId();
+
+        if (!flags.loggedBuyEntry) {
+            LOGGER.debug("[{}] {} buyForBusiness: needs={} bizTreasury={}br village={}",
+                    callerClass, entity.getNpcName(),
+                    toBuy, business.getTreasuryBronze(), village.getName());
+            flags.loggedBuyEntry = true;
+        }
+
+        for (Map.Entry<Item, Integer> entry : toBuy.entrySet()) {
+            Item item = entry.getKey();
+            int wanted = entry.getValue();
+            if (wanted <= 0) continue;
+
+            // Per-unit ceiling: plain dynamic price (no per-npc multiplier at
+            // generation time, but buy-side COMMERCE discount still applies at
+            // execute time via the channel's settlement path).
+            long perUnitCeiling = Math.max(1L,
+                    Math.round(getDynamicBuyPrice(level, village, item)
+                            * CommerceModifier.buyMultiplier(entity)));
+            TradeIntent intent = TradeIntent.buy(
+                    item, wanted, entity.getUUID(), buildingId,
+                    village.getId(), perUnitCeiling,
+                    Urgency.NORMAL,
+                    Set.of());
+
+            ChannelQuote quote = ChannelRouter
+                    .findBestChannel(intent, village, data, level).orElse(null);
+            if (quote == null) {
+                if (!flags.loggedBuyNoQuote) {
+                    LOGGER.debug("[{}] {} buyForBusiness: NO QUOTE for {}x{} " +
+                            "(perUnitCeiling={}br). All channels declined.",
+                            callerClass, entity.getNpcName(),
+                            wanted, item, perUnitCeiling);
+                    flags.loggedBuyNoQuote = true;
+                }
+                continue;
+            }
+
+            // Partial-fill: cap qty to business treasury (0.9 safety margin for
+            // market tax that settlePurchase applies inside channel.execute).
+            long pricePerUnit = quote.pricePerUnit();
+            long bizBudget = business.getTreasuryBronze();
+            long maxAffordableUnits = (long) ((bizBudget * 0.9) / pricePerUnit);
+            int affordableQty = (int) Math.min(quote.availableQuantity(),
+                    Math.max(0L, maxAffordableUnits));
+            if (affordableQty <= 0) {
+                if (!flags.loggedBuyAffordFail) {
+                    LOGGER.debug("[{}] {} buyForBusiness: AFFORD FAIL for {}x{} " +
+                            "from channel={} (price={}br/unit, bizTreasury={}br — " +
+                            "insufficient for even 1 unit)",
+                            callerClass, entity.getNpcName(),
+                            wanted, item, quote.channel(), pricePerUnit,
+                            bizBudget);
+                    flags.loggedBuyAffordFail = true;
+                }
+                continue;
+            }
+
+            // Build a partial quote clamped to affordableQty.
+            ChannelQuote partialQuote = new ChannelQuote(
+                    quote.channel(), quote.intent(), pricePerUnit,
+                    affordableQty, quote.travelTimeTicks(),
+                    quote.quoteValidUntilTick(), quote.location());
+            long total = pricePerUnit * affordableQty;
+
+            // Single-source funding: debit business treasury, top up NPC wallet
+            // so channel.execute (which spends from wallet) sees the full amount.
+            // The wallet is always left net-zero after the transaction.
+            if (!business.withdrawBronze(total)) {
+                // Atomic check-and-debit failed (treasury shrank since the
+                // affordability check above — race with wage payment etc.).
+                LOGGER.debug("[{}] {} buyForBusiness: WITHDRAW FAIL for {}x{} " +
+                        "total={}br bizTreasury={}br (treasury shrank since afford check)",
+                        callerClass, entity.getNpcName(),
+                        affordableQty, item, total, business.getTreasuryBronze());
+                continue;
+            }
+            // Top up wallet so the channel can spend from it.
+            entity.getWallet().receive(CurrencyValue.of(total));
+
+            var channel = ChannelRouter.registeredChannels().stream()
+                    .filter(c -> c.type() == partialQuote.channel())
+                    .findFirst().orElse(null);
+            TradeResult result = channel == null
+                    ? TradeResult.fail("channel missing")
+                    : channel.execute(partialQuote, intent, level);
+
+            if (!result.success()) {
+                if (!flags.loggedBuyExecuteFail) {
+                    LOGGER.debug("[{}] {} buyForBusiness: EXECUTE FAIL for {}x{} " +
+                            "from channel={} reason='{}'",
+                            callerClass, entity.getNpcName(),
+                            affordableQty, item, partialQuote.channel(),
+                            result.failureReason());
+                    flags.loggedBuyExecuteFail = true;
+                }
+                // Full refund to business treasury; drain the wallet top-up back.
+                entity.getWallet().spend(CurrencyValue.of(total));
+                business.depositBronze(total);
+                continue;
+            }
+
+            long actualSpent = result.totalBronze();
+            long leftover = total - actualSpent;
+            if (leftover > 0) {
+                // Channel spent less than pre-funded (partial fill or market tax
+                // was less than headroom). Drain leftover from wallet, refund to
+                // business treasury. Wallet net = 0.
+                entity.getWallet().spend(CurrencyValue.of(leftover));
+                business.depositBronze(leftover);
+            }
+
+            BuildingStorageAccess.storeItem(level, workBuilding,
+                    new ItemStack(item, result.quantityTraded()));
+            data.setDirty();
+
+            if (!flags.loggedBuyAccepted) {
+                LOGGER.debug("[{}] {} buyForBusiness: ACCEPTED {}x{} from channel={} " +
+                        "at {}br/unit (total={}br, actualSpent={}br, refund={}br)",
+                        callerClass, entity.getNpcName(),
+                        result.quantityTraded(), item, partialQuote.channel(),
+                        pricePerUnit, total, actualSpent, leftover);
+                flags.loggedBuyAccepted = true;
+            }
+            // Award COMMERCE XP — the employee did the buying.
+            CommerceModifier.awardForTrade(entity, actualSpent, level.getGameTime());
+        }
+    }
+
     // =========================================================================
     // Internal price helper
     // =========================================================================
@@ -244,8 +435,12 @@ public final class WorkshopProcurement {
      * {@code AbstractProductionBehavior#getItemBuyPrice} exactly (Phase
      * 6.3.4.4.4 note: ceiling tracks actual market conditions rather than
      * the raw JSON base, so channel quotes are not systematically rejected).
+     *
+     * <p>Public so that {@link tterrag1112.life_in_the_village.Npc.Tasks.Business.BusinessProductionTaskSource}
+     * can use the same price estimate for affordability gating at task-generation
+     * time (PB4b).</p>
      */
-    static long getDynamicBuyPrice(ServerLevel level, Village village, Item item) {
+    public static long getDynamicBuyPrice(ServerLevel level, Village village, Item item) {
         return Math.max(1L, MarketPriceHelper.getDynamicSellPrice(level, village, item));
     }
 }
