@@ -37,6 +37,8 @@ import tterrag1112.life_in_the_village.Village.Building;
 import tterrag1112.life_in_the_village.Village.BuildingStorageAccess;
 import tterrag1112.life_in_the_village.Village.Buildings.BuildingType;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
+import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.VillageFarmingDemand;
 
 import java.util.HashSet;
 import java.util.List;
@@ -197,6 +199,13 @@ public final class FarmTaskSource implements TaskSource {
         VillageSavedData data = VillageSavedData.get(level);
         long now = level.getGameTime();
 
+        // G3a — resolve this farmer's village food need ONCE (reads cached snapshot;
+        //        VillageDailyTickSystem populates it at most one game-day ago).
+        //        Defaults to SATISFIED when village/needs not yet computed.
+        NeedLevel foodNeed = VillageFarmingDemand.foodLevel(level, farmer);
+        TaskPriority harvestPrio   = VillageFarmingDemand.harvestTier(foodNeed);
+        TaskPriority replantTilPrio = VillageFarmingDemand.replantTillTier(foodNeed);
+
         // ── FarmRoleAssigner daily cadence ────────────────────────────────────
         long lastAssign = lastRoleAssignByFarmhouse.getOrDefault(farmhouse.getId(), 0L);
         if (lastAssign == 0L || now - lastAssign >= ROLE_ASSIGN_INTERVAL) {
@@ -286,7 +295,7 @@ public final class FarmTaskSource implements TaskSource {
                     upsert(board, taskData, harvestId,
                             new Objective.PerformService(FarmVerb.HARVEST,
                                     Optional.of(plotId.toString()), Optional.of(gpos)),
-                            new Priority(TaskPriority.NORMAL, 0f), farmerFilter);
+                            new Priority(harvestPrio, 0f), farmerFilter);
                 } else {
                     removeIfUnclaimed(board, harvestId, taskData);
                 }
@@ -308,7 +317,7 @@ public final class FarmTaskSource implements TaskSource {
                     upsert(board, taskData, replantId,
                             new Objective.PerformService(FarmVerb.REPLANT,
                                     Optional.of(plotId.toString()), Optional.of(gpos)),
-                            new Priority(TaskPriority.LOW, 0f), farmerFilter);
+                            new Priority(replantTilPrio, 0f), farmerFilter);
                     // Seeds now available — remove any pending acquire task
                     removeIfUnclaimed(board, acquireSeedId, taskData);
                 } else if (hasEmptyFarmland) {
@@ -346,7 +355,7 @@ public final class FarmTaskSource implements TaskSource {
                     upsert(board, taskData, tillId,
                             new Objective.PerformService(FarmVerb.TILL,
                                     Optional.of(plotId.toString()), Optional.of(gpos)),
-                            new Priority(TaskPriority.LOW, 0f), farmerFilter);
+                            new Priority(replantTilPrio, 0f), farmerFilter);
                 } else {
                     removeIfUnclaimed(board, tillId, taskData);
                 }

@@ -39,6 +39,8 @@ import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProductionTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Producer.ProductionTaskSpec;
 import tterrag1112.life_in_the_village.Npc.Tasks.Scribe.ScribeCommissionTaskSource;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.FarmTaskSource;
+import tterrag1112.life_in_the_village.Npc.Tasks.Farm.VillageFarmingDemand;
+import tterrag1112.life_in_the_village.Village.Needs.NeedLevel;
 import tterrag1112.life_in_the_village.Npc.Tasks.Farm.AnimalTaskSource;
 import tterrag1112.life_in_the_village.Village.Buildings.FarmPlot;
 import tterrag1112.life_in_the_village.Entities.Goals.Profession.Farmer.FarmRole;
@@ -547,6 +549,15 @@ public final class TaskDebugCommand {
                         }
                         if ((storedSi + personalSi) == 0) seedAcquire2++;
                     }
+                    // G3a: show resolved food need + derived priority tiers
+                    NeedLevel foodNeedDbg = VillageFarmingDemand.foodLevel(level, npc);
+                    tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority hTier =
+                            VillageFarmingDemand.harvestTier(foodNeedDbg);
+                    tterrag1112.life_in_the_village.Profession.Tasks.TaskPriority rtTier =
+                            VillageFarmingDemand.replantTillTier(foodNeedDbg);
+                    sb.append("  food need=§e").append(foodNeedDbg.name())
+                      .append("§r → harvest tier=§e").append(hTier.name())
+                      .append("§r replant/till tier=§e").append(rtTier.name()).append("§r\n");
                     sb.append("  FarmTaskSource WOULD emit: harvest=").append(harvest2)
                       .append(" replant=").append(replant2)
                       .append(" till=").append(till2)
