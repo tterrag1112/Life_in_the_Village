@@ -28,19 +28,28 @@ public final class Assignment {
     private Status status;
     private final Set<UUID> claimants;
     private final int maxClaimants;
+    /**
+     * Optional progress counter for player task detection (P0 foundation).
+     * NPC flows never read or write this field; it is inert in all existing
+     * NPC assignment paths. Player executors will increment it in later
+     * phases. Persisted via {@code optionalFieldOf} so old saves load
+     * cleanly (defaults to 0).
+     */
+    private int progress;
 
     public Assignment() {
-        this(Status.OPEN, new LinkedHashSet<>(), 1);
+        this(Status.OPEN, new LinkedHashSet<>(), 1, 0);
     }
 
     public Assignment(int maxClaimants) {
-        this(Status.OPEN, new LinkedHashSet<>(), Math.max(1, maxClaimants));
+        this(Status.OPEN, new LinkedHashSet<>(), Math.max(1, maxClaimants), 0);
     }
 
-    private Assignment(Status status, Set<UUID> claimants, int maxClaimants) {
+    private Assignment(Status status, Set<UUID> claimants, int maxClaimants, int progress) {
         this.status = status;
         this.claimants = new LinkedHashSet<>(claimants);
         this.maxClaimants = Math.max(1, maxClaimants);
+        this.progress = Math.max(0, progress);
     }
 
     // ── Queries ─────────────────────────────────────────────────────────────
@@ -51,6 +60,8 @@ public final class Assignment {
     public boolean isTerminal()    { return status == Status.DONE || status == Status.FAILED || status == Status.EXPIRED; }
     public boolean isClaimable()   { return !isTerminal() && claimants.size() < maxClaimants; }
     public boolean isClaimedBy(UUID actor) { return claimants.contains(actor); }
+    /** Progress counter (player tasks only; always 0 for NPC tasks). */
+    public int progress()              { return progress; }
 
     // ── Transitions (guarded) ────────────────────────────────────────────────
 
@@ -127,17 +138,30 @@ public final class Assignment {
         return true;
     }
 
+    /**
+     * Returns a copy of this assignment with {@code progress} set to
+     * {@code value}. NPC assignment flows never call this; player executors
+     * use it to record task progress for detection/completion in P-later.
+     */
+    public Assignment withProgress(int value) {
+        Assignment copy = new Assignment(this.status, this.claimants, this.maxClaimants, Math.max(0, value));
+        return copy;
+    }
+
     // ── Persistence ───────────────────────────────────────────────────────────
 
+    // 4 fields — well under the 16-field RecordCodecBuilder ceiling.
     public static final Codec<Assignment> CODEC = RecordCodecBuilder.create(i -> i.group(
             Codec.STRING.xmap(Status::valueOf, Status::name)
                     .optionalFieldOf("status", Status.OPEN).forGetter(Assignment::status),
             UUIDUtil.CODEC.listOf().optionalFieldOf("claimants", List.of())
                     .forGetter(a -> List.copyOf(a.claimants)),
-            Codec.INT.optionalFieldOf("maxClaimants", 1).forGetter(Assignment::maxClaimants)
+            Codec.INT.optionalFieldOf("maxClaimants", 1).forGetter(Assignment::maxClaimants),
+            // P0 optional progress field — NPC saves load cleanly (defaults 0).
+            Codec.INT.optionalFieldOf("progress", 0).forGetter(Assignment::progress)
     ).apply(i, Assignment::fromCodec));
 
-    private static Assignment fromCodec(Status status, List<UUID> claimants, int maxClaimants) {
-        return new Assignment(status, new LinkedHashSet<>(claimants), maxClaimants);
+    private static Assignment fromCodec(Status status, List<UUID> claimants, int maxClaimants, int progress) {
+        return new Assignment(status, new LinkedHashSet<>(claimants), maxClaimants, progress);
     }
 }

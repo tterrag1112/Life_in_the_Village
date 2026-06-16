@@ -26,7 +26,7 @@ import java.util.Set;
  * context with a {@code null} entity and override the hooks; the core
  * only calls the hooks, never reaches through {@link #npc()} itself.</p>
  */
-public final class TaskContext {
+public class TaskContext {
 
     private final ServerLevel level;
     @Nullable private final TownspersonMob npc;

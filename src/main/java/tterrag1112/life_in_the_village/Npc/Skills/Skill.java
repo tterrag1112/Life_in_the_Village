@@ -132,7 +132,18 @@ public enum Skill {
      *  expressed once T1 wires the recipes. Parent CRAFTING per the
      *  resolved decision (smelting is a CRAFTING-family processing
      *  activity, sibling to MILLING / BAKING). */
-    SMELTING(CRAFTING, 0.25);
+    SMELTING(CRAFTING, 0.25),
+
+    // ── Tier 1 (Player P0 — mining) ────────────────────────────────────────
+    /** Ore-extraction / underground-navigation sub-skill. Cascades 25% →
+     *  SURVIVAL. Parent SURVIVAL (not CRAFTING) because mining is an
+     *  outdoor/extractive activity — physical endurance and hazard
+     *  awareness in tight spaces — matching the FARMER(SURVIVAL) /
+     *  GUARD(COMBAT,SURVIVAL) pattern for extraction-and-hazard trades.
+     *  Sibling to MELEE / RANGED / MAGIC under the COMBAT/SURVIVAL root.
+     *  Seeded for NPC Profession.MINER (P0); XP awards from MineExecutor
+     *  wired in a later task-system phase (flagged out-of-scope for P0). */
+    MINING(SURVIVAL, 0.25);
 
     @Nullable private final Skill parent;
     private final double propRate;

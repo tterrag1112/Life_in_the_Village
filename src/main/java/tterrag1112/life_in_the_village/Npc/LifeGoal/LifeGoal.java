@@ -110,6 +110,12 @@ public record LifeGoal(
             case MEDICINE,
                  VILLAGE_MEDICINE,
                  COMBAT_MEDICINE          -> EnumSet.of(AmenityType.BREWING_STAND);
+            // Player P0 — MINING added. Mine has no amenity block (the
+            // MINE building itself is the workstation); explicit arm so
+            // the compiler enforces coverage if the default is ever
+            // narrowed. SMELTING (furnace-based) is intentionally
+            // handled by default below (no life-goal wiring yet).
+            case MINING                   -> Set.of();
             default                       -> Set.of();
         };
     }

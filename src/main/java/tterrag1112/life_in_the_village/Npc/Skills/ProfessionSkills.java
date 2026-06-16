@@ -68,7 +68,13 @@ public record ProfessionSkills(Skill primary, Skill secondary) {
         // SkillComponent.addXp.
         m.put(Profession.BAKER,            new ProfessionSkills(Skill.BAKING,   Skill.COMMERCE));
         m.put(Profession.BUILDER,          new ProfessionSkills(Skill.CRAFTING, Skill.SURVIVAL));
-        m.put(Profession.MINER,            new ProfessionSkills(Skill.SURVIVAL, Skill.CRAFTING));
+        // Player P0 — MINING is now the primary skill for NPC MINER (seeded
+        // at spawn via initializeFromProfession). Previously (SURVIVAL, CRAFTING).
+        // MINING cascades 25% → SURVIVAL, so the parent still accrues passively.
+        // This is the one accepted NPC-behavior change in P0: spawned miners
+        // seed MINING[15-35] rather than SURVIVAL[15-35]. Secondary SURVIVAL
+        // (outdoor/hazard axis, consistent with the FARMER pattern).
+        m.put(Profession.MINER,            new ProfessionSkills(Skill.MINING,    Skill.SURVIVAL));
         m.put(Profession.STOCKPILE_KEEPER, new ProfessionSkills(Skill.COMMERCE, Skill.SOCIAL));
         m.put(Profession.INNKEEPER,        new ProfessionSkills(Skill.SOCIAL,   Skill.COMMERCE));
 

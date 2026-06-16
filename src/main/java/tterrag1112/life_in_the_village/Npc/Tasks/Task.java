@@ -23,6 +23,23 @@ import java.util.Optional;
  */
 public final class Task {
 
+    /**
+     * Optional reward for completing a task (player tasks only; P0 foundation).
+     * NPC tasks leave this empty. Player tasks in P-later will set {@code xp}
+     * (player profession XP) and {@code coin} (currency payout) via the factory
+     * methods below. Persisted via {@code optionalFieldOf} so saves without a
+     * reward field load cleanly (absent → {@code Optional.empty()}).
+     *
+     * @param xp   player profession XP to award on completion (0 = none)
+     * @param coin coin to award on completion (0 = none)
+     */
+    public record Reward(int xp, long coin) {
+        public static final Codec<Reward> CODEC = RecordCodecBuilder.create(i -> i.group(
+                Codec.INT.optionalFieldOf("xp", 0).forGetter(Reward::xp),
+                Codec.LONG.optionalFieldOf("coin", 0L).forGetter(Reward::coin)
+        ).apply(i, Reward::new));
+    }
+
     private final TaskId id;
     private final IssuerRef issuer;
     private final Objective objective;
@@ -34,10 +51,16 @@ public final class Task {
     private long deadlineTick;
     /** Provenance: the task this was decomposed from, if any. */
     @Nullable private final TaskId parent;
+    /**
+     * Optional reward for task completion (player tasks only; P0 foundation).
+     * NPC tasks leave this empty; player executors read it in P-later.
+     */
+    private final Optional<Reward> reward;
 
+    /** Full constructor used by the codec and by player-task factories that set a reward. */
     public Task(TaskId id, IssuerRef issuer, Objective objective, Priority priority,
                 TaskFilter filter, Assignment assignment, List<TaskId> dependencies,
-                long deadlineTick, @Nullable TaskId parent) {
+                long deadlineTick, @Nullable TaskId parent, Optional<Reward> reward) {
         this.id = id;
         this.issuer = issuer;
         this.objective = objective;
@@ -47,6 +70,18 @@ public final class Task {
         this.dependencies = new ArrayList<>(dependencies);
         this.deadlineTick = deadlineTick;
         this.parent = parent;
+        this.reward = reward;
+    }
+
+    /**
+     * Convenience constructor for NPC tasks (no reward). All existing NPC
+     * call sites compile unchanged; the reward field defaults to empty.
+     */
+    public Task(TaskId id, IssuerRef issuer, Objective objective, Priority priority,
+                TaskFilter filter, Assignment assignment, List<TaskId> dependencies,
+                long deadlineTick, @Nullable TaskId parent) {
+        this(id, issuer, objective, priority, filter, assignment, dependencies,
+                deadlineTick, parent, Optional.empty());
     }
 
     // ── Accessors ─────────────────────────────────────────────────────────────
@@ -61,6 +96,8 @@ public final class Task {
     public long deadlineTick()     { return deadlineTick; }
     public boolean hasDeadline()   { return deadlineTick > 0L; }
     public Optional<TaskId> parent() { return Optional.ofNullable(parent); }
+    /** Optional completion reward (player tasks only; empty for all NPC tasks). */
+    public Optional<Reward> reward()  { return reward; }
 
     // ── Mutators (the few fields that legitimately change post-creation) ──────
 
@@ -68,7 +105,9 @@ public final class Task {
     public void setDeadlineTick(long tick)     { this.deadlineTick = tick; }
 
     // ── Persistence ───────────────────────────────────────────────────────────
-    // 9 grouped fields — well under the 16-field RecordCodecBuilder ceiling.
+    // 10 grouped fields (9 original + reward) — well under the 16-field
+    // RecordCodecBuilder ceiling. reward uses optionalFieldOf so old saves
+    // (without the field) load cleanly as Optional.empty().
 
     public static final Codec<Task> CODEC = RecordCodecBuilder.create(i -> i.group(
             TaskId.CODEC.fieldOf("id").forGetter(Task::id),
@@ -79,9 +118,11 @@ public final class Task {
             Assignment.CODEC.optionalFieldOf("assignment", new Assignment()).forGetter(Task::assignment),
             TaskId.CODEC.listOf().optionalFieldOf("dependencies", List.of()).forGetter(Task::dependencies),
             Codec.LONG.optionalFieldOf("deadlineTick", 0L).forGetter(Task::deadlineTick),
-            TaskId.CODEC.optionalFieldOf("parent").forGetter(Task::parent)
-    ).apply(i, (id, issuer, objective, priority, filter, assignment, deps, deadline, parent) ->
-            new Task(id, issuer, objective, priority, filter, assignment, deps, deadline, parent.orElse(null))));
+            TaskId.CODEC.optionalFieldOf("parent").forGetter(Task::parent),
+            // P0 optional reward — NPC saves load cleanly (absent → empty).
+            Reward.CODEC.optionalFieldOf("reward").forGetter(Task::reward)
+    ).apply(i, (id, issuer, objective, priority, filter, assignment, deps, deadline, parent, reward) ->
+            new Task(id, issuer, objective, priority, filter, assignment, deps, deadline, parent.orElse(null), reward)));
 
     @Override
     public boolean equals(Object o) {
