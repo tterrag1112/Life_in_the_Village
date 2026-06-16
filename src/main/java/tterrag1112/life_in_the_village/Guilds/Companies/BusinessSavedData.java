@@ -96,8 +96,10 @@ public class BusinessSavedData extends SavedData {
     }
 
     public List<Business> getByOwner(UUID playerId) {
+        // PB1 — use sealed-owner check so player takeover businesses are found
+        // even when the legacy ownerPlayerId field is still the zero-UUID.
         return businesses.values().stream()
-                .filter(c -> c.getOwnerPlayerId().equals(playerId))
+                .filter(c -> c.isOwnedByPlayer(playerId))
                 .toList();
     }
 
@@ -340,9 +342,13 @@ public class BusinessSavedData extends SavedData {
         // Only once per in-game day
         if (currentTick % 24000L != 0) return;
 
+        // PB1 — derive player UUID from sealed owner; NPC-owned businesses
+        // yield empty and we skip cleanly (no UUID to look up).
+        UUID playerOwnerId = business.getPlayerOwnerId().orElse(null);
+        if (playerOwnerId == null) return;
         ServerPlayer owner = level.getServer()
                 .getPlayerList()
-                .getPlayer(business.getOwnerPlayerId());
+                .getPlayer(playerOwnerId);
         if (owner == null) return; // owner offline — skip, not penalised
 
         ReputationManager.onCompanyWagesPaid(
@@ -356,8 +362,11 @@ public class BusinessSavedData extends SavedData {
     private void notifyOwnerUnpaid(ServerLevel level,
                                    Business business,
                                    List<UUID> unpaidIds) {
+        // PB1 — use sealed owner UUID; NPC-owned businesses have no player to notify.
+        UUID playerOwnerId = business.getPlayerOwnerId().orElse(null);
+        if (playerOwnerId == null) return;
         var player = level.getServer().getPlayerList()
-                .getPlayer(business.getOwnerPlayerId());
+                .getPlayer(playerOwnerId);
         if (player != null) {
             player.displayClientMessage(
                     net.minecraft.network.chat.Component.literal(
@@ -374,8 +383,11 @@ public class BusinessSavedData extends SavedData {
     private void notifyOwner(ServerLevel level,
                              Business business,
                              net.minecraft.network.chat.Component msg) {
+        // PB1 — use sealed owner UUID; NPC-owned businesses have no player to notify.
+        UUID playerOwnerId = business.getPlayerOwnerId().orElse(null);
+        if (playerOwnerId == null) return;
         var player = level.getServer().getPlayerList()
-                .getPlayer(business.getOwnerPlayerId());
+                .getPlayer(playerOwnerId);
         if (player != null) player.displayClientMessage(msg, false);
     }
 }

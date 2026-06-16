@@ -120,7 +120,7 @@ public final class NpcProfileSnapshotBuilder {
         BusinessSavedData compData = BusinessSavedData.get(level);
         Optional<Business> businessOpt = compData.getBusinessForWorker(npc.getUUID());
         boolean canOpenBusinessWorker = prof == Profession.COMPANY_WORKER
-                && businessOpt.map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
+                && businessOpt.map(c -> c.isOwnedByPlayer(player.getUUID())) // PB1: sealed-owner check
                 .orElse(false);
         boolean canShowVillageBook = prof == Profession.VILLAGE_LEADER
                 && villageOpt.isPresent();
@@ -298,7 +298,7 @@ public final class NpcProfileSnapshotBuilder {
         if (prof == Profession.COMPANY_WORKER) {
             boolean owned = BusinessSavedData.get(level)
                     .getBusinessForWorker(npc.getUUID())
-                    .map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
+                    .map(c -> c.isOwnedByPlayer(player.getUUID())) // PB1: sealed-owner check
                     .orElse(false);
             if (owned) return NpcProfileSnapshot.NavTargetKind.COMPANY_WORKER;
         }

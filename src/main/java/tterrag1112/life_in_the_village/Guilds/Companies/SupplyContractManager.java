@@ -144,13 +144,13 @@ public final class SupplyContractManager {
                 + " for " + CurrencyValue.of(totalCost));
 
         // 5. Notify both owners
-        notifyPlayer(level, supplier.getOwnerPlayerId(),
+        notifyPlayer(level, supplier.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                 "[" + supplier.getName() + "] Supply contract fulfilled: "
                         + contract.weeklyQuantity() + "x "
                         + item.getName().getString()
                         + " delivered. +" + CurrencyValue.of(totalCost));
 
-        notifyPlayer(level, buyer.getOwnerPlayerId(),
+        notifyPlayer(level, buyer.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                 "[" + buyer.getName() + "] Supply received: "
                         + contract.weeklyQuantity() + "x "
                         + item.getName().getString()
@@ -175,16 +175,16 @@ public final class SupplyContractManager {
                     .withStatus(SupplyContract.ContractStatus.BREACHED);
             cdata.updateContract(breached);
 
-            notifyPlayer(level, supplier.getOwnerPlayerId(),
+            notifyPlayer(level, supplier.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                     "[" + supplier.getName() + "] Supply contract with "
                             + buyer.getName() + " has been BREACHED. Reason: " + reason);
-            notifyPlayer(level, buyer.getOwnerPlayerId(),
+            notifyPlayer(level, buyer.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                     "[" + buyer.getName() + "] Supply contract with "
                             + supplier.getName() + " has been BREACHED. Reason: " + reason
                             + " — Renegotiate in the business management screen.");
         } else {
             cdata.updateContract(contract.withMissedDeliveries(newMisses));
-            notifyPlayer(level, buyer.getOwnerPlayerId(),
+            notifyPlayer(level, buyer.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                     "[" + buyer.getName() + "] Missed supply delivery from "
                             + supplier.getName() + " (" + newMisses
                             + "/" + BREACH_THRESHOLD + " misses). Reason: " + reason);
@@ -215,7 +215,7 @@ public final class SupplyContractManager {
 
         // Notify supplier owner
         cdata.getById(supplierCompanyId).ifPresent(supplier ->
-                notifyPlayer(level, supplier.getOwnerPlayerId(),
+                notifyPlayer(level, supplier.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                         "[" + supplier.getName() + "] New supply contract proposed. "
                                 + "Open your business management screen to accept or decline.")
         );
@@ -239,7 +239,7 @@ public final class SupplyContractManager {
                     cdata.markDirty();
 
                     cdata.getById(c.buyerCompanyId()).ifPresent(buyer ->
-                            notifyPlayer(level, buyer.getOwnerPlayerId(),
+                            notifyPlayer(level, buyer.getPlayerOwnerId().orElse(null), // PB1: sealed-owner notification
                                     "[" + buyer.getName()
                                             + "] Your supply contract has been accepted!")
                     );

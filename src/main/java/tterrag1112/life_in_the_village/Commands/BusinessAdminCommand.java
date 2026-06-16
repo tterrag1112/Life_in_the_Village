@@ -63,6 +63,11 @@ public final class BusinessAdminCommand {
                 .then(Commands.literal("dispatch")
                         .then(Commands.argument("businessId", UuidArgument.uuid())
                                 .executes(BusinessAdminCommand::handleDispatch)))
+                // PB1 — debug takeover: /business setowner <businessId> <playerUUID>
+                .then(Commands.literal("setowner")
+                        .then(Commands.argument("businessId", UuidArgument.uuid())
+                                .then(Commands.argument("playerUUID", UuidArgument.uuid())
+                                        .executes(BusinessAdminCommand::handleSetOwner))))
         );
     }
 
@@ -186,6 +191,42 @@ public final class BusinessAdminCommand {
         BusinessSavedData.get(level).addBusiness(c);
         src.sendSuccess(() -> Component.literal("§aDispatched§r — placeholder profit §f"
                 + profit + " br§r → treasury=" + c.getTreasuryBronze()), false);
+        return 1;
+    }
+
+    // ── /business setowner <businessId> <playerUUID> ──────────────────────
+    // PB1 — debug/admin takeover path. Makes a player the sealed PlayerOwner
+    // of any existing business regardless of current owner type. Does NOT
+    // transfer workers or treasury. This is a testing affordance; the real
+    // player-facing acquisition UX (purchase / inheritance) is a later phase.
+
+    private static int handleSetOwner(CommandContext<CommandSourceStack> ctx) {
+        CommandSourceStack src = ctx.getSource();
+        ServerLevel level = src.getLevel();
+        UUID businessId = UuidArgument.getUuid(ctx, "businessId");
+        UUID playerUUID = UuidArgument.getUuid(ctx, "playerUUID");
+
+        BusinessSavedData cdata = BusinessSavedData.get(level);
+        Business c = cdata.getById(businessId).orElse(null);
+        if (c == null) {
+            src.sendFailure(Component.literal("No business with id " + businessId));
+            return 0;
+        }
+
+        String prevOwner = c.getOwner() != null
+                ? c.getOwner().kind() + "/" + c.getOwnerId()
+                : "none";
+
+        // Route through the canonical setter so the sealed owner is the
+        // single source of truth; ownerPlayerId legacy field is not updated
+        // (it's final) — all queries now use isOwnedByPlayer / getPlayerOwnerId.
+        c.setPlayerOwner(playerUUID);
+        cdata.markDirty();
+
+        final String prev = prevOwner;
+        src.sendSuccess(() -> Component.literal(
+                "§a" + c.getName() + "§r owner set to §fPlayerOwner/"
+                        + playerUUID + "§r (was §7" + prev + "§r)"), false);
         return 1;
     }
 

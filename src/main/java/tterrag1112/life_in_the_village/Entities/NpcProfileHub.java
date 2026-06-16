@@ -244,7 +244,7 @@ public final class NpcProfileHub {
         if (prof == Profession.COMPANY_WORKER) {
             Business business = BusinessSavedData.get(level)
                     .getBusinessForWorker(npc.getUUID()).orElse(null);
-            if (business != null && business.getOwnerPlayerId().equals(player.getUUID())) {
+            if (business != null && business.isOwnedByPlayer(player.getUUID())) { // PB1: sealed-owner check
                 npc.unlockConversation(player.getUUID());
                 tterrag1112.life_in_the_village.Gui.BusinessWorkerScreen
                         .open(player, npc, business);
@@ -286,7 +286,7 @@ public final class NpcProfileHub {
         if (prof == Profession.COMPANY_WORKER) {
             return BusinessSavedData.get(level)
                     .getBusinessForWorker(npc.getUUID())
-                    .map(c -> c.getOwnerPlayerId().equals(player.getUUID()))
+                    .map(c -> c.isOwnedByPlayer(player.getUUID())) // PB1: sealed-owner check
                     .orElse(false);
         }
         return false;

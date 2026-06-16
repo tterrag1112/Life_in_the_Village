@@ -534,8 +534,10 @@ public record BusinessActionPacket(
     private static Business ownedCompany(BusinessSavedData cdata,
                                         UUID businessId, UUID playerId,
                                         ServerPlayer player) {
+        // PB1 — use sealed-owner check so player-takeover businesses pass
+        // the guard even when legacy ownerPlayerId is still the zero-UUID.
         Business c = cdata.getById(businessId)
-                .filter(co -> co.getOwnerPlayerId().equals(playerId))
+                .filter(co -> co.isOwnedByPlayer(playerId))
                 .orElse(null);
         if (c == null)
             fail(player, "You do not own this business.");

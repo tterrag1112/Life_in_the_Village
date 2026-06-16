@@ -938,7 +938,7 @@ public class VillageBookScreen extends Screen {
         Set<UUID> playerCompanyBuildingIds = new HashSet<>();
         businessData.getAllBusinesses().forEach(c -> {
             c.getBuildingIds().forEach(allCompanyBuildingIds::add);
-            if (c.getOwnerPlayerId().equals(player.getUUID()))
+            if (c.isOwnedByPlayer(player.getUUID())) // PB1: sealed-owner check
                 c.getBuildingIds().forEach(playerCompanyBuildingIds::add);
         });
 

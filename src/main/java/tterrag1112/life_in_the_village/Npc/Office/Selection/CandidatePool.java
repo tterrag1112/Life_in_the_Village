@@ -102,7 +102,7 @@ public final class CandidatePool {
                 if (c == null) yield null;
                 Set<UUID> out = new java.util.HashSet<>();
                 c.getWorkers().forEach(w -> out.add(w.npcId()));
-                if (c.getOwnerPlayerId() != null) out.add(c.getOwnerPlayerId()); // tolerated; player UUIDs survive isEligible's NPC filter
+                c.getPlayerOwnerId().ifPresent(out::add); // PB1: sealed-owner; player UUIDs survive isEligible's NPC filter
                 yield out;
             }
             case KINGDOM -> {

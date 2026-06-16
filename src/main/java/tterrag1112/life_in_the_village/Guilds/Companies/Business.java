@@ -731,6 +731,30 @@ public class Business {
     public String getName()             { return name; }
     public void setName(String n)       { this.name = n; }
     public UUID getOwnerPlayerId()      { return ownerPlayerId; }
+
+    /**
+     * PB1 — canonical player-ownership check against the sealed
+     * {@link BusinessOwner}. Replaces all {@code getOwnerPlayerId().equals(uuid)}
+     * call sites so that player takeover (where {@code ownerPlayerId} stays
+     * at its construction-time zero-UUID) is correctly recognised.
+     */
+    public boolean isOwnedByPlayer(UUID playerId) {
+        if (playerId == null) return false;
+        return owner instanceof BusinessOwner.PlayerOwner p
+                && playerId.equals(p.playerUuid());
+    }
+
+    /**
+     * PB1 — returns the player UUID when this business is {@link BusinessOwner.PlayerOwner}-owned,
+     * otherwise {@link java.util.Optional#empty()}. Used by notification
+     * helpers that want to send a message to the online player owner.
+     */
+    public java.util.Optional<UUID> getPlayerOwnerId() {
+        if (owner instanceof BusinessOwner.PlayerOwner p) {
+            return java.util.Optional.of(p.playerUuid());
+        }
+        return java.util.Optional.empty();
+    }
     public UUID getHomeVillageId()      { return homeVillageId; }
     public WorkSchedule getWorkSchedule() { return workSchedule; }
     public void setWorkSchedule(WorkSchedule s) { this.workSchedule = s; }
