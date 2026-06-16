@@ -107,7 +107,7 @@ public final class PriestTaskSource implements TaskSource {
         return new IssuerRef(LevelKind.NPC, npc.getUUID());
     }
 
-    @Override
+    //@Override
     public IssuerRef issuer() { return issuer; }
 
     @Override
@@ -231,7 +231,7 @@ public final class PriestTaskSource implements TaskSource {
         return isReligiousBuilding(b.getType());
     }
 
-    static boolean isReligiousBuilding(BuildingType type) {
+    public static boolean isReligiousBuilding(BuildingType type) {
         return type == BuildingType.TEMPLE
                 || type == BuildingType.CHAPEL
                 || type == BuildingType.SHRINE;

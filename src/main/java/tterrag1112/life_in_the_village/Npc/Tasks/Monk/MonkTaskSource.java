@@ -94,7 +94,7 @@ public final class MonkTaskSource implements TaskSource {
         return new IssuerRef(LevelKind.NPC, npc.getUUID());
     }
 
-    @Override
+    //@Override
     public IssuerRef issuer() { return issuer; }
 
     @Override
